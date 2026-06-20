@@ -559,3 +559,61 @@ This way:
 - Web users get free maps (OSM) + easy link-share onboarding
 - App users get free maps (Google SDK) + native share sheet + push
 - Backend cost stays the same regardless
+
+---
+
+## Decision (2026-06-21): Build a Flutter App
+
+After this analysis, the chosen path is a **Flutter app** (iOS + Android from one codebase),
+not native and not web-first. Rationale, straight from the matrix above:
+
+- **Highest weighted score (2.70)** — wins on dev speed, feature completeness, and UX.
+- **Full share-sheet + push** on both platforms (the web app can't do iOS share target or iOS push).
+- **Free maps on mobile** — Google Maps mobile SDK has free unlimited map loads; or `flutter_map`
+  + OSM tiles for $0 maps regardless of scale. This draft starts on **OSM (`flutter_map`)** to keep
+  maps at $0 and avoid an API key during prototyping; a Google Maps SDK swap is a later option.
+- **App Store presence** for discoverability, with web-class dev speed (hot reload).
+
+Backend stays platform-agnostic (AI extraction + geocoding + DB), so a web client can be added
+later against the same API without rework — the hybrid strategy above remains open.
+
+### Draft scope (this repo)
+
+A front-end-only draft with **mock data** (no backend wired yet) to validate the UX and visual
+direction. Core screens: **Map**, **Saved (feed)**, **Boards**, and a **Place detail** card.
+Maps via `flutter_map` + CartoDB dark tiles. Sample data uses Tokyo places from this analysis
+(e.g. 五感 ramen in 池袋).
+
+---
+
+## UI / Design References
+
+Two references inform the look and feel:
+
+### 1. Yaay Travel — interaction & information architecture (primary)
+
+The structure documented above is the functional blueprint: share-to-save ingestion, AI-enriched
+detail cards (photo carousel, location badge, AI description, source attribution, address/hours,
+"Open in Google Maps"), the **Map ⇄ Feed ⇄ Detail** triad, category filter chips with counts, and
+the **Board → Section → Item** organization hierarchy. The draft mirrors this IA.
+
+### 2. oyado「日本版」JP Travel Concierge — aesthetic & positioning (secondary)
+
+Reference: `https://oyado.gumroad.com/l/jptw`. A Japan-focused travel-concierge map product for
+curated hotels and restaurants. Design cues taken from it:
+
+- **Japan-first, curated tone** — positioned as a reliable concierge ("絕對不失"), not a generic
+  saver. CheapTripChip's first market is Japan trips, so the seed data and copy lean Japanese.
+- **Bilingual surfaces** — Traditional Chinese / Japanese alongside English. Detail cards already
+  preserve the original Japanese caption + address; the draft keeps that bilingual treatment and
+  adds CN/EN labels where natural.
+- **Map-centric, minimalist** — location-pin-forward, clean layout, map as the primary surface.
+  The draft opens on the map with a curated set of pins and lightweight category chips.
+
+### Resulting visual direction for the draft
+
+- **Map-first**, dark map tiles (CartoDB Dark Matter) so pink/coral pins pop.
+- **Accent color: coral/pink pin** (matches Yaay's pin and reads "travel/food").
+- **Clean cards**, generous whitespace, rounded corners, photo-led.
+- **Bilingual-friendly typography** — system fonts that render JP/CN/EN cleanly.
+- **Curated, concierge tone** in empty states and labels rather than generic "no items".
