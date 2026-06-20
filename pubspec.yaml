@@ -37,6 +37,8 @@ dependencies:
   flutter_map: ^8.3.0
   latlong2: ^0.9.1
   url_launcher: ^6.3.2
+  http: ^1.6.0
+  receive_sharing_intent: ^1.8.1
 
 dev_dependencies:
   flutter_test:

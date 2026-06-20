@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import '../widgets/place_card.dart';
@@ -17,10 +17,10 @@ class FeedScreen extends StatefulWidget {
 class _FeedScreenState extends State<FeedScreen> {
   String _query = '';
 
-  List<Place> get _results {
-    if (_query.trim().isEmpty) return MockData.places;
+  List<Place> _filter(List<Place> all) {
+    if (_query.trim().isEmpty) return all;
     final q = _query.toLowerCase();
-    return MockData.places.where((p) {
+    return all.where((p) {
       return p.name.toLowerCase().contains(q) ||
           p.areaLabel.toLowerCase().contains(q) ||
           p.descriptionEn.toLowerCase().contains(q) ||
@@ -30,7 +30,6 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final results = _results;
     return Column(
       children: [
         Padding(
@@ -51,17 +50,22 @@ class _FeedScreenState extends State<FeedScreen> {
           ),
         ),
         Expanded(
-          child: results.isEmpty
-              ? const _EmptyState()
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                  itemCount: results.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) => PlaceCard(
-                    place: results[i],
-                    onTap: () => PlaceDetailSheet.show(context, results[i]),
-                  ),
+          child: ValueListenableBuilder<List<Place>>(
+            valueListenable: PlaceStore.instance.places,
+            builder: (context, all, _) {
+              final results = _filter(all);
+              if (results.isEmpty) return const _EmptyState();
+              return ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                itemCount: results.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                itemBuilder: (context, i) => PlaceCard(
+                  place: results[i],
+                  onTap: () => PlaceDetailSheet.show(context, results[i]),
                 ),
+              );
+            },
+          ),
         ),
       ],
     );

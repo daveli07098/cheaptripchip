@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
 import '../data/mock_data.dart';
+import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import 'place_detail_sheet.dart';
@@ -21,13 +22,13 @@ class _MapScreenState extends State<MapScreen> {
   /// null = "All". Otherwise filter pins to the selected category.
   PlaceCategory? _selected;
 
-  List<Place> get _visible => _selected == null
-      ? MockData.places
-      : MockData.places.where((p) => p.category == _selected).toList();
+  List<Place> _visible(List<Place> all) => _selected == null
+      ? all
+      : all.where((p) => p.category == _selected).toList();
 
-  Map<PlaceCategory, int> get _counts {
+  Map<PlaceCategory, int> _counts(List<Place> all) {
     final map = <PlaceCategory, int>{};
-    for (final p in MockData.places) {
+    for (final p in all) {
       map[p.category] = (map[p.category] ?? 0) + 1;
     }
     return map;
@@ -35,7 +36,11 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, all, _) {
+        final visible = _visible(all);
+        return Stack(
       children: [
         FlutterMap(
           mapController: _controller,
@@ -56,7 +61,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
             MarkerLayer(
               markers: [
-                for (final place in _visible)
+                for (final place in visible)
                   Marker(
                     point: place.location,
                     width: 44,
@@ -76,8 +81,8 @@ class _MapScreenState extends State<MapScreen> {
           child: Column(
             children: [
               _CategoryChips(
-                counts: _counts,
-                total: MockData.places.length,
+                counts: _counts(all),
+                total: all.length,
                 selected: _selected,
                 onSelect: (c) => setState(() => _selected = c),
               ),
@@ -85,6 +90,8 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
       ],
+        );
+      },
     );
   }
 }

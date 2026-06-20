@@ -28,10 +28,37 @@ Seed data is a handful of Tokyo places (see `lib/data/mock_data.dart`).
 
 ```bash
 flutter pub get
-flutter run
+flutter run                      # mobile (iOS/Android)
+flutter run -d chrome            # quick preview in the browser
 ```
 
 Requires the Flutter SDK (developed against Flutter 3.41). Map tiles need network access.
+
+### AI extraction config (Gemini)
+
+The "Add a find" flow uses Gemini to extract a place from a pasted link/caption,
+then geocodes it via OSM Nominatim. Ported from the event-calendar AI client
+(model cascade, JSON mode, lenient parse). Provide the key at run time — nothing
+is hard-coded:
+
+```bash
+flutter run --dart-define=GEMINI_API_KEY=your_key
+# Optional reverse proxy (e.g. to bypass a regional block), same role as
+# event-calendar's GEMINI_BASE_URL:
+flutter run --dart-define=GEMINI_API_KEY=your_key \
+            --dart-define=GEMINI_BASE_URL=https://your-proxy.example.workers.dev
+```
+
+Without a key, the app still runs and shows the seed data; extraction shows a
+"no key" message. **Security:** a key shipped in a client app is exposed — for
+production, point `GEMINI_BASE_URL` at your own backend/proxy and keep the key
+server-side. The client is structured so that swap is config-only.
+
+### Share-sheet intake
+
+On Android, sharing a link/caption (from Instagram/TikTok's share sheet) opens
+CheapTripChip with the "Add a find" sheet pre-filled. iOS requires a Share
+Extension target (not yet added — see next steps).
 
 ## Project structure
 
@@ -50,9 +77,19 @@ lib/
     place_detail_sheet.dart Draggable detail bottom sheet
 ```
 
-## Next steps (not in this draft)
+## Next steps
 
-1. Backend: link ingestion → AI extraction → geocoding (OSM/Nominatim) → persistence.
-2. Share-sheet intake (`receive_sharing_intent`) so a reel can be shared straight into the app.
-3. Real photos from the source post; swap mock data for an API client + local cache.
-4. Auth + collaborative boards.
+1. **Persistence (Firebase)** — back `PlaceStore` with Firestore so saves survive
+   restart and sync across devices. The screens already listen via
+   `ValueListenableBuilder`, so this is a store-layer swap.
+2. **iOS Share Extension** — add the iOS share target so intake works on iPhone
+   (Android intent-filter is already wired).
+3. **Full URL ingestion** — a bare reel URL can't be read client-side; move page
+   fetch + extraction to the backend (feed page text to the same Gemini prompt).
+4. **Real photos** from the source post; replace placeholder thumbnails.
+5. **Auth + collaborative boards.**
+
+### Done in the draft
+- Gemini extraction (`lib/services/gemini_service.dart`) + Nominatim geocoding,
+  wired into "Add a find" → saved place appears on map/feed.
+- Android share-sheet intake (`receive_sharing_intent`).
