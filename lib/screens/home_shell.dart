@@ -7,7 +7,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../data/place_store.dart';
 import '../services/place_extractor.dart';
 import '../theme/app_theme.dart';
-import '../theme/theme_controller.dart';
+import '../theme/theme_toggle_button.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -90,20 +90,29 @@ class _HomeShellState extends State<HomeShell> {
       appBar: showAppBar
           ? AppBar(
               title: Text(_titles[_index]),
-              actions: const [_ThemeToggleButton()],
+              actions: const [ThemeToggleButton()],
             )
           : null,
       body: IndexedStack(
         index: _index,
-        children: const [MapScreen(), FeedScreen(), BoardsScreen()],
+        children: [
+          MapScreen(onAddFind: _openAddFind),
+          const FeedScreen(),
+          const BoardsScreen(),
+        ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openAddSheet(),
-        backgroundColor: AppTheme.coral,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        icon: const Icon(Icons.add_link),
-        label: const Text('Add a find'),
-      ),
+      // The map tab surfaces its own "Add a find" button in the sheet
+      // header (so it stays reachable at any drag extent and doesn't cover
+      // the sheet/attribution); other tabs keep the FAB.
+      floatingActionButton: _index == 0
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => _openAddSheet(),
+              backgroundColor: AppTheme.coral,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              icon: const Icon(Icons.add_link),
+              label: const Text('Add a find'),
+            ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -128,6 +137,11 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  /// Zero-arg wrapper so [MapScreen]'s `VoidCallback onAddFind` can call
+  /// [_openAddSheet], which takes an optional `initialText` (used by the
+  /// share-intake flow above).
+  void _openAddFind() => _openAddSheet();
+
   void _openAddSheet({String initialText = ''}) {
     showModalBottomSheet(
       context: context,
@@ -142,31 +156,6 @@ class _HomeShellState extends State<HomeShell> {
         ),
         child: AddFindSheet(initialText: initialText),
       ),
-    );
-  }
-}
-
-/// AppBar action that lets the user override the system theme. Cycles
-/// system → light → dark → system via [ThemeController.toggle].
-class _ThemeToggleButton extends StatelessWidget {
-  const _ThemeToggleButton();
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: ThemeController.instance,
-      builder: (context, mode, _) {
-        final (icon, tooltip) = switch (mode) {
-          ThemeMode.system => (Icons.brightness_auto, 'Theme: System'),
-          ThemeMode.light => (Icons.light_mode, 'Theme: Light'),
-          ThemeMode.dark => (Icons.dark_mode, 'Theme: Dark'),
-        };
-        return IconButton(
-          icon: Icon(icon),
-          tooltip: tooltip,
-          onPressed: ThemeController.instance.toggle,
-        );
-      },
     );
   }
 }
@@ -221,11 +210,24 @@ class _AddFindSheetState extends State<AddFindSheet> {
 
   String _friendly(Object e) {
     final msg = e.toString();
+    debugPrint('extraction error: $msg');
     if (msg.contains('GEMINI_API_KEY')) {
       return 'No Gemini key set. Run with '
           '--dart-define=GEMINI_API_KEY=your_key to enable extraction.';
     }
-    return 'Extraction failed: $msg';
+    if (msg.contains('403') ||
+        msg.contains('API_KEY_SERVICE_BLOCKED') ||
+        msg.contains('are blocked')) {
+      return 'The Gemini key isn\'t allowed to use this API yet. In Google '
+          'Cloud Console → Credentials → this key → API restrictions, add '
+          '"Generative Language API".';
+    }
+    // Strip the leading `Exception: ` prefix `Exception.toString()` adds,
+    // so the user sees the underlying message, not Dart plumbing.
+    final stripped = msg.startsWith('Exception: ')
+        ? msg.substring('Exception: '.length)
+        : msg;
+    return 'Extraction failed: $stripped';
   }
 
   @override

@@ -3,10 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
-import '../data/mock_data.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../theme/theme_toggle_button.dart';
 import '../widgets/map_pin.dart';
 import '../widgets/marker_clustering.dart';
 import '../widgets/place_list_sheet.dart';
@@ -18,7 +18,11 @@ import 'place_detail_sheet.dart';
 /// tap a pin to preview it in the list, tap a row (or a pin twice) to open
 /// the full detail sheet.
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, required this.onAddFind});
+
+  /// Forwarded straight through to [PlaceListSheet] — see its doc comment
+  /// for what triggers this (the "+" affordance for adding a new find).
+  final VoidCallback onAddFind;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -116,20 +120,40 @@ class _MapScreenState extends State<MapScreen> {
           children: [
             FlutterMap(
               mapController: _mapController,
-              options: const MapOptions(
-                initialCenter: MockData.tokyoCenter,
-                initialZoom: 12,
+              options: MapOptions(
+                // Fit every place on first load rather than a fixed
+                // center/zoom: a hardcoded zoom happened to clip the
+                // Hoshinoya (Stay) pin, the easternmost place, right at the
+                // viewport edge — there was no bounds-fitting logic here at
+                // all, unlike `_focusCluster`/`_selectFromList` below, which
+                // both already fit-to-content. `CameraFit.coordinates` is
+                // resolved against the map's actual layout size, so — like
+                // those two — it's computed with the sheet's current height
+                // padded out from the bottom so no pin lands underneath it.
+                initialCameraFit: CameraFit.coordinates(
+                  coordinates: [for (final p in all) p.location],
+                  padding: EdgeInsets.fromLTRB(
+                    48,
+                    96,
+                    48,
+                    48 + _sheetPixels(context),
+                  ),
+                  maxZoom: 17,
+                ),
                 minZoom: 3,
                 maxZoom: 18,
               ),
               children: [
                 TileLayer(
-                  // CartoDB Dark Matter / Positron — free OSM-based tiles
-                  // ($0, see ANALYSIS.md), picked per theme brightness.
-                  urlTemplate: AppTheme.mapTileUrl(brightness),
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  retinaMode: RetinaMode.isHighDensity(context),
+                  // OSM raster tiles — see AppTheme.mapTileUrl doc comment
+                  // re: usage-policy limits and swapping in a keyed provider.
+                  urlTemplate: AppTheme.mapTileUrl,
                   userAgentPackageName: 'com.cheaptripchip.app',
+                  // OSM has no dark-tile variant, so dark mode is simulated
+                  // by inverting/hue-rotating the same tiles.
+                  tileBuilder: brightness == Brightness.dark
+                      ? darkModeTileBuilder
+                      : null,
                 ),
                 _ClusterMarkerLayer(
                   places: visible,
@@ -138,7 +162,7 @@ class _MapScreenState extends State<MapScreen> {
                   onTapPlace: _selectFromPin,
                   onTapCluster: (cluster) => _focusCluster(context, cluster),
                 ),
-                const _AttributionBar(),
+                _AttributionBar(sheetExtentController: _sheetExtentController),
               ],
             ),
             SafeArea(
@@ -162,6 +186,7 @@ class _MapScreenState extends State<MapScreen> {
               sheetController: _sheetExtentController,
               onSelectPlace: (place) => _selectFromList(context, place),
               onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
+              onAddFind: widget.onAddFind,
             ),
           ],
         );
@@ -261,27 +286,41 @@ class _CategoryChips extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 44,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
         children: [
-          _Chip(
-            label: 'All $total',
-            selected: selected == null,
-            onTap: () => onSelect(null),
-          ),
-          for (final entry in counts.entries)
-            _Chip(
-              label: '${entry.key.labelEn} ${entry.value}',
-              emoji: entry.key.emoji,
-              categoryLabel: entry.key.labelEn,
-              color: AppTheme.categoryColor(
-                entry.key,
-                Theme.of(context).brightness,
-              ),
-              selected: selected == entry.key,
-              onTap: () => onSelect(entry.key),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: [
+                _Chip(
+                  label: 'All $total',
+                  selected: selected == null,
+                  onTap: () => onSelect(null),
+                ),
+                for (final entry in counts.entries)
+                  _Chip(
+                    label: '${entry.key.labelEn} ${entry.value}',
+                    emoji: entry.key.emoji,
+                    categoryLabel: entry.key.labelEn,
+                    color: AppTheme.categoryColor(
+                      entry.key,
+                      Theme.of(context).brightness,
+                    ),
+                    selected: selected == entry.key,
+                    onTap: () => onSelect(entry.key),
+                  ),
+              ],
             ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: const ThemeToggleButton(),
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );
@@ -309,17 +348,24 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Center(
         child: Material(
-          color: selected ? (color ?? AppTheme.coral) : AppTheme.surface,
+          color: selected ? (color ?? AppTheme.coral) : scheme.surface,
           borderRadius: BorderRadius.circular(20),
           child: InkWell(
             borderRadius: BorderRadius.circular(20),
             onTap: onTap,
-            child: Padding(
+            child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: selected
+                  ? null
+                  : BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: scheme.outlineVariant),
+                    ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -340,9 +386,7 @@ class _Chip extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: selected
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.85),
+                      color: selected ? Colors.white : scheme.onSurface,
                     ),
                   ),
                 ],
@@ -356,16 +400,33 @@ class _Chip extends StatelessWidget {
 }
 
 class _AttributionBar extends StatelessWidget {
-  const _AttributionBar();
+  const _AttributionBar({required this.sheetExtentController});
+
+  /// Tracked so the bar can float just above the persistent list sheet's
+  /// current top edge instead of sitting permanently underneath it.
+  final DraggableScrollableController sheetExtentController;
 
   @override
   Widget build(BuildContext context) {
-    // OSM/CartoDB attribution is required by the tile licence.
-    return const RichAttributionWidget(
-      attributions: [
-        TextSourceAttribution('OpenStreetMap contributors'),
-        TextSourceAttribution('CARTO'),
-      ],
+    return AnimatedBuilder(
+      // Rebuilds on every drag of the sheet, not just on settle, so the bar
+      // tracks it continuously rather than jumping at the end.
+      animation: sheetExtentController,
+      builder: (context, _) {
+        final fraction = sheetExtentController.isAttached
+            ? sheetExtentController.size
+            : kSheetPeek;
+        final sheetPixels = MediaQuery.of(context).size.height * fraction;
+        return Positioned(
+          right: 8,
+          bottom: sheetPixels + 8,
+          // OSM attribution is required by the tile licence; the widget's
+          // own popup/link already points at openstreetmap.org/copyright.
+          child: const RichAttributionWidget(
+            attributions: [TextSourceAttribution(AppTheme.mapAttribution)],
+          ),
+        );
+      },
     );
   }
 }

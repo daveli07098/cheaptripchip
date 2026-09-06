@@ -55,7 +55,7 @@ class _FeedScreenState extends State<FeedScreen> {
               final results = _filter(all);
               if (results.isEmpty) return const _EmptyState();
               return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                 itemCount: results.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (context, i) => PlaceCard(

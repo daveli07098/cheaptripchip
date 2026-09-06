@@ -39,6 +39,8 @@ dependencies:
   url_launcher: ^6.3.2
   http: ^1.6.0
   receive_sharing_intent: ^1.8.1
+  shared_preferences: ^2.5.5
+  share_plus: ^13.3.0
 
 dev_dependencies:
   flutter_test:

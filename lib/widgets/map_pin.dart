@@ -35,6 +35,9 @@ class MapPin extends StatelessWidget {
     // Theme-driven instead of hardcoded Colors.white so the pin's border
     // stays visible against BOTH the dark and light map tiles.
     final borderColor = Theme.of(context).colorScheme.surface;
+    // Selection ring sits outside the surface-coloured border so it reads as
+    // a distinct affordance rather than a thicker version of that border.
+    final ringColor = Theme.of(context).colorScheme.onSurface;
 
     return GestureDetector(
       onTap: onTap,
@@ -45,7 +48,7 @@ class MapPin extends StatelessWidget {
         child: Align(
           alignment: Alignment.topCenter,
           child: AnimatedScale(
-            scale: selected ? 1.1 : 1.0,
+            scale: selected ? 1.25 : 1.0,
             duration: const Duration(milliseconds: 150),
             curve: Curves.easeOut,
             child: Container(
@@ -55,9 +58,20 @@ class MapPin extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: Border.all(color: borderColor, width: 2),
                 boxShadow: [
+                  if (selected)
+                    BoxShadow(
+                      // The ring: a wider "border" drawn via a second
+                      // spread-out shadow with no blur, outside the
+                      // surface-coloured border above.
+                      color: ringColor,
+                      blurRadius: 0,
+                      spreadRadius: 3,
+                    ),
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    blurRadius: 6,
+                    color: Colors.black.withValues(
+                      alpha: selected ? 0.55 : 0.4,
+                    ),
+                    blurRadius: selected ? 10 : 6,
                     offset: const Offset(0, 2),
                   ),
                 ],
@@ -67,6 +81,7 @@ class MapPin extends StatelessWidget {
                 // label, so screen readers get the category's English name
                 // instead of (or in addition to) the glyph.
                 label: place.category.labelEn,
+                selected: selected,
                 child: ExcludeSemantics(
                   child: Center(
                     // Flutter's emoji vertical centering is unreliable

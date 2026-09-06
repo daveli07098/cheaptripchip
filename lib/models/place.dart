@@ -24,6 +24,7 @@ class Place {
     this.reviewCount,
     this.priceRange,
     this.photoUrls = const [],
+    this.isFavorite = false,
   });
 
   final String id;
@@ -76,6 +77,10 @@ class Place {
   /// Photo URLs for the place. Empty until a real photo source is wired up.
   final List<String> photoUrls;
 
+  /// Whether the user has favourited this place. In-memory via PlaceStore
+  /// until the Firebase layer lands.
+  final bool isFavorite;
+
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
 
@@ -84,6 +89,50 @@ class Place {
     'https://www.google.com/maps/search/?api=1&query='
     '${location.latitude},${location.longitude}',
   );
+
+  Place copyWith({
+    String? id,
+    String? name,
+    String? areaLabel,
+    String? region,
+    PlaceCategory? category,
+    LatLng? location,
+    String? descriptionEn,
+    String? originalCaption,
+    String? address,
+    String? hours,
+    String? sourceHandle,
+    SourcePlatform? sourcePlatform,
+    String? award,
+    bool? matchConfident,
+    double? rating,
+    int? reviewCount,
+    String? priceRange,
+    List<String>? photoUrls,
+    bool? isFavorite,
+  }) {
+    return Place(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      areaLabel: areaLabel ?? this.areaLabel,
+      region: region ?? this.region,
+      category: category ?? this.category,
+      location: location ?? this.location,
+      descriptionEn: descriptionEn ?? this.descriptionEn,
+      originalCaption: originalCaption ?? this.originalCaption,
+      address: address ?? this.address,
+      hours: hours ?? this.hours,
+      sourceHandle: sourceHandle ?? this.sourceHandle,
+      sourcePlatform: sourcePlatform ?? this.sourcePlatform,
+      award: award ?? this.award,
+      matchConfident: matchConfident ?? this.matchConfident,
+      rating: rating ?? this.rating,
+      reviewCount: reviewCount ?? this.reviewCount,
+      priceRange: priceRange ?? this.priceRange,
+      photoUrls: photoUrls ?? this.photoUrls,
+      isFavorite: isFavorite ?? this.isFavorite,
+    );
+  }
 }
 
 enum PlaceCategory {

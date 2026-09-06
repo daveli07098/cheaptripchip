@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/mock_data.dart';
+import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 
@@ -263,10 +265,48 @@ class _ActionRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        _IconAction(icon: Icons.favorite_border, onTap: () {}),
-        _IconAction(icon: Icons.ios_share, onTap: () {}),
+        ValueListenableBuilder<List<Place>>(
+          valueListenable: PlaceStore.instance.places,
+          builder: (context, places, _) {
+            final current = places.firstWhere(
+              (p) => p.id == place.id,
+              orElse: () => place,
+            );
+            // IconButton.isSelected only drives Semantics(selected: ...),
+            // not toggled state — wrap explicitly so screen readers announce
+            // this as a toggle button, not a selection.
+            return Semantics(
+              toggled: current.isFavorite,
+              child: _IconAction(
+                icon: current.isFavorite
+                    ? Icons.favorite
+                    : Icons.favorite_border,
+                tooltip: current.isFavorite
+                    ? 'Remove from favourites'
+                    : 'Add to favourites',
+                isSelected: current.isFavorite,
+                onTap: () => PlaceStore.instance.toggleFavorite(place.id),
+              ),
+            );
+          },
+        ),
+        _IconAction(icon: Icons.ios_share, tooltip: 'Share', onTap: _share),
       ],
     );
+  }
+
+  Future<void> _share() async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text:
+              '${place.name} — ${place.areaLabel}, ${place.region}\n'
+              '${place.googleMapsUrl}',
+        ),
+      );
+    } catch (e) {
+      debugPrint('Share failed: $e');
+    }
   }
 
   void _addToBoard(BuildContext context) {
@@ -315,10 +355,17 @@ class _ActionRow extends StatelessWidget {
 }
 
 class _IconAction extends StatelessWidget {
-  const _IconAction({required this.icon, required this.onTap});
+  const _IconAction({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+    this.isSelected = false,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
+  final String? tooltip;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -326,6 +373,8 @@ class _IconAction extends StatelessWidget {
       padding: const EdgeInsets.only(left: 6),
       child: IconButton.filledTonal(
         onPressed: onTap,
+        tooltip: tooltip,
+        isSelected: isSelected,
         icon: Icon(icon, size: 20),
         style: IconButton.styleFrom(
           backgroundColor: Theme.of(

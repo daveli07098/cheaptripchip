@@ -6,7 +6,7 @@ import '../theme/app_theme.dart';
 /// Snap fractions for [PlaceListSheet]. `kSheetHalf` matches Material 3's
 /// documented default `halfExpandedRatio` (0.5); peek/full are custom to
 /// this map screen.
-const double kSheetPeek = 0.18;
+const double kSheetPeek = 0.22;
 const double kSheetHalf = 0.5;
 const double kSheetFull = 0.92;
 
@@ -43,6 +43,7 @@ class PlaceListSheet extends StatefulWidget {
     required this.selectedId,
     required this.onSelectPlace,
     required this.onOpenDetail,
+    required this.onAddFind,
     this.controller,
     this.sheetController,
   });
@@ -52,6 +53,10 @@ class PlaceListSheet extends StatefulWidget {
   final String? selectedId;
   final ValueChanged<Place> onSelectPlace;
   final ValueChanged<Place> onOpenDetail;
+
+  /// Invoked by the header's "Add a find" button (moved here from the map's
+  /// FAB so it stays reachable regardless of the sheet's drag extent).
+  final VoidCallback onAddFind;
   final PlaceListSheetController? controller;
 
   /// Exposed so [MapScreen] can read the sheet's current extent (via
@@ -64,7 +69,8 @@ class PlaceListSheet extends StatefulWidget {
 }
 
 class _PlaceListSheetState extends State<PlaceListSheet> {
-  // A plain (non-lazy) list of rows, so every row's GlobalKey/context exists
+  // A plain (non-lazy) list of rows — built eagerly into a
+  // `SliverChildListDelegate`, so every row's GlobalKey/context exists
   // regardless of the sheet's current extent — the mock dataset is small
   // enough that this is cheap, and it's what makes `Scrollable.ensureVisible`
   // reliable even while the sheet is collapsed to its "peek" state.
@@ -128,43 +134,70 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
               ),
             ],
           ),
-          child: Column(
-            children: [
-              const _DragHandle(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${widget.places.length} of ${widget.total} places',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface.withValues(alpha: 0.6),
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: widget.places.isEmpty
-                    ? const _EmptyState()
-                    : ListView(
-                        controller: scrollController,
-                        padding: EdgeInsets.only(
-                          bottom: 24 + MediaQuery.of(context).padding.bottom,
-                        ),
+          // A single `CustomScrollView` (rather than a Column of a static
+          // header + an inner ListView) so dragging anywhere — handle,
+          // header, or rows — moves the same scroll controller the sheet is
+          // watching for its snap gestures. A header-only inner Column left
+          // the handle/header undraggable (only the inner ListView was
+          // attached to `scrollController`).
+          child: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverToBoxAdapter(
+                child: Column(
+                  children: [
+                    const _DragHandle(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      child: Row(
                         children: [
-                          for (final place in widget.places)
-                            _PlaceRow(
-                              key: _keyFor(place.id),
-                              place: place,
-                              selected: place.id == widget.selectedId,
-                              onTap: () => widget.onSelectPlace(place),
-                              onOpenDetail: () => widget.onOpenDetail(place),
+                          Expanded(
+                            child: Text(
+                              '${widget.places.length} of ${widget.total} places',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurface.withValues(alpha: 0.6),
+                              ),
                             ),
+                          ),
+                          FilledButton.icon(
+                            onPressed: widget.onAddFind,
+                            icon: const Icon(Icons.add_link, size: 18),
+                            label: const Text('Add a find'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 44),
+                            ),
+                          ),
                         ],
                       ),
+                    ),
+                  ],
+                ),
               ),
+              if (widget.places.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyState(),
+                )
+              else
+                SliverPadding(
+                  padding: EdgeInsets.only(
+                    bottom: 24 + MediaQuery.of(context).padding.bottom,
+                  ),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate([
+                      for (final place in widget.places)
+                        _PlaceRow(
+                          key: _keyFor(place.id),
+                          place: place,
+                          selected: place.id == widget.selectedId,
+                          onTap: () => widget.onSelectPlace(place),
+                          onOpenDetail: () => widget.onOpenDetail(place),
+                        ),
+                    ]),
+                  ),
+                ),
             ],
           ),
         );

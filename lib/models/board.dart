@@ -20,10 +20,7 @@ class Board {
 }
 
 class BoardSection {
-  const BoardSection({
-    required this.title,
-    required this.placeIds,
-  });
+  const BoardSection({required this.title, required this.placeIds});
 
   final String title;
 

@@ -186,12 +186,20 @@ class AppTheme {
     PlaceCategory.nightlife => Icons.nightlife,
   };
 
-  /// CartoDB free OSM-based tile set, picked per [Brightness] (ANALYSIS.md).
-  /// Dark Matter for dark mode (unchanged from the original single-theme
-  /// URL in `map_screen.dart`), Positron — its light sibling — for light
-  /// mode. `map_screen.dart` still hardcodes the Dark Matter URL directly;
-  /// wiring it to call this is a follow-up task.
-  static String mapTileUrl(Brightness b) => b == Brightness.dark
-      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+  /// OSM's standard tile server, overridable via `--dart-define=MAP_TILE_URL=...`
+  /// (or env/dev.json) for a keyed provider. The CartoDB Dark/Light Matter
+  /// tiles this used to point at now watermark "API KEY REQUIRED" for
+  /// unauthenticated use, so this falls back to OSM directly.
+  ///
+  /// IMPORTANT: OSM's tile usage policy (https://operations.osmfoundation.org/policies/tiles/)
+  /// allows development/light use only — set `MAP_TILE_URL` to a keyed
+  /// provider (Mapbox, Stadia, MapTiler, etc.) before release.
+  static const String mapTileUrl = String.fromEnvironment(
+    'MAP_TILE_URL',
+    defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  );
+
+  /// Attribution text required by the OSM tile licence; see
+  /// `_AttributionBar` in map_screen.dart for where it's rendered.
+  static const String mapAttribution = '© OpenStreetMap contributors';
 }

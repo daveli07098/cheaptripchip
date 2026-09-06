@@ -13,8 +13,9 @@ class PlaceStore {
   PlaceStore._();
   static final PlaceStore instance = PlaceStore._();
 
-  final ValueNotifier<List<Place>> places =
-      ValueNotifier<List<Place>>(List<Place>.from(MockData.places));
+  final ValueNotifier<List<Place>> places = ValueNotifier<List<Place>>(
+    List<Place>.from(MockData.places),
+  );
 
   /// Add a newly-saved place to the top of the feed.
   void add(Place place) {
@@ -22,4 +23,16 @@ class PlaceStore {
   }
 
   Place byId(String id) => places.value.firstWhere((p) => p.id == id);
+
+  /// Flips [Place.isFavorite] for the place with the given [id], replacing it
+  /// in place and notifying listeners.
+  void toggleFavorite(String id) {
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id)
+          place.copyWith(isFavorite: !place.isFavorite)
+        else
+          place,
+    ];
+  }
 }

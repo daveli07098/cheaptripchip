@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../data/mock_data.dart';
+import '../data/place_store.dart';
 import '../models/board.dart';
+import '../models/place.dart';
 import '../theme/app_theme.dart';
 import 'place_detail_sheet.dart';
 
@@ -11,19 +13,61 @@ class BoardsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      itemCount: MockData.boards.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 12),
-      itemBuilder: (context, i) => _BoardCard(board: MockData.boards[i]),
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, places, _) {
+        final placesById = {for (final p in places) p.id: p};
+        final autoBoard = newFindsBoard(places, MockData.boards);
+        final boards = [?autoBoard, ...MockData.boards];
+        return ListView.separated(
+          // Bottom padding keeps the last board clear of the floating
+          // "Add a find" button.
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+          itemCount: boards.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, i) =>
+              _BoardCard(board: boards[i], placesById: placesById),
+        );
+      },
     );
   }
 }
 
+/// Auto-generated board (title 'New finds', emoji 📌) for [places] not
+/// referenced by any section in [boards], grouped one section per category.
+///
+/// Returns null when every place is already referenced by a board — i.e.
+/// there is nothing new to surface.
+Board? newFindsBoard(List<Place> places, List<Board> boards) {
+  final referencedIds = <String>{
+    for (final board in boards)
+      for (final section in board.sections) ...section.placeIds,
+  };
+  final unreferenced = places.where((p) => !referencedIds.contains(p.id));
+  if (unreferenced.isEmpty) return null;
+
+  // Group by category, preserving the order categories are first encountered.
+  final byCategory = <PlaceCategory, List<String>>{};
+  for (final place in unreferenced) {
+    byCategory.putIfAbsent(place.category, () => []).add(place.id);
+  }
+
+  return Board(
+    id: 'new-finds',
+    name: 'New finds',
+    emoji: '📌',
+    sections: [
+      for (final entry in byCategory.entries)
+        BoardSection(title: entry.key.labelEn, placeIds: entry.value),
+    ],
+  );
+}
+
 class _BoardCard extends StatelessWidget {
-  const _BoardCard({required this.board});
+  const _BoardCard({required this.board, required this.placesById});
 
   final Board board;
+  final Map<String, Place> placesById;
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +93,7 @@ class _BoardCard extends StatelessWidget {
           ),
           children: [
             for (final section in board.sections)
-              _SectionBlock(section: section),
+              _SectionBlock(section: section, placesById: placesById),
           ],
         ),
       ),
@@ -58,19 +102,23 @@ class _BoardCard extends StatelessWidget {
 }
 
 class _SectionBlock extends StatelessWidget {
-  const _SectionBlock({required this.section});
+  const _SectionBlock({required this.section, required this.placesById});
 
   final BoardSection section;
+  final Map<String, Place> placesById;
 
   @override
   Widget build(BuildContext context) {
+    // A section place id that no longer resolves against the live store
+    // (e.g. removed) is skipped rather than crashing the tile.
+    final ids = section.placeIds.where(placesById.containsKey).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Text(
-            '${section.title.toUpperCase()} · ${section.placeIds.length}',
+            '${section.title.toUpperCase()} · ${ids.length}',
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w700,
@@ -81,13 +129,12 @@ class _SectionBlock extends StatelessWidget {
             ),
           ),
         ),
-        for (final id in section.placeIds) _itemTile(context, id),
+        for (final id in ids) _itemTile(context, placesById[id]!),
       ],
     );
   }
 
-  Widget _itemTile(BuildContext context, String id) {
-    final place = MockData.placeById(id);
+  Widget _itemTile(BuildContext context, Place place) {
     final color = AppTheme.categoryColor(
       place.category,
       Theme.of(context).brightness,

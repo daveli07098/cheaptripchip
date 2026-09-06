@@ -4,7 +4,7 @@ import '../models/place.dart';
 import '../theme/app_theme.dart';
 
 /// Feed/sidebar card: category swatch, name, area tag, AI description preview,
-/// and the "1match" confidence indicator (Yaay parity, ANALYSIS.md §6).
+/// and the "Pinned" location-confidence indicator (Yaay parity, ANALYSIS.md §6).
 class PlaceCard extends StatelessWidget {
   const PlaceCard({super.key, required this.place, required this.onTap});
 
@@ -157,26 +157,29 @@ class _MatchBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.coral.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.verified, size: 12, color: AppTheme.coral),
-          const SizedBox(width: 3),
-          Text(
-            '1 match',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.coral.withValues(alpha: 0.95),
+    return Tooltip(
+      message: 'Location confirmed',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: AppTheme.coral.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.push_pin, size: 12, color: AppTheme.coral),
+            const SizedBox(width: 3),
+            Text(
+              'Pinned',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.coral.withValues(alpha: 0.95),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
