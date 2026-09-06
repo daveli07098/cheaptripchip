@@ -1,4 +1,5 @@
 {
+  "dart.flutterAdditionalArgs": ["--dart-define-from-file=env/dev.json"],
   "github.copilot.chat.agent.autoApprove": false,
   "github.copilot.chat.codeGeneration.instructions": [],
   "chat.tools.autoApprove": false,

@@ -24,11 +24,30 @@ After any non-trivial session, run the session-wrap workflow:
 
 ## Tool Restrictions
 
-Only use the minimum tools needed. Do not invoke browser, web-fetch, MCP server tools,
-or external API calls unless the user explicitly asks. Prefer local file tools.
+Only use the minimum tools needed. Prefer local file tools.
 
-Allowed by default: read, write, search, terminal (when needed), git.
-Require explicit request: browser, web-fetch, MCP, external APIs.
+Allowed by default: read, write, search, terminal (when needed), git,
+and the `chrome-devtools` MCP server (`mcp__chrome-devtools__*`).
+Require explicit request: web-fetch, other MCP servers, external APIs.
+
+### Chrome DevTools MCP
+
+Pre-authorized for this repo — use it without asking when it is the right tool:
+
+- Opening UI/design references the user links (Threads, Instagram, sites that are
+  JS-rendered or login-walled, where plain web-fetch returns a shell page).
+- Inspecting a running Flutter web build (`flutter run -d chrome`) — console errors,
+  network calls, layout, screenshots.
+
+Rules:
+
+- It drives the user's real, logged-in Chrome. Open new tabs; never close, navigate
+  away from, or interact with tabs you did not open.
+- Read-only by default: navigate, snapshot, screenshot, read console/network.
+  Never log in, submit forms, post, click "buy"/"delete", or take any action that
+  writes to a third-party account without explicit confirmation.
+- Never paste secrets or key material into a page.
+- Screenshot/snapshot rather than dumping full page HTML into context.
 
 ## Safety
 

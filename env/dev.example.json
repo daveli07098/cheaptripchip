@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to dev.json and fill in. dev.json is git-ignored — never commit real keys.",
+  "GEMINI_API_KEY": "AIza...",
+  "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+}
