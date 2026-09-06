@@ -5,6 +5,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2026-09-07] — Session: UX review fixes
+### Changed
+- Map tiles: OpenStreetMap by default via `MAP_TILE_URL` compile-time define
+  (CARTO now requires a key); dark theme uses flutter_map's dark tile filter.
+  OSM's tile policy is for development/light use — set `MAP_TILE_URL` to a
+  keyed provider before release.
+- "Add a find" moved into the map sheet header; the floating button now shows
+  only on Saved/Boards, whose lists gained bottom padding so it covers nothing.
+- Place-list sheet is one `CustomScrollView`, so the drag handle and header
+  drag the sheet; peek raised 0.18 → 0.22 for the taller header.
+- Light theme: unselected category chips use the theme surface/outline colours.
+- Map attribution follows the sheet's top edge and stays visible.
+- Selected map pin: 1.25× with an on-surface ring, `selected` semantics.
+- Initial camera fits every place (was a hardcoded centre/zoom that clipped
+  the easternmost pin).
+- Theme toggle also available in the map's chip row (`ThemeToggleButton`).
+- Feed card badge reads "Pinned" with a tooltip instead of "1 match".
+- Extraction errors: 403 / blocked-API responses map to an actionable message.
+### Added
+- Theme mode persists via `shared_preferences` (loaded before first frame).
+- Favourite toggle (`Place.isFavorite`, `PlaceStore.toggleFavorite`) and Share
+  via `share_plus` in the place detail sheet, with accessible names.
+- Boards reads the live `PlaceStore`; unsorted places appear in an automatic
+  "New finds" board grouped by category (`newFindsBoard`, unit-tested).
+### Notes
+- Re-verified in a headless phone-size web preview: no tile watermark, handle
+  drag, row → pin, sheet row → detail, favourite toggle, theme persisted across
+  reload. Gemini extraction still needs the key's API restriction lifted in
+  Google Cloud Console.
+- Web builds: after adding plugins, a stale `web_plugin_registrant.dart` hid
+  the shared_preferences web implementation until `flutter clean`.
+
 ## [2026-09-07] — Session: emoji categories, map sheet, light + dark themes
 ### Added
 - Emoji as the category marker everywhere (pins, chips, cards, boards, detail
