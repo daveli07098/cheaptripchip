@@ -26,7 +26,10 @@ class PlaceDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = AppTheme.categoryColor(place.category);
+    final color = AppTheme.categoryColor(
+      place.category,
+      Theme.of(context).brightness,
+    );
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -35,9 +38,9 @@ class PlaceDetailSheet extends StatelessWidget {
       expand: false,
       builder: (context, controller) {
         return Container(
-          decoration: const BoxDecoration(
-            color: AppTheme.ink,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: ListView(
             controller: controller,
@@ -78,7 +81,7 @@ class PlaceDetailSheet extends StatelessWidget {
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: AppTheme.surface,
+                        color: Theme.of(context).colorScheme.surface,
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
@@ -86,7 +89,8 @@ class PlaceDetailSheet extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.6,
-                          color: Colors.white.withValues(alpha: 0.85),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.85),
                         ),
                       ),
                     ),
@@ -95,7 +99,8 @@ class PlaceDetailSheet extends StatelessWidget {
                     _InfoRow(icon: Icons.schedule, text: place.hours),
                     _InfoRow(
                       icon: Icons.person_outline,
-                      text: 'By ${place.sourceHandle} '
+                      text:
+                          'By ${place.sourceHandle} '
                           'on ${place.sourcePlatform.label}',
                     ),
                     const SizedBox(height: 22),
@@ -128,16 +133,24 @@ class _PhotoHeader extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [color.withValues(alpha: 0.9), color.withValues(alpha: 0.4)],
+              colors: [
+                color.withValues(alpha: 0.9),
+                color.withValues(alpha: 0.4),
+              ],
             ),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(24)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
+          // Emoji aren't accessible labels — expose the category via
+          // Semantics and hide the raw glyph from the a11y tree (WCAG 1.4.1).
           child: Center(
-            child: Icon(
-              AppTheme.categoryIcon(place.category),
-              size: 56,
-              color: Colors.white.withValues(alpha: 0.9),
+            child: Semantics(
+              label: place.category.labelEn,
+              child: ExcludeSemantics(
+                child: Text(
+                  place.category.emoji,
+                  style: const TextStyle(fontSize: 56, height: 1),
+                ),
+              ),
             ),
           ),
         ),
@@ -150,6 +163,9 @@ class _PhotoHeader extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
+                // Sits on the category-colour gradient (not the scaffold),
+                // which stays vivid/dark in both themes — a fixed white
+                // handle keeps working there, no theme lookup needed.
                 color: Colors.white.withValues(alpha: 0.7),
                 borderRadius: BorderRadius.circular(2),
               ),
@@ -256,7 +272,7 @@ class _ActionRow extends StatelessWidget {
   void _addToBoard(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -266,14 +282,17 @@ class _ActionRow extends StatelessWidget {
           children: [
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('Add to board',
-                  style:
-                      TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              child: Text(
+                'Add to board',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
             ),
             for (final board in MockData.boards)
               ListTile(
-                leading: Text(board.emoji,
-                    style: const TextStyle(fontSize: 22)),
+                leading: Text(
+                  board.emoji,
+                  style: const TextStyle(fontSize: 22),
+                ),
                 title: Text(board.name),
                 subtitle: Text('${board.itemCount} places'),
                 trailing: const Icon(Icons.add_circle_outline),
@@ -309,7 +328,9 @@ class _IconAction extends StatelessWidget {
         onPressed: onTap,
         icon: Icon(icon, size: 20),
         style: IconButton.styleFrom(
-          backgroundColor: AppTheme.surfaceAlt,
+          backgroundColor: Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest,
           padding: const EdgeInsets.all(12),
         ),
       ),
@@ -330,7 +351,9 @@ class _SectionLabel extends StatelessWidget {
         fontSize: 11.5,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.8,
-        color: Colors.white.withValues(alpha: 0.5),
+        color: Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
       ),
     );
   }
@@ -349,7 +372,13 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: Colors.white.withValues(alpha: 0.55)),
+          Icon(
+            icon,
+            size: 18,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -386,8 +415,8 @@ class _OpenInMapsButton extends StatelessWidget {
       icon: const Icon(Icons.map_outlined, size: 18),
       label: const Text('Open in Google Maps / 在 Google 地圖中開啟'),
       style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.25)),
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        side: BorderSide(color: Theme.of(context).colorScheme.outline),
         padding: const EdgeInsets.symmetric(vertical: 14),
         minimumSize: const Size(double.infinity, 0),
       ),

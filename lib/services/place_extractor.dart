@@ -16,8 +16,8 @@ import 'geocoding_service.dart';
 /// backend (fetch page → feed text to this same prompt).
 class PlaceExtractor {
   PlaceExtractor({GeminiService? gemini, GeocodingService? geocoder})
-      : _gemini = gemini ?? GeminiService(),
-        _geocoder = geocoder ?? GeocodingService();
+    : _gemini = gemini ?? GeminiService(),
+      _geocoder = geocoder ?? GeocodingService();
 
   final GeminiService _gemini;
   final GeocodingService _geocoder;
@@ -47,8 +47,10 @@ class PlaceExtractor {
       region: region,
       category: _category(_str(json['category'])),
       location: resolved,
-      descriptionEn: _str(json['descriptionEn'],
-          fallback: 'No description extracted.'),
+      descriptionEn: _str(
+        json['descriptionEn'],
+        fallback: 'No description extracted.',
+      ),
       originalCaption: _str(json['originalCaption'], fallback: input),
       address: address,
       hours: _str(json['hours'], fallback: 'Hours unknown'),
@@ -56,16 +58,20 @@ class PlaceExtractor {
       sourcePlatform: _platform(_str(json['sourcePlatform'])),
       award: _nullableStr(json['award']),
       matchConfident: confident || loc != null,
+      rating: _nullableDouble(json['rating']),
+      reviewCount: _nullableInt(json['reviewCount']),
+      priceRange: _nullableStr(json['priceRange']),
     );
   }
 
-  String _prompt(String input) => '''
+  String _prompt(String input) =>
+      '''
 You extract a single travel place from a social-media post (Instagram/TikTok).
 Return ONLY a JSON object, no prose, with these keys:
 - name: place name, keep the original language (e.g. "五感 (Gogo)")
 - areaLabel: short neighbourhood/area tag (e.g. "池袋")
 - region: "City, Country" (e.g. "Tokyo, Japan")
-- category: one of restaurant, food, sightseeing, shopping, stay, nightlife
+- category: one of restaurant, cafe, food, sightseeing, shopping, stay, nightlife
 - latitude: number or null if unknown
 - longitude: number or null if unknown
 - descriptionEn: a 1-2 sentence English summary
@@ -75,8 +81,11 @@ Return ONLY a JSON object, no prose, with these keys:
 - sourceHandle: the author handle if present (e.g. "@rame.nbon"), else ""
 - sourcePlatform: "instagram" or "tiktok"
 - award: any award/recognition mentioned (e.g. "Michelin Bib Gourmand"), else null
+- rating: average rating out of 5 (e.g. 4.7) if mentioned, else null
+- reviewCount: number of reviews backing the rating (e.g. 85) if mentioned, else null
+- priceRange: price indicator in the original currency (e.g. "\$600–1,400"), else null
 
-If a value is unknown, use "" (or null for latitude/longitude/award).
+If a value is unknown, use "" (or null for latitude/longitude/award/rating/reviewCount/priceRange).
 
 POST CONTENT:
 $input
@@ -93,6 +102,16 @@ $input
   String? _nullableStr(Object? v) {
     final s = _str(v);
     return s.isEmpty ? null : s;
+  }
+
+  double? _nullableDouble(Object? v) {
+    if (v == null) return null;
+    return v is num ? v.toDouble() : double.tryParse('$v');
+  }
+
+  int? _nullableInt(Object? v) {
+    if (v == null) return null;
+    return v is num ? v.toInt() : int.tryParse('$v');
   }
 
   LatLng? _coords(Object? lat, Object? lng) {

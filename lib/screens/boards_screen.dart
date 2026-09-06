@@ -41,7 +41,11 @@ class _BoardCard extends StatelessWidget {
           ),
           subtitle: Text(
             '${board.sections.length} sections · ${board.itemCount} places',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+            style: TextStyle(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
           ),
           children: [
             for (final section in board.sections)
@@ -71,7 +75,9 @@ class _SectionBlock extends StatelessWidget {
               fontSize: 11.5,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.6,
-              color: Colors.white.withValues(alpha: 0.5),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
             ),
           ),
         ),
@@ -82,19 +88,36 @@ class _SectionBlock extends StatelessWidget {
 
   Widget _itemTile(BuildContext context, String id) {
     final place = MockData.placeById(id);
-    final color = AppTheme.categoryColor(place.category);
+    final color = AppTheme.categoryColor(
+      place.category,
+      Theme.of(context).brightness,
+    );
     return ListTile(
       dense: true,
       leading: CircleAvatar(
         radius: 16,
         backgroundColor: color.withValues(alpha: 0.2),
-        child: Icon(AppTheme.categoryIcon(place.category),
-            size: 16, color: color),
+        // Emoji aren't accessible labels — expose the category via Semantics
+        // and hide the raw glyph from the a11y tree (WCAG 1.4.1).
+        child: Semantics(
+          label: place.category.labelEn,
+          child: ExcludeSemantics(
+            child: Text(
+              place.category.emoji,
+              style: const TextStyle(fontSize: 15, height: 1),
+            ),
+          ),
+        ),
       ),
-      title: Text(place.name,
-          maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(place.areaLabel,
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.55))),
+      title: Text(place.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        place.areaLabel,
+        style: TextStyle(
+          color: Theme.of(
+            context,
+          ).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+        ),
+      ),
       trailing: const Icon(Icons.chevron_right, size: 20),
       onTap: () => PlaceDetailSheet.show(context, place),
     );

@@ -13,7 +13,9 @@ class PlaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = AppTheme.categoryColor(place.category);
+    final theme = Theme.of(context);
+    final color = AppTheme.categoryColor(place.category, theme.brightness);
+    final onSurfaceVariant = theme.colorScheme.onSurfaceVariant;
 
     return Card(
       child: InkWell(
@@ -24,7 +26,7 @@ class PlaceCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Photo placeholder — production pulls the IG carousel's first frame.
-              _Thumb(color: color, icon: AppTheme.categoryIcon(place.category)),
+              _Thumb(color: color, category: place.category),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -47,6 +49,18 @@ class PlaceCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
+                    // Google-Maps-style metadata line: rating · price · category,
+                    // each part optional so e.g. an un-rated place still renders
+                    // cleanly as just the category label.
+                    Text(
+                      _metaLine(place),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         Icon(Icons.place, size: 14, color: color),
@@ -55,7 +69,7 @@ class PlaceCard extends StatelessWidget {
                           '${place.areaLabel} · ${place.region}',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.white.withValues(alpha: 0.6),
+                            color: onSurfaceVariant.withValues(alpha: 0.6),
                           ),
                         ),
                       ],
@@ -68,7 +82,7 @@ class PlaceCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 13,
                         height: 1.35,
-                        color: Colors.white.withValues(alpha: 0.78),
+                        color: onSurfaceVariant.withValues(alpha: 0.78),
                       ),
                     ),
                   ],
@@ -82,11 +96,27 @@ class PlaceCard extends StatelessWidget {
   }
 }
 
+/// Builds the Google-Maps-style metadata line, e.g.
+/// "4.7 ★ (85) · $600–1,400 · Restaurant". Rating and price are optional and
+/// drop their own separator cleanly when absent; the category label always
+/// renders last.
+String _metaLine(Place place) {
+  final parts = <String>[];
+  if (place.hasRating) {
+    final rating = place.rating!.toStringAsFixed(1);
+    final reviews = place.reviewCount != null ? ' (${place.reviewCount})' : '';
+    parts.add('$rating ★$reviews');
+  }
+  if (place.priceRange != null) parts.add(place.priceRange!);
+  parts.add(place.category.labelEn);
+  return parts.join(' · ');
+}
+
 class _Thumb extends StatelessWidget {
-  const _Thumb({required this.color, required this.icon});
+  const _Thumb({required this.color, required this.category});
 
   final Color color;
-  final IconData icon;
+  final PlaceCategory category;
 
   @override
   Widget build(BuildContext context) {
@@ -97,11 +127,27 @@ class _Thumb extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [color.withValues(alpha: 0.85), color.withValues(alpha: 0.45)],
+          colors: [
+            color.withValues(alpha: 0.85),
+            color.withValues(alpha: 0.45),
+          ],
         ),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Icon(icon, color: Colors.white, size: 28),
+      // Emoji aren't accessible labels (screen readers announce the CLDR
+      // glyph name, not the category) — expose the real label via Semantics
+      // and hide the raw glyph from the a11y tree.
+      child: Center(
+        child: Semantics(
+          label: category.labelEn,
+          child: ExcludeSemantics(
+            child: Text(
+              category.emoji,
+              style: const TextStyle(fontSize: 28, height: 1),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

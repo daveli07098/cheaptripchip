@@ -27,6 +27,9 @@ class MockData {
       sourceHandle: '@rame.nbon',
       sourcePlatform: SourcePlatform.instagram,
       award: 'Michelin Bib Gourmand',
+      rating: 4.6,
+      reviewCount: 850,
+      priceRange: '¥1,000–2,000',
     ),
     Place(
       id: 'p2',
@@ -44,13 +47,16 @@ class MockData {
       hours: '09:00–22:00 (timed entry)',
       sourceHandle: '@tokyo.artspots',
       sourcePlatform: SourcePlatform.tiktok,
+      rating: 4.7,
+      reviewCount: 1980,
+      priceRange: '¥3,800',
     ),
     Place(
       id: 'p3',
       name: 'Koffee Mameya',
       areaLabel: '表参道',
       region: 'Tokyo, Japan',
-      category: PlaceCategory.food,
+      category: PlaceCategory.cafe,
       location: LatLng(35.6668, 139.7126),
       descriptionEn:
           'A minimalist specialty-coffee counter in Omotesando. Baristas '
@@ -61,6 +67,9 @@ class MockData {
       hours: '10:00–18:00',
       sourceHandle: '@coffee.tokyo',
       sourcePlatform: SourcePlatform.instagram,
+      rating: 4.5,
+      reviewCount: 620,
+      priceRange: '¥600–1,400',
     ),
     Place(
       id: 'p4',
@@ -78,6 +87,9 @@ class MockData {
       hours: 'Open 24h',
       sourceHandle: '@walk.tokyo',
       sourcePlatform: SourcePlatform.instagram,
+      rating: 4.4,
+      reviewCount: 340,
+      priceRange: 'Free',
     ),
     Place(
       id: 'p5',
@@ -96,6 +108,9 @@ class MockData {
       sourceHandle: '@nightcap.jp',
       sourcePlatform: SourcePlatform.instagram,
       award: "Asia's 50 Best Bars",
+      rating: 4.8,
+      reviewCount: 480,
+      priceRange: '¥3,000–6,000',
     ),
     Place(
       id: 'p6',
@@ -113,6 +128,9 @@ class MockData {
       hours: 'Check-in 15:00',
       sourceHandle: '@stay.japan',
       sourcePlatform: SourcePlatform.instagram,
+      rating: 4.9,
+      reviewCount: 1200,
+      priceRange: '¥80,000–150,000/night',
     ),
   ];
 
@@ -139,6 +157,5 @@ class MockData {
     ),
   ];
 
-  static Place placeById(String id) =>
-      places.firstWhere((p) => p.id == id);
+  static Place placeById(String id) => places.firstWhere((p) => p.id == id);
 }

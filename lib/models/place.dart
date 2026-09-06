@@ -20,6 +20,10 @@ class Place {
     required this.sourcePlatform,
     this.award,
     this.matchConfident = true,
+    this.rating,
+    this.reviewCount,
+    this.priceRange,
+    this.photoUrls = const [],
   });
 
   final String id;
@@ -60,24 +64,42 @@ class Place {
   /// Mirrors Yaay's "1match" badge — whether the AI geocode resolved confidently.
   final bool matchConfident;
 
+  /// Average rating out of 5, e.g. 4.7. Null if not extracted/known.
+  final double? rating;
+
+  /// Number of reviews backing [rating], e.g. 85.
+  final int? reviewCount;
+
+  /// Free-form price indicator in the original currency, e.g. "$600–1,400" or "$200–400".
+  final String? priceRange;
+
+  /// Photo URLs for the place. Empty until a real photo source is wired up.
+  final List<String> photoUrls;
+
+  /// Whether a rating is available to render (e.g. in the map-style info card).
+  bool get hasRating => rating != null;
+
   /// Deep link that opens this location in Google Maps — just a URL, no API key.
-  Uri get googleMapsUrl =>
-      Uri.parse('https://www.google.com/maps/search/?api=1&query='
-          '${location.latitude},${location.longitude}');
+  Uri get googleMapsUrl => Uri.parse(
+    'https://www.google.com/maps/search/?api=1&query='
+    '${location.latitude},${location.longitude}',
+  );
 }
 
 enum PlaceCategory {
-  restaurant('Restaurant', '餐廳'),
-  food('Food', '美食'),
-  sightseeing('Sightseeing', '景點'),
-  shopping('Shopping', '購物'),
-  stay('Stay', '住宿'),
-  nightlife('Nightlife', '夜生活');
+  restaurant('Restaurant', '餐廳', '🍽️'),
+  cafe('Cafe', '咖啡店', '☕'),
+  food('Food', '美食', '🍜'),
+  sightseeing('Sightseeing', '景點', '⛩️'),
+  shopping('Shopping', '購物', '🛍️'),
+  stay('Stay', '住宿', '🏨'),
+  nightlife('Nightlife', '夜生活', '🍸');
 
-  const PlaceCategory(this.labelEn, this.labelZh);
+  const PlaceCategory(this.labelEn, this.labelZh, this.emoji);
 
   final String labelEn;
   final String labelZh;
+  final String emoji;
 }
 
 enum SourcePlatform {

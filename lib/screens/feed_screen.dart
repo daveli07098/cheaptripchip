@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../data/place_store.dart';
 import '../models/place.dart';
-import '../theme/app_theme.dart';
 import '../widgets/place_card.dart';
 import 'place_detail_sheet.dart';
 
@@ -40,7 +39,7 @@ class _FeedScreenState extends State<FeedScreen> {
               hintText: 'Search saved items, boards, inspiration',
               prefixIcon: const Icon(Icons.search),
               filled: true,
-              fillColor: AppTheme.surface,
+              fillColor: Theme.of(context).colorScheme.surface,
               contentPadding: const EdgeInsets.symmetric(vertical: 0),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -77,14 +76,18 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.travel_explore,
-                size: 48, color: Colors.white.withValues(alpha: 0.4)),
+            Icon(
+              Icons.travel_explore,
+              size: 48,
+              color: onSurfaceVariant.withValues(alpha: 0.4),
+            ),
             const SizedBox(height: 14),
             const Text(
               'Nothing here yet',
@@ -98,7 +101,7 @@ class _EmptyState extends StatelessWidget {
               style: TextStyle(
                 fontSize: 14,
                 height: 1.4,
-                color: Colors.white.withValues(alpha: 0.6),
+                color: onSurfaceVariant.withValues(alpha: 0.6),
               ),
             ),
           ],

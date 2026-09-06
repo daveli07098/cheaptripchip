@@ -7,6 +7,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../data/place_store.dart';
 import '../services/place_extractor.dart';
 import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -47,10 +48,17 @@ class _HomeShellState extends State<HomeShell> {
         onError: (Object e) => debugPrint('share intake error: $e'),
       );
       // Cold-start: app launched from a share.
-      ReceiveSharingIntent.instance.getInitialMedia().then((files) {
-        _handleShared(files);
-        ReceiveSharingIntent.instance.reset();
-      }).catchError((Object e) => debugPrint('share intake init error: $e'));
+      ReceiveSharingIntent.instance
+          .getInitialMedia()
+          .then((files) {
+            _handleShared(files);
+            ReceiveSharingIntent.instance.reset();
+          })
+          .catchError((Object e) {
+            // Block body (not `=>`) so this returns `null`, not `void` — the
+            // onError callback must return `FutureOr<Null>`.
+            debugPrint('share intake init error: $e');
+          });
     } catch (e) {
       // Native plugin not available (e.g. test harness) — share intake is optional.
       debugPrint('share intake unavailable: $e');
@@ -79,19 +87,20 @@ class _HomeShellState extends State<HomeShell> {
 
     return Scaffold(
       extendBodyBehindAppBar: !showAppBar,
-      appBar: showAppBar ? AppBar(title: Text(_titles[_index])) : null,
+      appBar: showAppBar
+          ? AppBar(
+              title: Text(_titles[_index]),
+              actions: const [_ThemeToggleButton()],
+            )
+          : null,
       body: IndexedStack(
         index: _index,
-        children: const [
-          MapScreen(),
-          FeedScreen(),
-          BoardsScreen(),
-        ],
+        children: const [MapScreen(), FeedScreen(), BoardsScreen()],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openAddSheet(),
         backgroundColor: AppTheme.coral,
-        foregroundColor: Colors.white,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
         icon: const Icon(Icons.add_link),
         label: const Text('Add a find'),
       ),
@@ -123,7 +132,7 @@ class _HomeShellState extends State<HomeShell> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -133,6 +142,31 @@ class _HomeShellState extends State<HomeShell> {
         ),
         child: AddFindSheet(initialText: initialText),
       ),
+    );
+  }
+}
+
+/// AppBar action that lets the user override the system theme. Cycles
+/// system → light → dark → system via [ThemeController.toggle].
+class _ThemeToggleButton extends StatelessWidget {
+  const _ThemeToggleButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.instance,
+      builder: (context, mode, _) {
+        final (icon, tooltip) = switch (mode) {
+          ThemeMode.system => (Icons.brightness_auto, 'Theme: System'),
+          ThemeMode.light => (Icons.light_mode, 'Theme: Light'),
+          ThemeMode.dark => (Icons.dark_mode, 'Theme: Dark'),
+        };
+        return IconButton(
+          icon: Icon(icon),
+          tooltip: tooltip,
+          onPressed: ThemeController.instance.toggle,
+        );
+      },
     );
   }
 }
@@ -149,8 +183,9 @@ class AddFindSheet extends StatefulWidget {
 }
 
 class _AddFindSheetState extends State<AddFindSheet> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initialText);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialText,
+  );
   final _extractor = PlaceExtractor();
   bool _busy = false;
   String? _error;
@@ -202,14 +237,18 @@ class _AddFindSheetState extends State<AddFindSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Add a find',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const Text(
+              'Add a find',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 6),
             Text(
               'Paste an Instagram/TikTok link (and its caption for best results). '
               'Gemini extracts the place, we map it and write a summary.',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.65),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
                 height: 1.4,
               ),
             ),
@@ -220,7 +259,8 @@ class _AddFindSheetState extends State<AddFindSheet> {
               minLines: 2,
               enabled: !_busy,
               decoration: const InputDecoration(
-                hintText: 'https://instagram.com/reel/...\n\nPaste the caption here too',
+                hintText:
+                    'https://instagram.com/reel/...\n\nPaste the caption here too',
                 alignLabelWithHint: true,
               ),
             ),
@@ -235,11 +275,13 @@ class _AddFindSheetState extends State<AddFindSheet> {
             FilledButton.icon(
               onPressed: _busy ? null : _extract,
               icon: _busy
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
                     )
                   : const Icon(Icons.auto_awesome, size: 18),
               label: Text(_busy ? 'Extracting…' : 'Extract & save'),
