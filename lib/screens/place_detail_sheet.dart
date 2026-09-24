@@ -10,6 +10,7 @@ import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../widgets/board_picker_sheet.dart';
 import '../widgets/place_photo.dart';
 import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
@@ -47,9 +48,11 @@ class PlaceDetailSheet extends StatelessWidget {
       expand: false,
       builder: (context, controller) {
         // Own messenger + transparent Scaffold sized to the sheet: SnackBars
-        // shown from inside the sheet (photo errors, "Added to board", Maps
-        // failures) render on top of it instead of on the root Scaffold,
-        // which sits underneath the modal barrier.
+        // shown from inside the sheet (photo errors, Maps failures) render
+        // on top of it instead of on the root Scaffold, which sits
+        // underneath the modal barrier. The board picker (a modal route on
+        // top of this one) has its own messenger for the same reason — see
+        // board_picker_sheet.dart.
         return ScaffoldMessenger(
           child: Scaffold(
             backgroundColor: Colors.transparent,
@@ -349,14 +352,27 @@ class _ActionRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: FilledButton.icon(
-            onPressed: () => _addToBoard(context),
-            icon: const Icon(Icons.bookmark_add, size: 18),
-            label: const Text('Add to board'),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.coral,
-              padding: const EdgeInsets.symmetric(vertical: 13),
-            ),
+          child: ValueListenableBuilder<List<Board>>(
+            valueListenable: BoardStore.instance.boards,
+            builder: (context, boards, _) {
+              final containing = BoardStore.instance.boardsContaining(place.id);
+              final label = addToBoardLabel(containing);
+              return Semantics(
+                label: label,
+                child: FilledButton.icon(
+                  onPressed: () => BoardPickerSheet.show(context, place),
+                  icon: Icon(
+                    containing.isEmpty ? Icons.bookmark_add : Icons.check,
+                    size: 18,
+                  ),
+                  label: Text(label),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.coral,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(width: 10),
@@ -402,26 +418,6 @@ class _ActionRow extends StatelessWidget {
     } catch (e) {
       debugPrint('Share failed: $e');
     }
-  }
-
-  void _addToBoard(BuildContext context) {
-    // Captured before the sheet opens so the "Added to <board>" SnackBar
-    // still has a valid ScaffoldMessenger once the picker sheet has closed.
-    final messenger = ScaffoldMessenger.of(context);
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: _BoardPickerSheet(place: place, messenger: messenger),
-      ),
-    );
   }
 }
 
@@ -557,148 +553,6 @@ class _NotesDialog extends StatelessWidget {
           child: const Text('Save'),
         ),
       ],
-    );
-  }
-}
-
-/// "Add to board" picker: lists [BoardStore.instance.boards] plus a
-/// "New board…" row that reveals a name field to create one on the fly.
-class _BoardPickerSheet extends StatefulWidget {
-  const _BoardPickerSheet({required this.place, required this.messenger});
-
-  final Place place;
-  final ScaffoldMessengerState messenger;
-
-  @override
-  State<_BoardPickerSheet> createState() => _BoardPickerSheetState();
-}
-
-class _BoardPickerSheetState extends State<_BoardPickerSheet> {
-  final _nameController = TextEditingController();
-  bool _creatingNew = false;
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  void _notifyAdded(String boardName) {
-    widget.messenger.showSnackBar(
-      SnackBar(
-        content: Text('Added to $boardName'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<void> _addToExisting(Board board) async {
-    setState(() => _busy = true);
-    try {
-      await BoardStore.instance.addPlaceToBoard(
-        boardId: board.id,
-        placeId: widget.place.id,
-      );
-      if (!mounted) return;
-      Navigator.pop(context);
-      _notifyAdded(board.name);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _createAndAdd() async {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      final board = await BoardStore.instance.createBoard(name);
-      await BoardStore.instance.addPlaceToBoard(
-        boardId: board.id,
-        placeId: widget.place.id,
-      );
-      if (!mounted) return;
-      Navigator.pop(context);
-      _notifyAdded(board.name);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'Add to board',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-          ),
-          ValueListenableBuilder<List<Board>>(
-            valueListenable: BoardStore.instance.boards,
-            builder: (context, boards, _) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final board in boards)
-                    ListTile(
-                      leading: Text(
-                        board.emoji,
-                        style: const TextStyle(fontSize: 22),
-                      ),
-                      title: Text(board.name),
-                      subtitle: Text(
-                        '${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
-                      ),
-                      trailing: const Icon(Icons.add_circle_outline),
-                      enabled: !_busy,
-                      onTap: () => _addToExisting(board),
-                    ),
-                ],
-              );
-            },
-          ),
-          if (!_creatingNew)
-            ListTile(
-              leading: const Icon(Icons.add),
-              title: const Text('New board…'),
-              enabled: !_busy,
-              onTap: () => setState(() => _creatingNew = true),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _nameController,
-                      autofocus: true,
-                      enabled: !_busy,
-                      decoration: const InputDecoration(hintText: 'Board name'),
-                      onSubmitted: (_) => _createAndAdd(),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: _busy ? null : _createAndAdd,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppTheme.coral,
-                      minimumSize: const Size(0, 44),
-                    ),
-                    child: const Text('Create'),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 8),
-        ],
-      ),
     );
   }
 }

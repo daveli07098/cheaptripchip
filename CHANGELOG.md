@@ -57,6 +57,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tests: `PhotoStore` (lazy load/cache, set/remove, revert on failure, size
   cap, marker-gated reads, rebind), `myPhotoAt` JSON, preview card, pin tap
   shows/empty map hides the card.
+- `BoardPickerSheet` (`lib/widgets/board_picker_sheet.dart`, extracted from
+  `PlaceDetailSheet`'s old `_BoardPickerSheet`): a Google-Maps-"Save to
+  list"-style picker — a `CheckboxListTile` per stored board (checked via
+  `BoardStore.containsPlace`), tapping toggles membership immediately without
+  closing the sheet, so several boards can be picked in one go. "New board…"
+  still creates the board and adds the place in one `createBoard(sections:)`
+  upsert (avoids racing the repository echo), already checked. Tests:
+  checkbox reflects membership, tap toggles add/remove in the store, new-board
+  creation, `addToBoardLabel` (5 total, 94 project-wide).
 ### Changed
 - `firestore.rules`: explicit `places`/`boards`/`photos` matches replace the
   `users/{uid}/{document=**}` wildcard (any allow wins, so the wildcard would
@@ -70,6 +79,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - firebase_core_web 3.11.0 → 3.12.0 (lockfile only): 3.11.0 doesn't compile
   for web under Flutter 3.41.7 (`isA` on `Object`) — pre-existing, unrelated
   to this feature.
+- `BoardPickerSheet` (the board picker opened from the detail sheet's "Add to
+  board" button) now has its own `ScaffoldMessenger`/`Scaffold`, mirroring
+  `PlaceDetailSheet` — it's itself the topmost modal route (over the detail
+  sheet, which now stays open underneath it), so its "Added"/"Removed"
+  SnackBars would otherwise render under its own modal barrier.
+### Fixed
+- Detail sheet's "Add to board" button gave no feedback on success and no
+  indication a place was already saved anywhere, so a re-tap silently
+  no-opped: the button now reads "In <board name>" / "In N boards" (kept in
+  sync with `BoardStore.boards`), and the picker shows a checkbox per board
+  reflecting membership instead of an always-tappable "add" row.
 ### Notes
 - Not verified: on-device deep links (Android/iOS cold and warm start), sharing
   a `.cheaptrip.json` file into the app, and the native share sheets. Verified
