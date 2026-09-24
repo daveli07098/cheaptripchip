@@ -307,13 +307,33 @@ void main() {
   });
 
   group('Google Maps URLs', () {
-    test('googleMapsPlaceUrl pins exact coordinates', () {
-      final place = _place(location: const LatLng(35.7295, 139.7109));
-      final url = TripShare.googleMapsPlaceUrl(place);
+    test('googleMapsPlaceUrl searches name + address', () {
+      final url = TripShare.googleMapsPlaceUrl(_place());
+      expect(url.host, 'www.google.com');
+      expect(url.path, '/maps/search/');
       expect(
-        url.toString(),
-        'https://www.google.com/maps/search/?api=1&query=35.7295,139.7109',
+        url.queryParameters['query'],
+        '五感 (Gogo), 3-1-1 Nishi-Ikebukuro, Toshima City, Tokyo',
       );
+    });
+
+    test('googleMapsQuery falls back to area and region without address', () {
+      expect(
+        _place(address: '').googleMapsQuery,
+        '五感 (Gogo), 池袋, Tokyo, Japan',
+      );
+      expect(
+        _place(address: '', areaLabel: '', region: '').googleMapsQuery,
+        '五感 (Gogo)',
+      );
+    });
+
+    test('googleMapsQuery falls back to coordinates without a name', () {
+      final place = _place(
+        name: '  ',
+        location: const LatLng(35.7295, 139.7109),
+      );
+      expect(place.googleMapsQuery, '35.7295,139.7109');
     });
 
     test('googleMapsRouteUrl returns null for an empty list', () {
@@ -328,14 +348,15 @@ void main() {
 
     test('googleMapsRouteUrl sets origin, destination, and waypoints', () {
       final places = [
-        _place(id: 'a', location: const LatLng(1, 1)),
-        _place(id: 'b', location: const LatLng(2, 2)),
-        _place(id: 'c', location: const LatLng(3, 3)),
+        _place(id: 'a', name: 'A', address: 'Addr A'),
+        _place(id: 'b', name: 'B|x', address: 'Addr B'),
+        _place(id: 'c', name: 'C', address: 'Addr C'),
       ];
       final route = TripShare.googleMapsRouteUrl(places)!;
-      expect(route.queryParameters['origin'], '1.0,1.0');
-      expect(route.queryParameters['destination'], '3.0,3.0');
-      expect(route.queryParameters['waypoints'], '2.0,2.0');
+      expect(route.queryParameters['origin'], 'A, Addr A');
+      expect(route.queryParameters['destination'], 'C, Addr C');
+      // A `|` inside a name would split the waypoint list, so it's stripped.
+      expect(route.queryParameters['waypoints'], 'B x, Addr B');
       expect(route.queryParameters['travelmode'], 'walking');
     });
 
@@ -344,16 +365,16 @@ void main() {
       // 1 dropped.
       final places = List.generate(
         12,
-        (i) => _place(id: 'p$i', location: LatLng(i.toDouble(), i.toDouble())),
+        (i) => _place(id: 'p$i', name: 'P$i', address: ''),
       );
       final route = TripShare.googleMapsRouteUrl(places)!;
       final waypoints = route.queryParameters['waypoints']!.split('|');
       expect(waypoints, hasLength(TripShare.maxRouteWaypoints));
-      expect(route.queryParameters['origin'], '0.0,0.0');
+      expect(route.queryParameters['origin'], 'P0, 池袋, Tokyo, Japan');
       // Point index 10 is the destination (11th of the first 11 points);
       // point 11 was dropped by the cap.
-      expect(route.queryParameters['destination'], '10.0,10.0');
-      expect(waypoints, isNot(contains('11.0,11.0')));
+      expect(route.queryParameters['destination'], 'P10, 池袋, Tokyo, Japan');
+      expect(waypoints, isNot(contains('P11, 池袋, Tokyo, Japan')));
     });
   });
 

@@ -85,10 +85,26 @@ class Place {
   bool get hasRating => rating != null;
 
   /// Deep link that opens this location in Google Maps — just a URL, no API key.
-  Uri get googleMapsUrl => Uri.parse(
-    'https://www.google.com/maps/search/?api=1&query='
-    '${location.latitude},${location.longitude}',
-  );
+  /// What Google Maps searches for: name plus address (or area/region) so it
+  /// opens the place card — name, reviews, hours — instead of a bare
+  /// coordinate pin. Falls back to coordinates when there is no name.
+  String get googleMapsQuery {
+    if (name.trim().isEmpty) {
+      return '${location.latitude},${location.longitude}';
+    }
+    final context = address.trim().isNotEmpty
+        ? address.trim()
+        : [
+            areaLabel.trim(),
+            region.trim(),
+          ].where((s) => s.isNotEmpty).join(', ');
+    return context.isEmpty ? name.trim() : '${name.trim()}, $context';
+  }
+
+  Uri get googleMapsUrl => Uri.https('www.google.com', '/maps/search/', {
+    'api': '1',
+    'query': googleMapsQuery,
+  });
 
   Place copyWith({
     String? id,

@@ -147,14 +147,11 @@ class TripShare {
   // Google Maps
   // ---------------------------------------------------------------------
 
-  /// A single place pinned in Google Maps by coordinates. Matches
-  /// [Place.googleMapsUrl] — coordinates only (no name) is the form Google's
-  /// URL API documents unambiguously for pinning an exact spot; see
+  /// A single place in Google Maps, searched by name + address so it opens
+  /// the place card rather than a coordinate pin. Same as
+  /// [Place.googleMapsUrl]; see
   /// https://developers.google.com/maps/documentation/urls/get-started.
-  static Uri googleMapsPlaceUrl(Place place) => Uri.parse(
-    'https://www.google.com/maps/search/?api=1&query='
-    '${place.location.latitude},${place.location.longitude}',
-  );
+  static Uri googleMapsPlaceUrl(Place place) => place.googleMapsUrl;
 
   /// Google's directions URL API caps waypoints at 9 (11 points total with
   /// origin + destination). Extra places beyond that are dropped.
@@ -178,18 +175,18 @@ class TripShare {
 
     final params = <String, String>{
       'api': '1',
-      'origin': _coords(origin),
-      'destination': _coords(destination),
+      'origin': origin.googleMapsQuery,
+      'destination': destination.googleMapsQuery,
       'travelmode': 'walking',
     };
     if (waypoints.isNotEmpty) {
-      params['waypoints'] = waypoints.map(_coords).join('|');
+      // `|` separates waypoints, so strip it from the place text itself.
+      params['waypoints'] = waypoints
+          .map((p) => p.googleMapsQuery.replaceAll('|', ' '))
+          .join('|');
     }
     return Uri.https('www.google.com', '/maps/dir/', params);
   }
-
-  static String _coords(Place p) =>
-      '${p.location.latitude},${p.location.longitude}';
 
   // ---------------------------------------------------------------------
   // KML (imports into Google My Maps)
