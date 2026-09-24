@@ -1,12 +1,17 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/board_store.dart';
+import '../data/photo_store.dart';
 import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../widgets/place_photo.dart';
+import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
 
 /// Detail card (ANALYSIS.md §4): photo header, location badge, AI description,
@@ -41,83 +46,104 @@ class PlaceDetailSheet extends StatelessWidget {
       maxChildSize: 0.95,
       expand: false,
       builder: (context, controller) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: ListView(
-            controller: controller,
-            padding: EdgeInsets.zero,
-            children: [
-              _PhotoHeader(place: place, color: color),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _AreaBadge(label: place.areaLabel, color: color),
-                    const SizedBox(height: 12),
-                    Text(
-                      place.name,
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (place.award != null) ...[
-                      const SizedBox(height: 8),
-                      _AwardChip(label: place.award!),
-                    ],
-                    const SizedBox(height: 18),
-                    _ActionRow(place: place),
-                    const SizedBox(height: 20),
-                    _SectionLabel('About / 簡介'),
-                    const SizedBox(height: 6),
-                    Text(
-                      place.descriptionEn,
-                      style: const TextStyle(fontSize: 15, height: 1.5),
-                    ),
-                    const SizedBox(height: 18),
-                    _MyReviewSection(place: place),
-                    const SizedBox(height: 18),
-                    _SectionLabel('Original caption / 原文'),
-                    const SizedBox(height: 6),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Text(
-                        place.originalCaption,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.6,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.85),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    _InfoRow(icon: Icons.location_on, text: place.address),
-                    _InfoRow(icon: Icons.schedule, text: place.hours),
-                    _InfoRow(
-                      icon: Icons.person_outline,
-                      text:
-                          'By ${place.sourceHandle} '
-                          'on ${place.sourcePlatform.label}',
-                    ),
-                    const SizedBox(height: 22),
-                    _OpenInMapsButton(place: place),
-                  ],
-                ),
-              ),
-            ],
+        // Own messenger + transparent Scaffold sized to the sheet: SnackBars
+        // shown from inside the sheet (photo errors, "Added to board", Maps
+        // failures) render on top of it instead of on the root Scaffold,
+        // which sits underneath the modal barrier.
+        return ScaffoldMessenger(
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            // Dialogs/pickers raising the keyboard over this sheet shouldn't
+            // shrink it (the pre-Scaffold Container ignored viewInsets too).
+            resizeToAvoidBottomInset: false,
+            body: _sheetBody(context, controller, color),
           ),
         );
       },
+    );
+  }
+
+  Widget _sheetBody(
+    BuildContext context,
+    ScrollController controller,
+    Color color,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: ListView(
+        controller: controller,
+        padding: EdgeInsets.zero,
+        children: [
+          _PhotoHeader(place: place, color: color),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AreaBadge(label: place.areaLabel, color: color),
+                const SizedBox(height: 12),
+                Text(
+                  place.name,
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (place.award != null) ...[
+                  const SizedBox(height: 8),
+                  _AwardChip(label: place.award!),
+                ],
+                const SizedBox(height: 18),
+                _ActionRow(place: place),
+                const SizedBox(height: 20),
+                _SectionLabel('About / 簡介'),
+                const SizedBox(height: 6),
+                Text(
+                  place.descriptionEn,
+                  style: const TextStyle(fontSize: 15, height: 1.5),
+                ),
+                const SizedBox(height: 18),
+                _MyReviewSection(place: place),
+                const SizedBox(height: 18),
+                _SectionLabel('Original caption / 原文'),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Text(
+                    place.originalCaption,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.6,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                _InfoRow(icon: Icons.location_on, text: place.address),
+                _InfoRow(icon: Icons.schedule, text: place.hours),
+                _InfoRow(
+                  icon: Icons.person_outline,
+                  text:
+                      'By ${place.sourceHandle} '
+                      'on ${place.sourcePlatform.label}',
+                ),
+                const SizedBox(height: 22),
+                _OpenInMapsButton(place: place),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -130,34 +156,50 @@ class _PhotoHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Production: swipeable photo carousel from the source post.
+    // Re-read the current copy so PhotoStore sees an up-to-date
+    // `myPhotoAt` marker (it gates the Firestore read on it).
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) {
+        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+        return _buildHeader(context, current);
+      },
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, Place current) {
+    // Preference: the user's own photo, then the first source photo, then
+    // the category-colour gradient with the emoji.
+    final gradient = Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color.withValues(alpha: 0.9), color.withValues(alpha: 0.4)],
+        ),
+      ),
+      // Emoji aren't accessible labels — expose the category via
+      // Semantics and hide the raw glyph from the a11y tree (WCAG 1.4.1).
+      child: Center(
+        child: Semantics(
+          label: current.category.labelEn,
+          child: ExcludeSemantics(
+            child: Text(
+              current.category.emoji,
+              style: const TextStyle(fontSize: 56, height: 1),
+            ),
+          ),
+        ),
+      ),
+    );
     return Stack(
       children: [
-        Container(
-          height: 180,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                color.withValues(alpha: 0.9),
-                color.withValues(alpha: 0.4),
-              ],
-            ),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          // Emoji aren't accessible labels — expose the category via
-          // Semantics and hide the raw glyph from the a11y tree (WCAG 1.4.1).
-          child: Center(
-            child: Semantics(
-              label: place.category.labelEn,
-              child: ExcludeSemantics(
-                child: Text(
-                  place.category.emoji,
-                  style: const TextStyle(fontSize: 56, height: 1),
-                ),
-              ),
-            ),
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: SizedBox(
+            height: 180,
+            width: double.infinity,
+            child: PlacePhoto(place: current, fallback: gradient),
           ),
         ),
         Positioned(
@@ -169,16 +211,65 @@ class _PhotoHeader extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                // Sits on the category-colour gradient (not the scaffold),
-                // which stays vivid/dark in both themes — a fixed white
-                // handle keeps working there, no theme lookup needed.
+                // Sits on the category-colour gradient or a photo (not the
+                // scaffold), which stays vivid/dark in both themes — a
+                // fixed white handle keeps working there, no theme lookup
+                // needed.
                 color: Colors.white.withValues(alpha: 0.7),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
           ),
         ),
+        Positioned(right: 12, bottom: 12, child: _PhotoButtons(place: current)),
       ],
+    );
+  }
+}
+
+/// Add / Change / Remove for the user's own photo, over the header's
+/// bottom-right corner.
+class _PhotoButtons extends StatelessWidget {
+  const _PhotoButtons({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = FilledButton.styleFrom(
+      backgroundColor: Colors.black.withValues(alpha: 0.55),
+      foregroundColor: Colors.white,
+      minimumSize: const Size(0, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+    );
+    return ValueListenableBuilder<Uint8List?>(
+      valueListenable: PhotoStore.instance.photoFor(place.id),
+      builder: (context, bytes, _) {
+        final hasPhoto = bytes != null;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FilledButton.icon(
+              style: style,
+              onPressed: () => showPlacePhotoActions(context, place),
+              icon: const Icon(Icons.add_a_photo_outlined, size: 18),
+              label: Text(hasPhoto ? 'Change photo' : 'Add photo'),
+            ),
+            if (hasPhoto) ...[
+              const SizedBox(width: 8),
+              IconButton.filled(
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black.withValues(alpha: 0.55),
+                  foregroundColor: Colors.white,
+                ),
+                tooltip: 'Remove photo',
+                onPressed: () => confirmRemovePlacePhoto(context, place),
+                icon: const Icon(Icons.delete_outline, size: 20),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

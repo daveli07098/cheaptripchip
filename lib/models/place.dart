@@ -27,6 +27,7 @@ class Place {
     this.isFavorite = false,
     this.myScore,
     this.myNotes = '',
+    this.myPhotoAt,
   });
 
   final String id;
@@ -93,6 +94,13 @@ class Place {
   /// post). Empty string when the user hasn't written any.
   final String myNotes;
 
+  /// When the user last set their own photo for this place (see PhotoStore,
+  /// lib/data/photo_store.dart). The JPEG itself lives outside the place doc;
+  /// this marker only tells the app a photo exists, so signed-in users don't
+  /// pay a Firestore read per place just to find out there's none. Null means
+  /// no personal photo — see [copyWith]'s `clearMyPhotoAt`.
+  final DateTime? myPhotoAt;
+
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
 
@@ -145,6 +153,10 @@ class Place {
     /// null" — plain field nullability is ambiguous with "unchanged").
     bool clearMyScore = false,
     String? myNotes,
+    DateTime? myPhotoAt,
+
+    /// Same as `clearMyScore`, for [Place.myPhotoAt].
+    bool clearMyPhotoAt = false,
   }) {
     return Place(
       id: id ?? this.id,
@@ -168,6 +180,7 @@ class Place {
       isFavorite: isFavorite ?? this.isFavorite,
       myScore: clearMyScore ? null : (myScore ?? this.myScore),
       myNotes: myNotes ?? this.myNotes,
+      myPhotoAt: clearMyPhotoAt ? null : (myPhotoAt ?? this.myPhotoAt),
     );
   }
 
@@ -197,6 +210,9 @@ class Place {
       'isFavorite': isFavorite,
       'myScore': myScore,
       'myNotes': myNotes,
+      // ISO-8601 (UTC) keeps this plain JSON — no Firestore Timestamp type
+      // leaks into the model.
+      'myPhotoAt': myPhotoAt?.toUtc().toIso8601String(),
     };
   }
 
@@ -240,7 +256,19 @@ class Place {
       isFavorite: json['isFavorite'] as bool? ?? false,
       myScore: _parseMyScore(json['myScore']),
       myNotes: json['myNotes'] is String ? json['myNotes'] as String : '',
+      myPhotoAt: _parseMyPhotoAt(json['myPhotoAt']),
     );
+  }
+
+  /// Lenient parse for [myPhotoAt]: an ISO-8601 string (what [toJson]
+  /// writes) or epoch milliseconds; anything else (missing, garbage) means
+  /// no photo.
+  static DateTime? _parseMyPhotoAt(dynamic raw) {
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(raw, isUtc: true);
+    }
+    return null;
   }
 
   /// Lenient parse for [myScore]: accepts any numeric type (Firestore hands

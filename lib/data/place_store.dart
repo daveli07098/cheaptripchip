@@ -105,4 +105,19 @@ class PlaceStore {
     ];
     await _repository.upsert(updated);
   }
+
+  /// Sets (or clears, when [at] is null) [Place.myPhotoAt] for the place
+  /// with the given [id]. Called by PhotoStore after the photo bytes are
+  /// written/deleted — the bytes themselves never touch the place doc.
+  /// Optimistic, like [toggleFavorite].
+  Future<void> setPhotoMarker(String id, DateTime? at) async {
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    final updated = current.copyWith(myPhotoAt: at, clearMyPhotoAt: at == null);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
 }

@@ -36,7 +36,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a score. Not included in any `TripShare` export (link/file/KML already
   allow-list their fields). Tests: JSON round-trip/clamp/garbage,
   `updateReview` set/clear, and a `ScoreStars` widget test (63 total).
+- Pin tap → floating `PlacePreviewCard` (Google Maps style) just above the
+  list sheet's top edge, tracking it as it drags; a sheet above half height
+  collapses to peek. Photo thumbnail, name, category emoji, area, score badge,
+  and Details / Maps / Add photo actions (tapping the card also opens
+  details). Tapping empty map dismisses it; another pin swaps it (fade/slide).
+  List-row selection still pans without a card.
+- One personal photo per place: `PhotoStore` (bound on auth change like the
+  other stores) over a `PhotoRepository` — Firestore
+  `users/{uid}/photos/{placeId}` `{jpeg: Blob, updatedAt}` when signed in
+  (Spark plan: no Cloud Storage, so bytes live in a doc apart from the place),
+  `<app documents>/photos/<id>.jpg` for mobile guests, memory-only for web
+  guests (lost on reload). `Place.myPhotoAt` marks which places have one so
+  signed-in users skip a read for the rest; it's not in any `TripShare`
+  export. Picked with `image_picker` (1280px, quality 75, 700 KB cap);
+  add/change/remove (with confirm) from the preview card and the detail
+  sheet header, which now prefers the user photo, then `photoUrls`.
+- iOS `NSPhotoLibraryUsageDescription` / `NSCameraUsageDescription`. Android
+  needs no permission (system photo picker and camera intent).
+- Tests: `PhotoStore` (lazy load/cache, set/remove, revert on failure, size
+  cap, marker-gated reads, rebind), `myPhotoAt` JSON, preview card, pin tap
+  shows/empty map hides the card.
 ### Changed
+- `firestore.rules`: explicit `places`/`boards`/`photos` matches replace the
+  `users/{uid}/{document=**}` wildcard (any allow wins, so the wildcard would
+  bypass the new photo guard: `jpeg is bytes`, `< 1000000` bytes, only
+  `jpeg`/`updatedAt` keys).
+- `PlaceDetailSheet` has its own `ScaffoldMessenger`, so its SnackBars show
+  over the sheet instead of under the modal barrier.
 - `BoardStore.createBoard` takes optional `sections`, so a pre-filled board is
   written in one upsert (a loop of `addPlaceToBoard` can race the repository
   echo).

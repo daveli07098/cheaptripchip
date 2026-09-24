@@ -12,6 +12,7 @@ import '../widgets/account_button.dart';
 import '../widgets/map_pin.dart';
 import '../widgets/marker_clustering.dart';
 import '../widgets/place_list_sheet.dart';
+import '../widgets/place_preview_card.dart';
 import 'place_detail_sheet.dart';
 
 /// Map-first surface (ANALYSIS.md §3): theme-aware CartoDB tiles, coral pins
@@ -19,8 +20,10 @@ import 'place_detail_sheet.dart';
 /// from the search bar's leading ☰, with the theme toggle in its footer), a
 /// Google-Maps-style search bar (free-text over [placeMatches], submit fits
 /// the camera to the matches), and a persistent (non-modal) place-list sheet
-/// kept in sync with the pins — tap a pin to preview it in the list, tap a
-/// row (or a pin twice) to open the full detail sheet.
+/// kept in sync with the pins. Tapping a pin selects it and floats a
+/// [PlacePreviewCard] just above the sheet (Google Maps style — the card or
+/// its Details action opens the full detail sheet); tapping empty map
+/// dismisses it. Tapping a list row selects + pans without a card.
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, required this.onAddFind});
 
@@ -56,6 +59,10 @@ class _MapScreenState extends State<MapScreen> {
   /// and the list (scrolled into view + tinted row).
   String? _selectedPlaceId;
 
+  /// Whether the floating [PlacePreviewCard] is shown for [_selectedPlaceId].
+  /// Only pin taps raise it; list selection and empty-map taps clear it.
+  bool _previewVisible = false;
+
   /// Category filter AND free-text search (via [placeMatches]) — search
   /// terms are matched across name/area/region/address/description/category
   /// labels/source handle, so it also narrows results within a category.
@@ -84,19 +91,48 @@ class _MapScreenState extends State<MapScreen> {
     return MediaQuery.of(context).size.height * fraction;
   }
 
-  /// Pin tapped on the map: highlight + scroll the matching list row into
-  /// view. Deliberately does NOT move the map — re-centering under an
-  /// active pan/tap is a documented anti-pattern that fights the user.
+  /// Pin tapped on the map: highlight it, scroll the matching list row into
+  /// view, and show the floating preview card. If the list sheet is above
+  /// half height it collapses to peek so the card and the pin stay visible.
+  /// Deliberately does NOT move the map — re-centering under an active
+  /// pan/tap is a documented anti-pattern that fights the user.
   void _selectFromPin(Place place) {
-    setState(() => _selectedPlaceId = place.id);
+    setState(() {
+      _selectedPlaceId = place.id;
+      _previewVisible = true;
+    });
     _listSheetController.scrollToPlace(place.id);
+    if (_sheetExtentController.isAttached &&
+        _sheetExtentController.size > kSheetHalf + 0.01) {
+      _sheetExtentController.animateTo(
+        kSheetPeek,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  /// Empty map tapped: drop search focus (matching Google Maps) and dismiss
+  /// the preview card along with the pin highlight.
+  void _onMapTap() {
+    _searchFocusNode.unfocus();
+    if (_previewVisible || _selectedPlaceId != null) {
+      setState(() {
+        _previewVisible = false;
+        _selectedPlaceId = null;
+      });
+    }
   }
 
   /// Row tapped in the list sheet: highlight + pan/zoom the map to it,
   /// offsetting the target upward so it lands above the sheet rather than
   /// underneath it.
   void _selectFromList(BuildContext context, Place place) {
-    setState(() => _selectedPlaceId = place.id);
+    setState(() {
+      _selectedPlaceId = place.id;
+      // The list already shows this place — no floating card on top of it.
+      _previewVisible = false;
+    });
     final targetZoom = math.max(_mapController.camera.zoom, 15.0);
     _mapController.move(
       place.location,
@@ -171,7 +207,10 @@ class _MapScreenState extends State<MapScreen> {
           final droppedId = _selectedPlaceId;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _selectedPlaceId == droppedId) {
-              setState(() => _selectedPlaceId = null);
+              setState(() {
+                _selectedPlaceId = null;
+                _previewVisible = false;
+              });
             }
           });
         }
@@ -223,8 +262,9 @@ class _MapScreenState extends State<MapScreen> {
                   minZoom: 3,
                   maxZoom: 18,
                   // Tapping the map (not a pin/cluster) drops keyboard focus
-                  // from the search field, matching Google Maps.
-                  onTap: (_, _) => _searchFocusNode.unfocus(),
+                  // from the search field and dismisses the preview card,
+                  // matching Google Maps.
+                  onTap: (_, _) => _onMapTap(),
                 ),
                 children: [
                   TileLayer(
@@ -247,6 +287,10 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   _AttributionBar(
                     sheetExtentController: _sheetExtentController,
+                    // Lifted above the preview card while it's shown.
+                    extraBottom: _previewVisible
+                        ? kPlacePreviewCardApproxHeight + 12
+                        : 0,
                   ),
                 ],
               ),
@@ -290,6 +334,13 @@ class _MapScreenState extends State<MapScreen> {
                 onSelectPlace: (place) => _selectFromList(context, place),
                 onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
                 onAddFind: widget.onAddFind,
+              ),
+              _PreviewCardLayer(
+                sheetExtentController: _sheetExtentController,
+                place: _previewVisible
+                    ? visible.where((p) => p.id == _selectedPlaceId).firstOrNull
+                    : null,
+                onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
               ),
             ],
           ),
@@ -636,12 +687,81 @@ class _CategoryTile extends StatelessWidget {
   }
 }
 
+/// Floats [PlacePreviewCard] for [place] (null = hidden) just above the list
+/// sheet's current top edge, tracking the sheet continuously like
+/// [_AttributionBar]. Full width minus 12dp margins. Fades + slides in, and
+/// cross-fades when another pin is tapped (keyed by place id).
+class _PreviewCardLayer extends StatelessWidget {
+  const _PreviewCardLayer({
+    required this.sheetExtentController,
+    required this.place,
+    required this.onOpenDetail,
+  });
+
+  final DraggableScrollableController sheetExtentController;
+  final Place? place;
+  final ValueChanged<Place> onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: sheetExtentController,
+      builder: (context, child) {
+        final fraction = sheetExtentController.isAttached
+            ? sheetExtentController.size
+            : kSheetPeek;
+        final sheetPixels = MediaQuery.of(context).size.height * fraction;
+        return Positioned(
+          left: 12,
+          right: 12,
+          bottom: sheetPixels + 12,
+          child: child!,
+        );
+      },
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.15),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        ),
+        // Bottom-anchored so a taller/shorter incoming card grows upward
+        // from the sheet edge rather than jumping.
+        layoutBuilder: (current, previous) => Stack(
+          alignment: Alignment.bottomCenter,
+          children: [...previous, ?current],
+        ),
+        child: place == null
+            ? const SizedBox.shrink(key: ValueKey('no-preview'))
+            : PlacePreviewCard(
+                key: ValueKey(place!.id),
+                place: place!,
+                onOpenDetails: () => onOpenDetail(place!),
+              ),
+      ),
+    );
+  }
+}
+
 class _AttributionBar extends StatelessWidget {
-  const _AttributionBar({required this.sheetExtentController});
+  const _AttributionBar({
+    required this.sheetExtentController,
+    this.extraBottom = 0,
+  });
 
   /// Tracked so the bar can float just above the persistent list sheet's
   /// current top edge instead of sitting permanently underneath it.
   final DraggableScrollableController sheetExtentController;
+
+  /// Additional lift, e.g. to clear the floating preview card.
+  final double extraBottom;
 
   @override
   Widget build(BuildContext context) {
@@ -656,7 +776,7 @@ class _AttributionBar extends StatelessWidget {
         final sheetPixels = MediaQuery.of(context).size.height * fraction;
         return Positioned(
           right: 8,
-          bottom: sheetPixels + 8,
+          bottom: sheetPixels + 8 + extraBottom,
           // OSM attribution is required by the tile licence; the widget's
           // own popup/link already points at openstreetmap.org/copyright.
           child: const RichAttributionWidget(

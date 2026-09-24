@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'data/board_store.dart';
+import 'data/photo_store.dart';
 import 'data/place_store.dart';
 import 'firebase_options.dart';
 import 'screens/home_shell.dart';
@@ -25,13 +26,14 @@ Future<void> main() async {
   runApp(const CheapTripChipApp());
 }
 
-/// Rebinds [PlaceStore] and [BoardStore] to the current user (or to local,
-/// guest-mode repos when signed out / unconfigured) whenever auth state
-/// changes.
+/// Rebinds [PlaceStore], [BoardStore] and [PhotoStore] to the current user
+/// (or to local, guest-mode repos when signed out / unconfigured) whenever
+/// auth state changes.
 void _bindStores() {
   final user = AuthService.instance.user.value;
   PlaceStore.instance.bind(user);
   BoardStore.instance.bind(user);
+  PhotoStore.instance.bind(user);
 }
 
 class CheapTripChipApp extends StatelessWidget {

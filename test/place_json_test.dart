@@ -195,5 +195,47 @@ void main() {
         'great spot',
       );
     });
+
+    test('myPhotoAt round-trips through JSON and tolerates garbage', () {
+      final at = DateTime.utc(2026, 9, 25, 10, 30);
+      const base = Place(
+        id: 'p',
+        name: 'n',
+        areaLabel: '',
+        region: '',
+        category: PlaceCategory.cafe,
+        location: LatLng(1, 1),
+        descriptionEn: '',
+        originalCaption: '',
+        address: '',
+        hours: '',
+        sourceHandle: '',
+        sourcePlatform: SourcePlatform.instagram,
+      );
+      final withPhoto = base.copyWith(myPhotoAt: at);
+
+      final reencoded =
+          jsonDecode(jsonEncode(withPhoto.toJson())) as Map<String, dynamic>;
+      expect(Place.fromJson(reencoded).myPhotoAt, at);
+      expect(Place.fromJson(base.toJson()).myPhotoAt, isNull);
+
+      final json = base.toJson();
+      expect(
+        Place.fromJson({...json, 'myPhotoAt': 'not a date'}).myPhotoAt,
+        isNull,
+      );
+      expect(Place.fromJson({...json, 'myPhotoAt': true}).myPhotoAt, isNull);
+      expect(
+        Place.fromJson({
+          ...json,
+          'myPhotoAt': at.millisecondsSinceEpoch,
+        }).myPhotoAt,
+        at,
+      );
+
+      // copyWith keeps the marker unless explicitly cleared.
+      expect(withPhoto.copyWith(myNotes: 'x').myPhotoAt, at);
+      expect(withPhoto.copyWith(clearMyPhotoAt: true).myPhotoAt, isNull);
+    });
   });
 }

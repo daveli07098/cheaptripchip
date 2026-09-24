@@ -53,6 +53,11 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!-- image_picker: add / change your own photo of a saved place. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo from your library to attach to a place you saved.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to attach to a place you saved.</string>
 	<!--
 	  Two URL types share the one CFBundleURLTypes array (a duplicate key would
 	  silently replace the first):
