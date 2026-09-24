@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>AIzaSyDdlOo1RUdmRE38dy349NyZq2OZTVcS7qU</string>
+	<key>GCM_SENDER_ID</key>
+	<string>208192307721</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.cheaptripchip.cheaptripchip</string>
+	<key>PROJECT_ID</key>
+	<string>cheaptripchip-app</string>
+	<key>STORAGE_BUCKET</key>
+	<string>cheaptripchip-app.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:208192307721:ios:953906ba8b6f1cb0deeed8</string>
+</dict>
+</plist>

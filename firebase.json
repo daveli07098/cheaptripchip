@@ -1,5 +1,25 @@
 {
   "firestore": {
     "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "cheaptripchip-app",
+          "appId": "1:208192307721:android:f240c1e332289519deeed8",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "cheaptripchip-app",
+          "configurations": {
+            "android": "1:208192307721:android:f240c1e332289519deeed8",
+            "web": "1:208192307721:web:41c0d6347239f273deeed8"
+          }
+        }
+      }
+    }
   }
 }

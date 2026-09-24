@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "208192307721",
+    "project_id": "cheaptripchip-app",
+    "storage_bucket": "cheaptripchip-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:208192307721:android:f240c1e332289519deeed8",
+        "android_client_info": {
+          "package_name": "com.cheaptripchip.cheaptripchip"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaHqkzl5gH4o1KbpDMCc3J1SDXEpOfbXg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
