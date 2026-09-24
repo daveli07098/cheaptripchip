@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Android 13+ themed (monochrome) icon layer: solid white pin silhouette
+       on transparent background — only the alpha channel matters, the OS
+       applies its own tint, so no inner heart colour split here. -->
+  <g transform="translate(200,200) scale(26)">
+    <path
+      d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"
+      fill="#FFFFFF"/>
+  </g>
+</svg>
