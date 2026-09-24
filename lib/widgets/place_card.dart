@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'score_stars.dart';
 
 /// Feed/sidebar card: category swatch, name, area tag, AI description preview,
 /// and the "Pinned" location-confidence indicator (Yaay parity, ANALYSIS.md §6).
@@ -46,6 +47,10 @@ class PlaceCard extends StatelessWidget {
                           ),
                         ),
                         if (place.matchConfident) const _MatchBadge(),
+                        if (place.myScore != null) ...[
+                          const SizedBox(width: 6),
+                          ScoreBadge(score: place.myScore!),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 4),

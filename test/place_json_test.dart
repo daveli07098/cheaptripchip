@@ -30,6 +30,8 @@ void main() {
           'https://example.com/photo2.jpg',
         ],
         isFavorite: true,
+        myScore: 9,
+        myNotes: 'Loved the seasonal parfait, go early to avoid the queue.',
       );
 
       final json = place.toJson();
@@ -64,6 +66,8 @@ void main() {
       expect(decoded.priceRange, place.priceRange);
       expect(decoded.photoUrls, place.photoUrls);
       expect(decoded.isFavorite, place.isFavorite);
+      expect(decoded.myScore, place.myScore);
+      expect(decoded.myNotes, place.myNotes);
     });
 
     test('minimal place (all optionals null/empty) round-trips', () {
@@ -93,6 +97,8 @@ void main() {
       expect(decoded.isFavorite, false);
       expect(decoded.category, PlaceCategory.sightseeing);
       expect(decoded.sourcePlatform, SourcePlatform.instagram);
+      expect(decoded.myScore, isNull);
+      expect(decoded.myNotes, isEmpty);
     });
 
     test('lenient parse: int rating, missing photoUrls, unknown category', () {
@@ -121,6 +127,73 @@ void main() {
       expect(decoded.photoUrls, isEmpty);
       expect(decoded.matchConfident, true);
       expect(decoded.isFavorite, false);
+    });
+
+    test('myScore clamps out-of-range values into 1..10', () {
+      final base = <String, dynamic>{
+        'id': 'p',
+        'name': 'n',
+        'areaLabel': '',
+        'region': '',
+        'category': 'cafe',
+        'location': {'lat': 0, 'lng': 0},
+        'descriptionEn': '',
+        'originalCaption': '',
+        'address': '',
+        'hours': '',
+        'sourceHandle': '',
+        'sourcePlatform': 'instagram',
+      };
+
+      expect(Place.fromJson({...base, 'myScore': 15}).myScore, 10);
+      expect(Place.fromJson({...base, 'myScore': 0}).myScore, 1);
+      expect(Place.fromJson({...base, 'myScore': -5}).myScore, 1);
+      expect(Place.fromJson({...base, 'myScore': 9.6}).myScore, 10);
+    });
+
+    test('myScore ignores non-numeric garbage and defaults to null', () {
+      final base = <String, dynamic>{
+        'id': 'p',
+        'name': 'n',
+        'areaLabel': '',
+        'region': '',
+        'category': 'cafe',
+        'location': {'lat': 0, 'lng': 0},
+        'descriptionEn': '',
+        'originalCaption': '',
+        'address': '',
+        'hours': '',
+        'sourceHandle': '',
+        'sourcePlatform': 'instagram',
+      };
+
+      expect(Place.fromJson({...base, 'myScore': 'nine'}).myScore, isNull);
+      expect(Place.fromJson({...base, 'myScore': null}).myScore, isNull);
+      expect(Place.fromJson(base).myScore, isNull);
+    });
+
+    test('myNotes ignores non-string garbage and defaults to empty', () {
+      final base = <String, dynamic>{
+        'id': 'p',
+        'name': 'n',
+        'areaLabel': '',
+        'region': '',
+        'category': 'cafe',
+        'location': {'lat': 0, 'lng': 0},
+        'descriptionEn': '',
+        'originalCaption': '',
+        'address': '',
+        'hours': '',
+        'sourceHandle': '',
+        'sourcePlatform': 'instagram',
+      };
+
+      expect(Place.fromJson({...base, 'myNotes': 42}).myNotes, '');
+      expect(Place.fromJson(base).myNotes, '');
+      expect(
+        Place.fromJson({...base, 'myNotes': 'great spot'}).myNotes,
+        'great spot',
+      );
     });
   });
 }

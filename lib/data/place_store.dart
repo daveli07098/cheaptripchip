@@ -81,4 +81,28 @@ class PlaceStore {
     ];
     await _repository.upsert(updated);
   }
+
+  /// Sets (or clears, when [score] is null) [Place.myScore] and overwrites
+  /// [Place.myNotes] for the place with the given [id]. Optimistic, like
+  /// [add]/[toggleFavorite]. Callers must pass the *current* [notes] even
+  /// when only the score is changing (and vice versa) — this replaces both
+  /// fields, it doesn't merge them.
+  Future<void> updateReview(
+    String id, {
+    int? score,
+    required String notes,
+  }) async {
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    final updated = current.copyWith(
+      myScore: score,
+      clearMyScore: score == null,
+      myNotes: notes,
+    );
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
 }

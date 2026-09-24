@@ -57,6 +57,33 @@ void main() {
       expect(store.byId(target.id).isFavorite, target.isFavorite);
     });
 
+    test('updateReview sets score and notes, then clears the score', () async {
+      final store = PlaceStore.instance;
+      final target = MockData.places.first;
+
+      await store.updateReview(target.id, score: 9, notes: 'So good');
+      await Future<void>.delayed(Duration.zero);
+      expect(store.byId(target.id).myScore, 9);
+      expect(store.byId(target.id).myNotes, 'So good');
+
+      // Clearing the score must not touch notes — callers pass the current
+      // notes back through, and this should be a no-op for them.
+      await store.updateReview(target.id, score: null, notes: 'So good');
+      await Future<void>.delayed(Duration.zero);
+      expect(store.byId(target.id).myScore, isNull);
+      expect(store.byId(target.id).myNotes, 'So good');
+    });
+
+    test('updateReview does nothing for an unknown id', () async {
+      final store = PlaceStore.instance;
+      final beforeCount = store.places.value.length;
+
+      await store.updateReview('does-not-exist', score: 5, notes: 'x');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.places.value.length, beforeCount);
+    });
+
     test('byIdOrNull returns null for an unknown id', () {
       expect(PlaceStore.instance.byIdOrNull('does-not-exist'), isNull);
       expect(

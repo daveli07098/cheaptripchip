@@ -25,6 +25,8 @@ class Place {
     this.priceRange,
     this.photoUrls = const [],
     this.isFavorite = false,
+    this.myScore,
+    this.myNotes = '',
   });
 
   final String id;
@@ -81,6 +83,16 @@ class Place {
   /// until the Firebase layer lands.
   final bool isFavorite;
 
+  /// The user's own rating out of 10 (1–10), distinct from [rating] (the
+  /// source's rating out of 5, e.g. scraped from the post). Null means not
+  /// rated yet — see [copyWith]'s `clearMyScore` for how to reset it.
+  final int? myScore;
+
+  /// The user's own free-form notes about the place, distinct from
+  /// [descriptionEn] (AI-generated) and [originalCaption] (from the source
+  /// post). Empty string when the user hasn't written any.
+  final String myNotes;
+
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
 
@@ -126,6 +138,13 @@ class Place {
     String? priceRange,
     List<String>? photoUrls,
     bool? isFavorite,
+    int? myScore,
+
+    /// When true, clears [Place.myScore] to null regardless of [myScore]
+    /// (the `foo ?? this.foo` idiom used elsewhere can't express "set to
+    /// null" — plain field nullability is ambiguous with "unchanged").
+    bool clearMyScore = false,
+    String? myNotes,
   }) {
     return Place(
       id: id ?? this.id,
@@ -147,6 +166,8 @@ class Place {
       priceRange: priceRange ?? this.priceRange,
       photoUrls: photoUrls ?? this.photoUrls,
       isFavorite: isFavorite ?? this.isFavorite,
+      myScore: clearMyScore ? null : (myScore ?? this.myScore),
+      myNotes: myNotes ?? this.myNotes,
     );
   }
 
@@ -174,6 +195,8 @@ class Place {
       'priceRange': priceRange,
       'photoUrls': photoUrls,
       'isFavorite': isFavorite,
+      'myScore': myScore,
+      'myNotes': myNotes,
     };
   }
 
@@ -215,7 +238,18 @@ class Place {
           (json['photoUrls'] as List?)?.map((e) => e.toString()).toList() ??
           const [],
       isFavorite: json['isFavorite'] as bool? ?? false,
+      myScore: _parseMyScore(json['myScore']),
+      myNotes: json['myNotes'] is String ? json['myNotes'] as String : '',
     );
+  }
+
+  /// Lenient parse for [myScore]: accepts any numeric type (Firestore hands
+  /// back `int`, `jsonDecode` may hand back a whole `double`), clamps into
+  /// 1..10, and falls back to `null` (not rated) for anything else —
+  /// non-numeric garbage, missing, or explicit null.
+  static int? _parseMyScore(dynamic raw) {
+    if (raw is! num || !raw.isFinite) return null;
+    return raw.round().clamp(1, 10).toInt();
   }
 }
 

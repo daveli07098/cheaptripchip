@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'score_stars.dart';
 
 /// Snap fractions for [PlaceListSheet]. `kSheetHalf` matches Material 3's
 /// documented default `halfExpandedRatio` (0.5); peek/full are custom to
@@ -348,6 +349,10 @@ class _PlaceRow extends StatelessWidget {
                 ],
               ),
             ),
+            if (place.myScore != null) ...[
+              ScoreBadge(score: place.myScore!),
+              const SizedBox(width: 4),
+            ],
             IconButton(
               onPressed: onOpenDetail,
               icon: const Icon(Icons.chevron_right),

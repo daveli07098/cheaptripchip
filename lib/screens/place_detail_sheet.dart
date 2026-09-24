@@ -7,6 +7,7 @@ import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../widgets/score_stars.dart';
 
 /// Detail card (ANALYSIS.md §4): photo header, location badge, AI description,
 /// original caption, source attribution, address + hours, "Open in Google Maps"
@@ -77,6 +78,8 @@ class PlaceDetailSheet extends StatelessWidget {
                       place.descriptionEn,
                       style: const TextStyle(fontSize: 15, height: 1.5),
                     ),
+                    const SizedBox(height: 18),
+                    _MyReviewSection(place: place),
                     const SizedBox(height: 18),
                     _SectionLabel('Original caption / 原文'),
                     const SizedBox(height: 6),
@@ -327,6 +330,142 @@ class _ActionRow extends StatelessWidget {
         ),
         child: _BoardPickerSheet(place: place, messenger: messenger),
       ),
+    );
+  }
+}
+
+/// "My review" section: a [ScoreStars] picker (saves immediately on every
+/// change) plus a notes affordance (opens [_NotesDialog] to edit).
+///
+/// Reads [PlaceStore.instance.places] the same way [_ActionRow] does for the
+/// favourite toggle — the `place` this widget is built with can go stale the
+/// moment a review is saved, so every rebuild re-looks-up the current copy
+/// by id.
+class _MyReviewSection extends StatelessWidget {
+  const _MyReviewSection({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, places, _) {
+        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel('My review / 我的評價'),
+            const SizedBox(height: 8),
+            ScoreStars(
+              value: current.myScore,
+              onChanged: (score) => PlaceStore.instance.updateReview(
+                current.id,
+                score: score,
+                notes: current.myNotes,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _MyNotes(place: current),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MyNotes extends StatelessWidget {
+  const _MyNotes({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    if (place.myNotes.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => _editNotes(context),
+          icon: const Icon(Icons.edit_note, size: 18),
+          label: const Text('Add notes'),
+          style: TextButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      );
+    }
+    return InkWell(
+      onTap: () => _editNotes(context),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          place.myNotes,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editNotes(BuildContext context) async {
+    final controller = TextEditingController(text: place.myNotes);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => _NotesDialog(controller: controller),
+    );
+    controller.dispose();
+    // The dialog already popped itself before returning — no BuildContext
+    // use after this await, so no `mounted` check is needed here.
+    if (result == null) return;
+    await PlaceStore.instance.updateReview(
+      place.id,
+      score: place.myScore,
+      notes: result,
+    );
+  }
+}
+
+/// Multiline notes editor, opened by [_MyNotes]. Pops with the trimmed text
+/// on Save, or `null` on Cancel/dismiss — the caller decides what to persist.
+class _NotesDialog extends StatelessWidget {
+  const _NotesDialog({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('My notes'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        minLines: 3,
+        maxLines: 6,
+        maxLength: 1000,
+        decoration: const InputDecoration(hintText: 'What did you think?'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

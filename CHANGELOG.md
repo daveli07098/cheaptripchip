@@ -26,6 +26,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `docs/firebase-setup.md` step 7 now adds Google Sign-In's reversed client id
   as a second entry in the existing `CFBundleURLTypes` array.
 - Tests: import/dedupe service and export sheet options (51 total).
+- "My review": `Place.myScore` (1–10, own rating, distinct from the source's
+  5-point `rating`) and `Place.myNotes` (free-form text), editable from a new
+  "My review" section in `PlaceDetailSheet` — a reusable `ScoreStars` picker
+  (`lib/widgets/score_stars.dart`, half-star taps set odd/even points, tapping
+  the current score clears it) plus a notes dialog. `PlaceStore.updateReview`
+  saves both fields immediately (optimistic, like `toggleFavorite`); a compact
+  `ScoreBadge` shows on `PlaceCard` and `PlaceListSheet` rows once a place has
+  a score. Not included in any `TripShare` export (link/file/KML already
+  allow-list their fields). Tests: JSON round-trip/clamp/garbage,
+  `updateReview` set/clear, and a `ScoreStars` widget test (63 total).
 ### Changed
 - `BoardStore.createBoard` takes optional `sections`, so a pre-filled board is
   written in one upsert (a loop of `addPlaceToBoard` can race the repository
