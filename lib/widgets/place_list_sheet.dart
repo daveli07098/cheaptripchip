@@ -11,6 +11,18 @@ const double kSheetPeek = 0.22;
 const double kSheetHalf = 0.5;
 const double kSheetFull = 0.92;
 
+/// Every snap stop, including two in-between detents. With only
+/// peek/half/full, any release between them animated the sheet a long way
+/// from where the finger let go — smooth, but it felt like the sheet
+/// "leapt". Closer stops keep it near the release point.
+const List<double> kSheetSnapSizes = [
+  kSheetPeek,
+  0.36,
+  kSheetHalf,
+  0.72,
+  kSheetFull,
+];
+
 /// Lets [MapScreen] drive [PlaceListSheet]'s internal list — specifically,
 /// scroll a given place's row into view when its map pin is tapped — without
 /// the sheet needing to expose its `State` publicly.
@@ -121,7 +133,10 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
       minChildSize: kSheetPeek,
       maxChildSize: kSheetFull,
       snap: true,
-      snapSizes: const [kSheetPeek, kSheetHalf, kSheetFull],
+      snapSizes: kSheetSnapSizes,
+      // Fixed, short settle time; the default is derived from fling
+      // velocity, so slow releases crept to the snap point.
+      snapAnimationDuration: const Duration(milliseconds: 220),
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
