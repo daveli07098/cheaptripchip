@@ -2,7 +2,48 @@
 
 ## Project Context
 
-[Describe the project, tech stack, and any important conventions here.]
+cheaptripchip — mobile-first Flutter app that saves scattered Instagram/TikTok travel finds
+into map-based plans. Share a post into the app → Gemini extracts the place → geocode →
+it appears on the map, in the Saved feed, and on Boards. iOS/Android are the targets;
+the web build is a preview only.
+
+**Stack:** Flutter (Dart `^3.11`, Material 3), `flutter_map` + `latlong2` (OSM tiles),
+`receive_sharing_intent` / `share_plus`, `shared_preferences`, Firebase (Auth with Google
+sign-in + Cloud Firestore), `http` for Gemini and geocoding.
+
+**Layout:**
+
+- `lib/screens/` — `home_shell` (tabs), `map_screen`, `feed_screen`, `boards_screen`,
+  `place_detail_sheet`, `account_sheet`
+- `lib/widgets/` — `place_list_sheet` (persistent map sheet), `marker_clustering`, `map_pin`,
+  `place_card`, `account_button`
+- `lib/data/` — `repositories.dart` (`PlaceRepository`/`BoardRepository` interfaces),
+  `local_repositories.dart` (guest mode), `firestore_repositories.dart` (signed in),
+  `place_store` / `board_store` on top of them
+- `lib/services/` — `gemini_service`, `geocoding_service`, `place_extractor`, `auth_service`
+- `lib/theme/` — `app_theme` (incl. map tile URL), `theme_controller` (light/dark, persisted)
+- `test/` — unit tests for JSON models, stores, and the "New finds" board
+
+**Run / test:**
+
+- Secrets come from git-ignored `env/dev.json` (copy `env/dev.example.json`):
+  `flutter run --dart-define-from-file=env/dev.json`. Keys: `GEMINI_API_KEY`,
+  optional `GEMINI_BASE_URL`, `MAP_TILE_URL`. VS Code passes this via `.vscode/settings.json`.
+- `flutter test`, `flutter analyze`, `dart format lib test`.
+- After `flutter pub add` of a plugin, run `flutter clean` before a web build — a stale
+  plugin registrant otherwise causes `MissingPluginException`.
+
+**Conventions:**
+
+- Emoji is the category marker everywhere (pins, chips, cards); wrap every emoji in a
+  `Semantics` label.
+- Data access goes through the repository interfaces — never call Firestore from screens.
+- Guest mode is the default until Firebase is configured (`docs/firebase-setup.md`);
+  guest data is never uploaded on sign-in.
+- Local repositories emit via `Stream.multi` with a microtask hop — in store tests,
+  `await Future<void>.delayed(Duration.zero)` after a mutation.
+- Never commit keys: not in `.vscode/`, not in `lib/`. `build/web` embeds the Gemini key —
+  never share it.
 
 ## Session Wrap — Changelog Workflow
 
