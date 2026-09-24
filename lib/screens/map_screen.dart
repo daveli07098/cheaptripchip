@@ -14,7 +14,8 @@ import '../widgets/place_list_sheet.dart';
 import 'place_detail_sheet.dart';
 
 /// Map-first surface (ANALYSIS.md §3): theme-aware CartoDB tiles, coral pins
-/// grid-clustered at low zoom, category filter chips with counts, and a
+/// grid-clustered at low zoom, a category filter in a left drawer (the
+/// top-left button shows the active filter), and a
 /// persistent (non-modal) place-list sheet kept in sync with the pins —
 /// tap a pin to preview it in the list, tap a row (or a pin twice) to open
 /// the full detail sheet.
@@ -37,6 +38,9 @@ class _MapScreenState extends State<MapScreen> {
   final _sheetExtentController = DraggableScrollableController();
 
   final _listSheetController = PlaceListSheetController();
+
+  /// Opens the category drawer from the top-left filter button.
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// null = "All". Otherwise filter pins to the selected category.
   PlaceCategory? _selected;
@@ -117,79 +121,99 @@ class _MapScreenState extends State<MapScreen> {
       builder: (context, all, _) {
         final visible = _visible(all);
         final brightness = Theme.of(context).brightness;
-        return Stack(
-          children: [
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                // Fit every place on first load rather than a fixed
-                // center/zoom: a hardcoded zoom happened to clip the
-                // Hoshinoya (Stay) pin, the easternmost place, right at the
-                // viewport edge — there was no bounds-fitting logic here at
-                // all, unlike `_focusCluster`/`_selectFromList` below, which
-                // both already fit-to-content. `CameraFit.coordinates` is
-                // resolved against the map's actual layout size, so — like
-                // those two — it's computed with the sheet's current height
-                // padded out from the bottom so no pin lands underneath it.
-                initialCameraFit: CameraFit.coordinates(
-                  coordinates: [for (final p in all) p.location],
-                  padding: EdgeInsets.fromLTRB(
-                    48,
-                    96,
-                    48,
-                    48 + _sheetPixels(context),
+        final counts = _counts(all);
+        return Scaffold(
+          key: _scaffoldKey,
+          // Edge-swipe would fight map panning and Android's back gesture;
+          // the drawer opens from the filter button only.
+          drawerEnableOpenDragGesture: false,
+          drawer: _CategoryDrawer(
+            counts: counts,
+            total: all.length,
+            selected: _selected,
+            onSelect: (c) {
+              setState(() => _selected = c);
+              Navigator.of(context).pop();
+            },
+          ),
+          body: Stack(
+            children: [
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  // Fit every place on first load rather than a fixed
+                  // center/zoom: a hardcoded zoom happened to clip the
+                  // Hoshinoya (Stay) pin, the easternmost place, right at the
+                  // viewport edge — there was no bounds-fitting logic here at
+                  // all, unlike `_focusCluster`/`_selectFromList` below, which
+                  // both already fit-to-content. `CameraFit.coordinates` is
+                  // resolved against the map's actual layout size, so — like
+                  // those two — it's computed with the sheet's current height
+                  // padded out from the bottom so no pin lands underneath it.
+                  initialCameraFit: CameraFit.coordinates(
+                    coordinates: [for (final p in all) p.location],
+                    padding: EdgeInsets.fromLTRB(
+                      48,
+                      96,
+                      48,
+                      48 + _sheetPixels(context),
+                    ),
+                    maxZoom: 17,
                   ),
-                  maxZoom: 17,
+                  minZoom: 3,
+                  maxZoom: 18,
                 ),
-                minZoom: 3,
-                maxZoom: 18,
-              ),
-              children: [
-                TileLayer(
-                  // OSM raster tiles — see AppTheme.mapTileUrl doc comment
-                  // re: usage-policy limits and swapping in a keyed provider.
-                  urlTemplate: AppTheme.mapTileUrl,
-                  userAgentPackageName: 'com.cheaptripchip.app',
-                  // OSM has no dark-tile variant, so dark mode is simulated
-                  // by inverting/hue-rotating the same tiles.
-                  tileBuilder: brightness == Brightness.dark
-                      ? darkModeTileBuilder
-                      : null,
-                ),
-                _ClusterMarkerLayer(
-                  places: visible,
-                  selectedId: _selectedPlaceId,
-                  brightness: brightness,
-                  onTapPlace: _selectFromPin,
-                  onTapCluster: (cluster) => _focusCluster(context, cluster),
-                ),
-                _AttributionBar(sheetExtentController: _sheetExtentController),
-              ],
-            ),
-            SafeArea(
-              bottom: false,
-              child: Column(
                 children: [
-                  _CategoryChips(
-                    counts: _counts(all),
-                    total: all.length,
-                    selected: _selected,
-                    onSelect: (c) => setState(() => _selected = c),
+                  TileLayer(
+                    // OSM raster tiles — see AppTheme.mapTileUrl doc comment
+                    // re: usage-policy limits and swapping in a keyed provider.
+                    urlTemplate: AppTheme.mapTileUrl,
+                    userAgentPackageName: 'com.cheaptripchip.app',
+                    // OSM has no dark-tile variant, so dark mode is simulated
+                    // by inverting/hue-rotating the same tiles.
+                    tileBuilder: brightness == Brightness.dark
+                        ? darkModeTileBuilder
+                        : null,
+                  ),
+                  _ClusterMarkerLayer(
+                    places: visible,
+                    selectedId: _selectedPlaceId,
+                    brightness: brightness,
+                    onTapPlace: _selectFromPin,
+                    onTapCluster: (cluster) => _focusCluster(context, cluster),
+                  ),
+                  _AttributionBar(
+                    sheetExtentController: _sheetExtentController,
                   ),
                 ],
               ),
-            ),
-            PlaceListSheet(
-              places: visible,
-              total: all.length,
-              selectedId: _selectedPlaceId,
-              controller: _listSheetController,
-              sheetController: _sheetExtentController,
-              onSelectPlace: (place) => _selectFromList(context, place),
-              onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
-              onAddFind: widget.onAddFind,
-            ),
-          ],
+              SafeArea(
+                bottom: false,
+                child: Column(
+                  children: [
+                    _TopBar(
+                      selected: _selected,
+                      count: _selected == null
+                          ? all.length
+                          : (counts[_selected] ?? 0),
+                      onOpenFilter: () =>
+                          _scaffoldKey.currentState?.openDrawer(),
+                    ),
+                  ],
+                ),
+              ),
+              PlaceListSheet(
+                places: visible,
+                total: all.length,
+                selectedId: _selectedPlaceId,
+                controller: _listSheetController,
+                sheetController: _sheetExtentController,
+                onSelectPlace: (place) => _selectFromList(context, place),
+                onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
+                onAddFind: widget.onAddFind,
+              ),
+            ],
+          ),
         );
       },
     );
@@ -270,53 +294,74 @@ class _ClusterMarkerLayer extends StatelessWidget {
   }
 }
 
-class _CategoryChips extends StatelessWidget {
-  const _CategoryChips({
-    required this.counts,
-    required this.total,
+/// Floating top row: the filter button (opens [_CategoryDrawer] and shows
+/// the active category + count) on the left, account + theme on the right.
+class _TopBar extends StatelessWidget {
+  const _TopBar({
     required this.selected,
-    required this.onSelect,
+    required this.count,
+    required this.onOpenFilter,
   });
 
-  final Map<PlaceCategory, int> counts;
-  final int total;
   final PlaceCategory? selected;
-  final ValueChanged<PlaceCategory?> onSelect;
+  final int count;
+  final VoidCallback onOpenFilter;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final label = selected == null ? 'All' : selected!.labelEn;
     return SizedBox(
-      height: 44,
+      height: 56,
       child: Row(
         children: [
-          Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              children: [
-                _Chip(
-                  label: 'All $total',
-                  selected: selected == null,
-                  onTap: () => onSelect(null),
-                ),
-                for (final entry in counts.entries)
-                  _Chip(
-                    label: '${entry.key.labelEn} ${entry.value}',
-                    emoji: entry.key.emoji,
-                    categoryLabel: entry.key.labelEn,
-                    color: AppTheme.categoryColor(
-                      entry.key,
-                      Theme.of(context).brightness,
+          const SizedBox(width: 12),
+          Material(
+            color: scheme.surface,
+            elevation: 2,
+            borderRadius: BorderRadius.circular(24),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: onOpenFilter,
+              child: Semantics(
+                button: true,
+                label: 'Filter by category, showing $label, $count places',
+                child: ExcludeSemantics(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.menu, size: 20),
+                          const SizedBox(width: 8),
+                          if (selected != null) ...[
+                            Text(
+                              selected!.emoji,
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          Text(
+                            '$label · $count',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    selected: selected == entry.key,
-                    onTap: () => onSelect(entry.key),
                   ),
-              ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
+          const Spacer(),
           Material(
-            color: Theme.of(context).colorScheme.surface,
+            color: scheme.surface,
             shape: const CircleBorder(),
             elevation: 2,
             // AccountButton's own tap target is 40x40 (per spec); padded out
@@ -330,7 +375,7 @@ class _CategoryChips extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Material(
-            color: Theme.of(context).colorScheme.surface,
+            color: scheme.surface,
             shape: const CircleBorder(),
             elevation: 2,
             child: const ThemeToggleButton(),
@@ -342,73 +387,103 @@ class _CategoryChips extends StatelessWidget {
   }
 }
 
-class _Chip extends StatelessWidget {
-  const _Chip({
-    required this.label,
+/// Left drawer listing "All" plus every category present, with counts.
+/// Tapping a row applies the filter and closes the drawer.
+class _CategoryDrawer extends StatelessWidget {
+  const _CategoryDrawer({
+    required this.counts,
+    required this.total,
     required this.selected,
-    required this.onTap,
-    this.emoji,
-    this.categoryLabel,
-    this.color,
+    required this.onSelect,
   });
 
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final String? emoji;
-
-  /// Accessible label for [emoji] (WCAG 1.4.1 — the glyph alone isn't one).
-  final String? categoryLabel;
-  final Color? color;
+  final Map<PlaceCategory, int> counts;
+  final int total;
+  final PlaceCategory? selected;
+  final ValueChanged<PlaceCategory?> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Center(
-        child: Material(
-          color: selected ? (color ?? AppTheme.coral) : scheme.surface,
-          borderRadius: BorderRadius.circular(20),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: onTap,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: selected
-                  ? null
-                  : BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: scheme.outlineVariant),
-                    ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (emoji != null) ...[
-                    Semantics(
-                      label: categoryLabel,
-                      child: ExcludeSemantics(
-                        child: Text(
-                          emoji!,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                  ],
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: selected ? Colors.white : scheme.onSurface,
-                    ),
-                  ),
-                ],
+    final brightness = Theme.of(context).brightness;
+    return Drawer(
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+              child: Text(
+                'Categories',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
+            _CategoryTile(
+              leading: const Icon(Icons.apps),
+              label: 'All',
+              count: total,
+              color: AppTheme.coral,
+              selected: selected == null,
+              onTap: () => onSelect(null),
+            ),
+            for (final entry in counts.entries)
+              _CategoryTile(
+                leading: Semantics(
+                  label: entry.key.labelEn,
+                  child: ExcludeSemantics(
+                    child: Text(
+                      entry.key.emoji,
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                  ),
+                ),
+                label: entry.key.labelEn,
+                count: entry.value,
+                color: AppTheme.categoryColor(entry.key, brightness),
+                selected: selected == entry.key,
+                onTap: () => onSelect(entry.key),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryTile extends StatelessWidget {
+  const _CategoryTile({
+    required this.leading,
+    required this.label,
+    required this.count,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Widget leading;
+  final String label;
+  final int count;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        selected: selected,
+        selectedTileColor: color.withValues(alpha: 0.16),
+        selectedColor: Theme.of(context).colorScheme.onSurface,
+        leading: SizedBox(width: 28, child: Center(child: leading)),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
+        trailing: Text('$count'),
+        onTap: onTap,
       ),
     );
   }
