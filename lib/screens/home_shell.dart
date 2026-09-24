@@ -8,6 +8,7 @@ import '../data/place_store.dart';
 import '../services/place_extractor.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
+import '../widgets/account_button.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -90,7 +91,12 @@ class _HomeShellState extends State<HomeShell> {
       appBar: showAppBar
           ? AppBar(
               title: Text(_titles[_index]),
-              actions: const [ThemeToggleButton()],
+              actions: const [
+                AccountButton(),
+                SizedBox(width: 4),
+                ThemeToggleButton(),
+                SizedBox(width: 4),
+              ],
             )
           : null,
       body: IndexedStack(

@@ -53,7 +53,9 @@ class _FeedScreenState extends State<FeedScreen> {
             valueListenable: PlaceStore.instance.places,
             builder: (context, all, _) {
               final results = _filter(all);
-              if (results.isEmpty) return const _EmptyState();
+              if (results.isEmpty) {
+                return _EmptyState(searching: _query.trim().isNotEmpty);
+              }
               return ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                 itemCount: results.length,
@@ -72,11 +74,19 @@ class _FeedScreenState extends State<FeedScreen> {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.searching});
+
+  /// True when a search query is active and matched nothing — distinct from
+  /// a genuinely empty store.
+  final bool searching;
 
   @override
   Widget build(BuildContext context) {
     final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
+    final title = searching ? 'No matches' : 'No finds yet';
+    final body = searching
+        ? 'Try another name, area or category.'
+        : 'Tap Add a find to save your first place.';
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -84,19 +94,18 @@ class _EmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.travel_explore,
+              searching ? Icons.search_off : Icons.travel_explore,
               size: 48,
               color: onSurfaceVariant.withValues(alpha: 0.4),
             ),
             const SizedBox(height: 14),
-            const Text(
-              'Nothing here yet',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
-              'Share a reel or post to CheapTripChip and we’ll '
-              'place it on the map for you.',
+              body,
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,

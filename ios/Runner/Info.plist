@@ -53,6 +53,15 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!--
+	  Google Sign-In on iOS needs two keys here once `flutterfire configure`
+	  has generated ios/Runner/GoogleService-Info.plist — see
+	  docs/firebase-setup.md step 7 for the exact XML to add:
+	    - GIDClientID           (= GoogleService-Info.plist's CLIENT_ID)
+	    - CFBundleURLTypes      (a URL scheme entry using the reversed
+	                             REVERSED_CLIENT_ID from the same file)
+	  Not added here to avoid committing placeholder/invalid values.
+	-->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

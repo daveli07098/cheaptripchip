@@ -5,6 +5,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2026-09-14] — Session: multi-user accounts (Google sign-in + Firestore)
+### Added
+- Firebase Auth with the Google provider (`AuthService`: web popup, mobile via
+  google_sign_in 7) and Cloud Firestore per-user storage under
+  `users/{uid}/places` and `users/{uid}/boards` (`FirestorePlaceRepository`,
+  `FirestoreBoardRepository`), behind `PlaceRepository`/`BoardRepository`
+  interfaces so the backend can be swapped in one file.
+- Guest mode: with no Firebase project configured the app runs exactly as
+  before on local, mock-seeded repositories; `lib/firebase_options.dart` is a
+  stub that `flutterfire configure` overwrites.
+- `BoardStore` (create board, add place to board/section) and a working
+  "Add to board" picker with "New board…"; Boards reads the store.
+- Account button (map chip row + Saved/Boards app bars) and account sheet
+  with not-configured / signed-out / signed-in states; favourite/board writes
+  go through the repositories.
+- `Place`/`Board`/`BoardSection` JSON (de)serialization with lenient parsing.
+- `firestore.rules` (owner-only), `firebase.json`, `docs/firebase-setup.md`
+  (11-step console + CLI checklist), iOS deployment target 15.0.
+- Tests: JSON round-trips, store behaviour with injected repositories (16 total).
+### Changed
+- Empty states distinguish "no finds yet" from an empty category filter or
+  search with no matches.
+### Notes
+- Deliberate: guest data is not uploaded on sign-in; signing in switches to
+  the Firestore-backed stores.
+- Verified in the headless web preview: guest mode, account sheet (unconfigured
+  state), board picker and new-board flow. Not verified: real Google sign-in,
+  Firestore sync, rules — they need the Firebase project from the setup doc.
+- Gemini key remains client-side; a Cloud Functions proxy (Blaze plan) is next.
+
 ## [2026-09-07] — Session: UX review fixes
 ### Changed
 - Map tiles: OpenStreetMap by default via `MAP_TILE_URL` compile-time define

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../data/mock_data.dart';
+import '../data/board_store.dart';
 import '../data/place_store.dart';
+import '../models/board.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 
@@ -310,45 +311,163 @@ class _ActionRow extends StatelessWidget {
   }
 
   void _addToBoard(BuildContext context) {
+    // Captured before the sheet opens so the "Added to <board>" SnackBar
+    // still has a valid ScaffoldMessenger once the picker sheet has closed.
+    final messenger = ScaffoldMessenger.of(context);
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Add to board',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: _BoardPickerSheet(place: place, messenger: messenger),
+      ),
+    );
+  }
+}
+
+/// "Add to board" picker: lists [BoardStore.instance.boards] plus a
+/// "New board…" row that reveals a name field to create one on the fly.
+class _BoardPickerSheet extends StatefulWidget {
+  const _BoardPickerSheet({required this.place, required this.messenger});
+
+  final Place place;
+  final ScaffoldMessengerState messenger;
+
+  @override
+  State<_BoardPickerSheet> createState() => _BoardPickerSheetState();
+}
+
+class _BoardPickerSheetState extends State<_BoardPickerSheet> {
+  final _nameController = TextEditingController();
+  bool _creatingNew = false;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _notifyAdded(String boardName) {
+    widget.messenger.showSnackBar(
+      SnackBar(
+        content: Text('Added to $boardName'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _addToExisting(Board board) async {
+    setState(() => _busy = true);
+    try {
+      await BoardStore.instance.addPlaceToBoard(
+        boardId: board.id,
+        placeId: widget.place.id,
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      _notifyAdded(board.name);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _createAndAdd() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final board = await BoardStore.instance.createBoard(name);
+      await BoardStore.instance.addPlaceToBoard(
+        boardId: board.id,
+        placeId: widget.place.id,
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      _notifyAdded(board.name);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'Add to board',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+          ),
+          ValueListenableBuilder<List<Board>>(
+            valueListenable: BoardStore.instance.boards,
+            builder: (context, boards, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final board in boards)
+                    ListTile(
+                      leading: Text(
+                        board.emoji,
+                        style: const TextStyle(fontSize: 22),
+                      ),
+                      title: Text(board.name),
+                      subtitle: Text(
+                        '${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
+                      ),
+                      trailing: const Icon(Icons.add_circle_outline),
+                      enabled: !_busy,
+                      onTap: () => _addToExisting(board),
+                    ),
+                ],
+              );
+            },
+          ),
+          if (!_creatingNew)
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('New board…'),
+              enabled: !_busy,
+              onTap: () => setState(() => _creatingNew = true),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      autofocus: true,
+                      enabled: !_busy,
+                      decoration: const InputDecoration(hintText: 'Board name'),
+                      onSubmitted: (_) => _createAndAdd(),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton(
+                    onPressed: _busy ? null : _createAndAdd,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.coral,
+                      minimumSize: const Size(0, 44),
+                    ),
+                    child: const Text('Create'),
+                  ),
+                ],
               ),
             ),
-            for (final board in MockData.boards)
-              ListTile(
-                leading: Text(
-                  board.emoji,
-                  style: const TextStyle(fontSize: 22),
-                ),
-                title: Text(board.name),
-                subtitle: Text('${board.itemCount} places'),
-                trailing: const Icon(Icons.add_circle_outline),
-                onTap: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Added to ${board.name}'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }

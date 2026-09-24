@@ -176,9 +176,9 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
                 ),
               ),
               if (widget.places.isEmpty)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
-                  child: _EmptyState(),
+                  child: _EmptyState(filtered: widget.total > 0),
                 )
               else
                 SliverPadding(
@@ -232,15 +232,39 @@ class _DragHandle extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.filtered});
+
+  /// True when the store has places but the active category filter hides
+  /// them all — the copy must not claim the user has "no finds".
+  final bool filtered;
 
   @override
   Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final title = filtered ? 'Nothing in this category' : 'No finds yet';
+    final body = filtered
+        ? 'Pick another category, or All.'
+        : 'Tap Add a find to save your first place.';
     return Center(
-      child: Text(
-        'No places in this category yet',
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              body,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: onSurface.withValues(alpha: 0.5)),
+            ),
+          ],
         ),
       ),
     );

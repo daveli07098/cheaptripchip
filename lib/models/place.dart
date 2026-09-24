@@ -133,6 +133,74 @@ class Place {
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }
+
+  /// Serializes to plain JSON types only (no [LatLng]/enum objects) so this
+  /// can be written directly to Firestore. [location] becomes `{'lat', 'lng'}`
+  /// and enums are stored by their [Enum.name].
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'areaLabel': areaLabel,
+      'region': region,
+      'category': category.name,
+      'location': {'lat': location.latitude, 'lng': location.longitude},
+      'descriptionEn': descriptionEn,
+      'originalCaption': originalCaption,
+      'address': address,
+      'hours': hours,
+      'sourceHandle': sourceHandle,
+      'sourcePlatform': sourcePlatform.name,
+      'award': award,
+      'matchConfident': matchConfident,
+      'rating': rating,
+      'reviewCount': reviewCount,
+      'priceRange': priceRange,
+      'photoUrls': photoUrls,
+      'isFavorite': isFavorite,
+    };
+  }
+
+  /// Lenient parse counterpart to [toJson]. Missing/null optional fields fall
+  /// back to the same defaults as the constructor; unrecognized enum names
+  /// fall back to [PlaceCategory.sightseeing] / [SourcePlatform.instagram]
+  /// (the most common defaults seen in mock data) rather than throwing;
+  /// numeric fields accept either `int` or `double` from JSON.
+  factory Place.fromJson(Map<String, dynamic> json) {
+    final locationJson = json['location'] as Map?;
+    return Place(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      areaLabel: json['areaLabel'] as String? ?? '',
+      region: json['region'] as String? ?? '',
+      category: PlaceCategory.values.firstWhere(
+        (e) => e.name == json['category'],
+        orElse: () => PlaceCategory.sightseeing,
+      ),
+      location: LatLng(
+        (locationJson?['lat'] as num?)?.toDouble() ?? 0,
+        (locationJson?['lng'] as num?)?.toDouble() ?? 0,
+      ),
+      descriptionEn: json['descriptionEn'] as String? ?? '',
+      originalCaption: json['originalCaption'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      hours: json['hours'] as String? ?? '',
+      sourceHandle: json['sourceHandle'] as String? ?? '',
+      sourcePlatform: SourcePlatform.values.firstWhere(
+        (e) => e.name == json['sourcePlatform'],
+        orElse: () => SourcePlatform.instagram,
+      ),
+      award: json['award'] as String?,
+      matchConfident: json['matchConfident'] as bool? ?? true,
+      rating: (json['rating'] as num?)?.toDouble(),
+      reviewCount: (json['reviewCount'] as num?)?.toInt(),
+      priceRange: json['priceRange'] as String?,
+      photoUrls:
+          (json['photoUrls'] as List?)?.map((e) => e.toString()).toList() ??
+          const [],
+      isFavorite: json['isFavorite'] as bool? ?? false,
+    );
+  }
 }
 
 enum PlaceCategory {

@@ -7,6 +7,7 @@ import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
+import '../widgets/account_button.dart';
 import '../widgets/map_pin.dart';
 import '../widgets/marker_clustering.dart';
 import '../widgets/place_list_sheet.dart';
@@ -311,6 +312,20 @@ class _CategoryChips extends StatelessWidget {
                     onTap: () => onSelect(entry.key),
                   ),
               ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            shape: const CircleBorder(),
+            elevation: 2,
+            // AccountButton's own tap target is 40x40 (per spec); padded out
+            // to 48x48 here so its disc matches ThemeToggleButton's — that
+            // one's an IconButton, whose default 48dp footprint drives its
+            // own Material's size.
+            child: const SizedBox.square(
+              dimension: 48,
+              child: Center(child: AccountButton()),
             ),
           ),
           const SizedBox(width: 8),

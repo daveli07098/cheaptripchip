@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../data/board_store.dart';
 import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
@@ -16,19 +16,64 @@ class BoardsScreen extends StatelessWidget {
     return ValueListenableBuilder<List<Place>>(
       valueListenable: PlaceStore.instance.places,
       builder: (context, places, _) {
-        final placesById = {for (final p in places) p.id: p};
-        final autoBoard = newFindsBoard(places, MockData.boards);
-        final boards = [?autoBoard, ...MockData.boards];
-        return ListView.separated(
-          // Bottom padding keeps the last board clear of the floating
-          // "Add a find" button.
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-          itemCount: boards.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (context, i) =>
-              _BoardCard(board: boards[i], placesById: placesById),
+        return ValueListenableBuilder<List<Board>>(
+          valueListenable: BoardStore.instance.boards,
+          builder: (context, storeBoards, _) {
+            final placesById = {for (final p in places) p.id: p};
+            final autoBoard = newFindsBoard(places, storeBoards);
+            final boards = [?autoBoard, ...storeBoards];
+            if (boards.isEmpty) return const _EmptyBoardsState();
+            return ListView.separated(
+              // Bottom padding keeps the last board clear of the floating
+              // "Add a find" button.
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+              itemCount: boards.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, i) =>
+                  _BoardCard(board: boards[i], placesById: placesById),
+            );
+          },
         );
       },
+    );
+  }
+}
+
+/// Shown when there are no boards (auto or user-created) and no places to
+/// auto-group — i.e. nothing at all to show yet.
+class _EmptyBoardsState extends StatelessWidget {
+  const _EmptyBoardsState();
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Padding(
+      // Matches the list's own bottom padding so this stays clear of the
+      // floating "Add a find" button too.
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('📌', style: TextStyle(fontSize: 40)),
+            const SizedBox(height: 12),
+            const Text(
+              'No boards yet',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Save a find, then add it to a board.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -84,7 +129,7 @@ class _BoardCard extends StatelessWidget {
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
           ),
           subtitle: Text(
-            '${board.sections.length} sections · ${board.itemCount} places',
+            '${board.sections.length} ${board.sections.length == 1 ? 'section' : 'sections'} · ${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
             style: TextStyle(
               color: Theme.of(
                 context,
