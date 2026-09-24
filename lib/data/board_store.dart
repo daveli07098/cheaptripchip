@@ -27,6 +27,11 @@ class BoardStore {
 
   static final Random _idRandom = Random();
 
+  /// Index each board held at the moment it was removed by [deleteBoard],
+  /// keyed by board id — consulted by [restoreBoard] to re-insert at (as
+  /// close as optimistically possible to) its old position.
+  final Map<String, int> _lastKnownIndex = {};
+
   /// Picks [LocalBoardRepository] when [user] is null (guest mode) or
   /// [FirestoreBoardRepository] under `users/{uid}/boards` when signed in,
   /// cancelling any previous subscription first.
@@ -122,5 +127,111 @@ class BoardStore {
         if (b.id == boardId) updated else b,
     ];
     await _repository.upsert(updated);
+  }
+
+  /// Renames board [id] to [name] (trimmed). No-op if the board doesn't
+  /// exist or [name] is blank after trimming. Optimistic, like [createBoard].
+  Future<void> renameBoard(String id, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final board = byIdOrNull(id);
+    if (board == null) return;
+    final updated = board.copyWith(name: trimmed);
+    boards.value = [
+      for (final b in boards.value)
+        if (b.id == id) updated else b,
+    ];
+    await _repository.upsert(updated);
+  }
+
+  /// Removes board [id] and returns the removed [Board] (for undo via
+  /// [restoreBoard]), or null if it didn't exist. Optimistic: [boards]
+  /// updates synchronously before the repository delete completes.
+  Future<Board?> deleteBoard(String id) async {
+    final index = boards.value.indexWhere((b) => b.id == id);
+    if (index == -1) return null;
+    final removed = boards.value[index];
+    _lastKnownIndex[id] = index;
+    boards.value = [
+      for (final b in boards.value)
+        if (b.id != id) b,
+    ];
+    await _repository.delete(id);
+    return removed;
+  }
+
+  /// Re-inserts [board], previously removed by [deleteBoard], at the index
+  /// it held at deletion time (clamped to the current list length; 0 if
+  /// [board] wasn't deleted via this store instance). This position is only
+  /// honoured optimistically — once the repository's [watch] stream echoes
+  /// back (Local: unknown ids land at index 0 on the next upsert; Firestore:
+  /// snapshot order, not insertion order), [boards] reflects whatever order
+  /// the backing store produces, not this one.
+  Future<void> restoreBoard(Board board) async {
+    final index = (_lastKnownIndex.remove(board.id) ?? 0).clamp(
+      0,
+      boards.value.length,
+    );
+    boards.value = [
+      ...boards.value.sublist(0, index),
+      board,
+      ...boards.value.sublist(index),
+    ];
+    await _repository.upsert(board);
+  }
+
+  /// Removes [placeId] from every section of board [boardId] that contains
+  /// it (a place can appear in more than one section of the same board).
+  /// A section that becomes empty is dropped entirely — an empty section
+  /// would otherwise render as a bare, item-less header in the UI. Returns
+  /// the titles of the sections [placeId] was removed from (in board order,
+  /// before pruning), which is enough to undo via a loop of
+  /// [addPlaceToBoard] calls with `sectionTitle:` set to each returned
+  /// title — note the section is recreated at the end of the board, so
+  /// original position isn't restored, only membership.
+  Future<List<String>> removePlaceFromBoard({
+    required String boardId,
+    required String placeId,
+  }) async {
+    final board = byIdOrNull(boardId);
+    if (board == null) return const [];
+
+    final removedFrom = <String>[];
+    final updatedSections = <BoardSection>[];
+    for (final section in board.sections) {
+      if (!section.placeIds.contains(placeId)) {
+        updatedSections.add(section);
+        continue;
+      }
+      removedFrom.add(section.title);
+      final remaining = section.placeIds.where((id) => id != placeId).toList();
+      if (remaining.isNotEmpty) {
+        updatedSections.add(section.copyWith(placeIds: remaining));
+      }
+    }
+    if (removedFrom.isEmpty) return const [];
+
+    final updated = board.copyWith(sections: updatedSections);
+    boards.value = [
+      for (final b in boards.value)
+        if (b.id == boardId) updated else b,
+    ];
+    await _repository.upsert(updated);
+    return removedFrom;
+  }
+
+  /// True if board [boardId] has any section containing [placeId].
+  bool containsPlace(String boardId, String placeId) {
+    final board = byIdOrNull(boardId);
+    if (board == null) return false;
+    return board.sections.any((section) => section.placeIds.contains(placeId));
+  }
+
+  /// All boards with at least one section containing [placeId] — for a ✓
+  /// "which boards is this saved to" picker.
+  List<Board> boardsContaining(String placeId) {
+    return boards.value
+        .where((board) => containsPlace(board.id, placeId))
+        .toList();
   }
 }

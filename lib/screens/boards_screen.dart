@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../data/board_store.dart';
 import '../data/place_store.dart';
@@ -80,6 +81,11 @@ class _EmptyBoardsState extends StatelessWidget {
   }
 }
 
+/// Id of the auto-generated "New finds" board (see [newFindsBoard]). It is
+/// never backed by [BoardStore] (no repository row), so boards_screen never
+/// offers rename/delete/remove-place on it — only share.
+const String kNewFindsBoardId = 'new-finds';
+
 /// Auto-generated board (title 'New finds', emoji 📌) for [places] not
 /// referenced by any section in [boards], grouped one section per category.
 ///
@@ -100,7 +106,7 @@ Board? newFindsBoard(List<Place> places, List<Board> boards) {
   }
 
   return Board(
-    id: 'new-finds',
+    id: kNewFindsBoardId,
     name: 'New finds',
     emoji: '📌',
     sections: [
@@ -120,8 +126,14 @@ class _BoardCard extends StatefulWidget {
   State<_BoardCard> createState() => _BoardCardState();
 }
 
+enum _BoardMenuAction { share, rename, delete }
+
 class _BoardCardState extends State<_BoardCard> {
   late bool _expanded = widget.board.id == 'b1';
+
+  /// The auto-generated "New finds" board (see [kNewFindsBoardId]) isn't a
+  /// stored [Board] — it never offers rename/delete/remove-place.
+  bool get _isAuto => widget.board.id == kNewFindsBoardId;
 
   /// The board's places in section order, skipping ids that no longer
   /// resolve against the live store (same rule as [_SectionBlock]).
@@ -151,6 +163,8 @@ class _BoardCardState extends State<_BoardCard> {
           leading: Text(board.emoji, style: const TextStyle(fontSize: 26)),
           title: Text(
             board.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
           ),
           subtitle: Text(
@@ -161,15 +175,53 @@ class _BoardCardState extends State<_BoardCard> {
               ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
           ),
-          // A custom trailing replaces ExpansionTile's chevron, so keep one
-          // next to the share button.
+          // A custom trailing replaces ExpansionTile's chevron. Share (and,
+          // for stored boards, Rename/Delete) live in a single ⋮ menu rather
+          // than separate icon buttons — three+ icons plus the emoji leading
+          // and bold title would overflow a 360dp-wide phone.
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                tooltip: 'Share ${board.name}',
-                icon: const Icon(Icons.ios_share, size: 20),
-                onPressed: () => ExportSheet.show(context, _bundle()),
+              PopupMenuButton<_BoardMenuAction>(
+                tooltip: 'Board options',
+                icon: const Icon(Icons.more_vert, size: 20),
+                onSelected: (action) => _handleMenuAction(context, action),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: _BoardMenuAction.share,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.ios_share),
+                      title: Text('Share'),
+                    ),
+                  ),
+                  if (!_isAuto) ...[
+                    const PopupMenuItem(
+                      value: _BoardMenuAction.rename,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Rename'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _BoardMenuAction.delete,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.delete_outline,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        title: Text(
+                          'Delete',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
               ExcludeSemantics(
                 child: AnimatedRotation(
@@ -182,8 +234,98 @@ class _BoardCardState extends State<_BoardCard> {
           ),
           children: [
             for (final section in board.sections)
-              _SectionBlock(section: section, placesById: placesById),
+              _SectionBlock(
+                boardId: board.id,
+                boardName: board.name,
+                section: section,
+                placesById: placesById,
+                isAuto: _isAuto,
+              ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleMenuAction(
+    BuildContext context,
+    _BoardMenuAction action,
+  ) async {
+    switch (action) {
+      case _BoardMenuAction.share:
+        ExportSheet.show(context, _bundle());
+      case _BoardMenuAction.rename:
+        await _renameBoard(context);
+      case _BoardMenuAction.delete:
+        await _deleteBoard(context);
+    }
+  }
+
+  Future<void> _renameBoard(BuildContext context) async {
+    final controller = TextEditingController(text: widget.board.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename board'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (newName == null) return;
+    await BoardStore.instance.renameBoard(widget.board.id, newName);
+  }
+
+  Future<void> _deleteBoard(BuildContext context) async {
+    final board = widget.board;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete “${board.name}”?'),
+        content: const Text('Places stay in your Saved list.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!context.mounted) return;
+    // Grabbed before the optimistic delete rebuilds BoardsScreen without
+    // this card — `context` would no longer resolve to a mounted ancestor
+    // once that happens.
+    final messenger = ScaffoldMessenger.of(context);
+    final removed = await BoardStore.instance.deleteBoard(board.id);
+    if (removed == null) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Deleted “${board.name}”'),
+        action: SnackBarAction(
+          label: 'UNDO',
+          onPressed: () => BoardStore.instance.restoreBoard(removed),
         ),
       ),
     );
@@ -191,10 +333,25 @@ class _BoardCardState extends State<_BoardCard> {
 }
 
 class _SectionBlock extends StatelessWidget {
-  const _SectionBlock({required this.section, required this.placesById});
+  const _SectionBlock({
+    required this.boardId,
+    required this.boardName,
+    required this.section,
+    required this.placesById,
+    required this.isAuto,
+  });
 
+  /// Board and board name the section belongs to — used to call
+  /// [BoardStore.removePlaceFromBoard] and to word the "Removed from"
+  /// SnackBar. Unused (and rows aren't swipeable) when [isAuto] is true.
+  final String boardId;
+  final String boardName;
   final BoardSection section;
   final Map<String, Place> placesById;
+
+  /// True for the auto-generated "New finds" board ([kNewFindsBoardId]),
+  /// which isn't a stored [Board] — its rows can't be removed.
+  final bool isAuto;
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +385,7 @@ class _SectionBlock extends StatelessWidget {
       place.category,
       Theme.of(context).brightness,
     );
-    return ListTile(
+    final tile = ListTile(
       dense: true,
       leading: CircleAvatar(
         radius: 16,
@@ -256,6 +413,72 @@ class _SectionBlock extends StatelessWidget {
       ),
       trailing: const Icon(Icons.chevron_right, size: 20),
       onTap: () => PlaceDetailSheet.show(context, place),
+    );
+    if (isAuto) return tile;
+
+    return Dismissible(
+      key: ValueKey('$boardId/${section.title}/${place.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: Theme.of(context).colorScheme.error,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.delete_outline,
+              color: Theme.of(context).colorScheme.onError,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Remove',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onError,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+      onDismissed: (_) => _removePlace(context, place),
+      // A Dismissible's swipe gesture alone isn't exposed to assistive tech
+      // — pair it with an explicit custom action.
+      child: Semantics(
+        customSemanticsActions: {
+          CustomSemanticsAction(label: 'Remove from board'): () =>
+              _removePlace(context, place),
+        },
+        child: tile,
+      ),
+    );
+  }
+
+  Future<void> _removePlace(BuildContext context, Place place) async {
+    // Grabbed before the store mutation optimistically rebuilds this row's
+    // ancestors without it.
+    final messenger = ScaffoldMessenger.of(context);
+    final removedFrom = await BoardStore.instance.removePlaceFromBoard(
+      boardId: boardId,
+      placeId: place.id,
+    );
+    if (removedFrom.isEmpty) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Removed from $boardName'),
+        action: SnackBarAction(
+          label: 'UNDO',
+          onPressed: () {
+            for (final title in removedFrom) {
+              BoardStore.instance.addPlaceToBoard(
+                boardId: boardId,
+                placeId: place.id,
+                sectionTitle: title,
+              );
+            }
+          },
+        ),
+      ),
     );
   }
 }
