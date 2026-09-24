@@ -32,6 +32,7 @@ void main() {
         isFavorite: true,
         myScore: 9,
         myNotes: 'Loved the seasonal parfait, go early to avoid the queue.',
+        restaurantType: RestaurantType.dimsum,
       );
 
       final json = place.toJson();
@@ -68,6 +69,8 @@ void main() {
       expect(decoded.isFavorite, place.isFavorite);
       expect(decoded.myScore, place.myScore);
       expect(decoded.myNotes, place.myNotes);
+      expect(decoded.restaurantType, place.restaurantType);
+      expect(json['restaurantType'], 'dimsum');
     });
 
     test('minimal place (all optionals null/empty) round-trips', () {
@@ -99,6 +102,7 @@ void main() {
       expect(decoded.sourcePlatform, SourcePlatform.instagram);
       expect(decoded.myScore, isNull);
       expect(decoded.myNotes, isEmpty);
+      expect(decoded.restaurantType, isNull);
     });
 
     test('lenient parse: int rating, missing photoUrls, unknown category', () {
@@ -236,6 +240,92 @@ void main() {
       // copyWith keeps the marker unless explicitly cleared.
       expect(withPhoto.copyWith(myNotes: 'x').myPhotoAt, at);
       expect(withPhoto.copyWith(clearMyPhotoAt: true).myPhotoAt, isNull);
+    });
+
+    test('restaurantType round-trips and rejects unknown names', () {
+      const base = Place(
+        id: 'p',
+        name: 'n',
+        areaLabel: '',
+        region: '',
+        category: PlaceCategory.restaurant,
+        location: LatLng(1, 1),
+        descriptionEn: '',
+        originalCaption: '',
+        address: '',
+        hours: '',
+        sourceHandle: '',
+        sourcePlatform: SourcePlatform.instagram,
+      );
+      final withType = base.copyWith(restaurantType: RestaurantType.sushi);
+
+      expect(withType.toJson()['restaurantType'], 'sushi');
+      expect(
+        Place.fromJson(withType.toJson()).restaurantType,
+        RestaurantType.sushi,
+      );
+      expect(Place.fromJson(base.toJson()).restaurantType, isNull);
+
+      final json = base.toJson();
+      expect(
+        Place.fromJson({...json, 'restaurantType': 'omakase'}).restaurantType,
+        isNull,
+      );
+      expect(
+        Place.fromJson({...json, 'restaurantType': 42}).restaurantType,
+        isNull,
+      );
+
+      // copyWith keeps the type unless explicitly cleared.
+      expect(
+        withType.copyWith(myNotes: 'x').restaurantType,
+        RestaurantType.sushi,
+      );
+      expect(
+        withType.copyWith(clearRestaurantType: true).restaurantType,
+        isNull,
+      );
+    });
+  });
+
+  group('Place.effectiveRestaurantType', () {
+    const restaurant = Place(
+      id: 'p',
+      name: 'Some Ramen Bar',
+      areaLabel: '',
+      region: '',
+      category: PlaceCategory.restaurant,
+      location: LatLng(1, 1),
+      descriptionEn: 'A cosy shop known for its ramen.',
+      originalCaption: '',
+      address: '',
+      hours: '',
+      sourceHandle: '',
+      sourcePlatform: SourcePlatform.instagram,
+    );
+
+    test('non-restaurant category is always null, even with a type set', () {
+      final cafe = restaurant.copyWith(
+        category: PlaceCategory.cafe,
+        restaurantType: RestaurantType.ramen,
+      );
+      expect(cafe.effectiveRestaurantType, isNull);
+    });
+
+    test('a stored type always wins over keyword detection', () {
+      final tagged = restaurant.copyWith(restaurantType: RestaurantType.sushi);
+      expect(tagged.effectiveRestaurantType, RestaurantType.sushi);
+    });
+
+    test('falls back to keyword detection, then Other, when unset', () {
+      // `restaurant`'s own descriptionEn mentions "ramen".
+      expect(restaurant.effectiveRestaurantType, RestaurantType.ramen);
+
+      final noKeywords = restaurant.copyWith(
+        name: 'Untitled',
+        descriptionEn: 'A lovely place to eat.',
+      );
+      expect(noKeywords.effectiveRestaurantType, RestaurantType.other);
     });
   });
 }

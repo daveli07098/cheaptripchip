@@ -66,6 +66,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   upsert (avoids racing the repository echo), already checked. Tests:
   checkbox reflects membership, tap toggles add/remove in the store, new-board
   creation, `addToBoardLabel` (5 total, 94 project-wide).
+- Restaurant cuisine sub-types: `RestaurantType` enum (ramen, sushi, izakaya,
+  yakiniku, hot pot, dim sum, cha chaan teng, Japanese (other), Korean,
+  Western, fine dining, other), `Place.restaurantType` (nullable — every place
+  starts unset, no bulk tagging/migration). `Place.effectiveRestaurantType`
+  resolves at read time: the stored value (user pick or Gemini extraction)
+  always wins, else a keyword guess from the new
+  `lib/models/restaurant_type_detect.dart` (`detectRestaurantType`, EN/繁/簡/日
+  substring keywords, specific dishes checked before the generic "other
+  Japanese" bucket), else "Other" — nothing is ever written back by the
+  detector. Gemini extraction (`PlaceExtractor`) requests a `restaurantType`
+  when the category is restaurant and leniently maps model output, including
+  a small synonym table (sushi/sashimi, yakitori→izakaya, dim sum/cantonese,
+  bbq/barbecue→yakiniku, cha chaan teng/茶餐廳). Map drawer's Restaurant row is
+  now expandable (`_RestaurantCategoryTile`, only types with count > 0, in
+  enum order; auto-expands when a sub-type becomes selected) to filter by
+  sub-type; the active-category chip shows it ("🍜 Ramen · 5 ✕"). Search
+  (`placeMatches`) also matches the effective type's English/Chinese label.
+  Detail sheet shows a tappable "🍜 Ramen ▾" chip for restaurants (opens a
+  bottom-sheet picker, saves via new `PlaceStore.setRestaurantType`);
+  `PlaceCard`'s meta line shows the type instead of the generic "Restaurant"
+  label. `TripShare` includes it as optional `rt` (link) / `restaurantType`
+  (file) fields — old links/files without it still decode (`restaurantType`
+  null → resolved as "Other" by `effectiveRestaurantType`). Mock data left
+  untagged on purpose: Gogo (p1) already reads as ramen via detection (its
+  descriptionEn mentions "ramen"), demonstrating the fallback. Tests: model
+  JSON round-trip/unknown value/`effectiveRestaurantType` precedence,
+  `detectRestaurantType` per-language + priority + no-match, extractor
+  synonym mapping, store `setRestaurantType`, search matches, share codec
+  round-trip + legacy-link decode, and a map-screen drawer widget test
+  (25 new, 119 project-wide).
 ### Changed
 - `firestore.rules`: explicit `places`/`boards`/`photos` matches replace the
   `users/{uid}/{document=**}` wildcard (any allow wins, so the wildcard would

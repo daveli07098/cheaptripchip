@@ -99,6 +99,10 @@ class PlaceDetailSheet extends StatelessWidget {
                   const SizedBox(height: 8),
                   _AwardChip(label: place.award!),
                 ],
+                if (place.category == PlaceCategory.restaurant) ...[
+                  const SizedBox(height: 8),
+                  _RestaurantTypeChip(place: place),
+                ],
                 const SizedBox(height: 18),
                 _ActionRow(place: place),
                 const SizedBox(height: 20),
@@ -337,6 +341,129 @@ class _AwardChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Tappable "🍜 Ramen ▾" chip for a restaurant's cuisine sub-type
+/// ([Place.effectiveRestaurantType] — the user's own pick if set, else a
+/// keyword-detected guess, else "Other"). Tapping opens [_RestaurantTypePicker]
+/// and saves the choice via [PlaceStore.setRestaurantType]. Re-reads the
+/// current copy from the store, same as [_MyReviewSection]/[_ActionRow]'s
+/// favourite toggle, so it reflects a save immediately.
+class _RestaurantTypeChip extends StatelessWidget {
+  const _RestaurantTypeChip({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) {
+        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+        final type = current.effectiveRestaurantType ?? RestaurantType.other;
+        final color = AppTheme.categoryColor(
+          PlaceCategory.restaurant,
+          Theme.of(context).brightness,
+        );
+        return Semantics(
+          button: true,
+          label: 'Cuisine: ${type.labelEn}. Tap to change.',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _pickType(context, current),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ExcludeSemantics(
+                    child: Text(
+                      type.emoji,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  ExcludeSemantics(
+                    child: Text(
+                      type.labelEn,
+                      style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.expand_more, size: 16, color: color),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickType(BuildContext context, Place current) async {
+    final picked = await showModalBottomSheet<RestaurantType>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _RestaurantTypePicker(
+        selected: current.effectiveRestaurantType ?? RestaurantType.other,
+      ),
+    );
+    if (picked == null) return;
+    await PlaceStore.instance.setRestaurantType(current.id, picked);
+  }
+}
+
+/// Bottom sheet list of every [RestaurantType], opened by [_RestaurantTypeChip].
+/// Pops with the tapped type, or `null` on dismiss without a pick — a plain
+/// [StatelessWidget] since it holds no controller (see the git history of
+/// this file's `_NotesDialog` for why that distinction matters: never
+/// dispose a controller right after `await showModalBottomSheet` returns —
+/// this widget simply doesn't own one).
+class _RestaurantTypePicker extends StatelessWidget {
+  const _RestaurantTypePicker({required this.selected});
+
+  final RestaurantType selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'Cuisine / type',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final type in RestaurantType.values)
+              ListTile(
+                leading: ExcludeSemantics(
+                  child: Text(type.emoji, style: const TextStyle(fontSize: 20)),
+                ),
+                title: Text(type.labelEn),
+                trailing: type == selected ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, type),
+              ),
+          ],
+        ),
       ),
     );
   }

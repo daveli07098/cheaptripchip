@@ -18,6 +18,10 @@ bool placeMatches(Place place, String query) {
       .where((t) => t.isNotEmpty);
   if (terms.isEmpty) return true;
 
+  // effectiveRestaurantType (stored value, else a keyword guess, else
+  // "Other") rather than the raw field — so e.g. searching "ramen" finds a
+  // restaurant whose type was only ever auto-detected, not explicitly set.
+  final restaurantType = place.effectiveRestaurantType;
   final haystack = [
     place.name,
     place.areaLabel,
@@ -26,6 +30,8 @@ bool placeMatches(Place place, String query) {
     place.descriptionEn,
     place.category.labelEn,
     place.category.labelZh,
+    if (restaurantType != null) restaurantType.labelEn,
+    if (restaurantType != null) restaurantType.labelZh,
     place.sourceHandle,
   ].join('\n').toLowerCase();
 

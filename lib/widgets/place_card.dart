@@ -102,9 +102,11 @@ class PlaceCard extends StatelessWidget {
 }
 
 /// Builds the Google-Maps-style metadata line, e.g.
-/// "4.7 ★ (85) · $600–1,400 · Restaurant". Rating and price are optional and
-/// drop their own separator cleanly when absent; the category label always
-/// renders last.
+/// "4.7 ★ (85) · $600–1,400 · Ramen". Rating and price are optional and drop
+/// their own separator cleanly when absent; the last part is normally the
+/// category label, but for a restaurant it's swapped for the (possibly
+/// keyword-detected) cuisine sub-type — a subtle upgrade over the generic
+/// "Restaurant" label using space that's already there, no extra UI.
 String _metaLine(Place place) {
   final parts = <String>[];
   if (place.hasRating) {
@@ -113,7 +115,7 @@ String _metaLine(Place place) {
     parts.add('$rating ★$reviews');
   }
   if (place.priceRange != null) parts.add(place.priceRange!);
-  parts.add(place.category.labelEn);
+  parts.add(place.effectiveRestaurantType?.labelEn ?? place.category.labelEn);
   return parts.join(' · ');
 }
 

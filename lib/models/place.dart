@@ -1,5 +1,7 @@
 import 'package:latlong2/latlong.dart';
 
+import 'restaurant_type_detect.dart';
+
 /// A saved travel find — extracted from a shared IG/TikTok post.
 ///
 /// In the draft this is populated from mock data; in production the same shape
@@ -28,6 +30,7 @@ class Place {
     this.myScore,
     this.myNotes = '',
     this.myPhotoAt,
+    this.restaurantType,
   });
 
   final String id;
@@ -101,8 +104,29 @@ class Place {
   /// no personal photo — see [copyWith]'s `clearMyPhotoAt`.
   final DateTime? myPhotoAt;
 
+  /// The restaurant's cuisine/style sub-type — only meaningful when
+  /// [category] is [PlaceCategory.restaurant]. Null means "not set by the
+  /// user yet" (every place — including ones extracted from a shared post —
+  /// starts here; there is no automatic classification). See
+  /// [effectiveRestaurantType] for the display-time default, and
+  /// [copyWith]'s `clearRestaurantType` for how to reset it.
+  final RestaurantType? restaurantType;
+
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
+
+  /// [restaurantType] when the user (or Gemini extraction) has set one —
+  /// that stored value always wins — else a best-effort guess from
+  /// [detectRestaurantType], else [RestaurantType.other]; `null` for every
+  /// non-restaurant category. Computed at read time (never written back —
+  /// there's nothing to migrate if the keyword list changes later). Prefer
+  /// this over the raw field wherever the UI needs to show, count, or filter
+  /// by "the" type, so an unset type still reads as its best guess (or
+  /// "Other") rather than as a special missing case.
+  RestaurantType? get effectiveRestaurantType =>
+      category == PlaceCategory.restaurant
+      ? (restaurantType ?? detectRestaurantType(this) ?? RestaurantType.other)
+      : null;
 
   /// Deep link that opens this location in Google Maps — just a URL, no API key.
   /// What Google Maps searches for: name plus address (or area/region) so it
@@ -157,6 +181,10 @@ class Place {
 
     /// Same as `clearMyScore`, for [Place.myPhotoAt].
     bool clearMyPhotoAt = false,
+    RestaurantType? restaurantType,
+
+    /// Same as `clearMyScore`, for [Place.restaurantType].
+    bool clearRestaurantType = false,
   }) {
     return Place(
       id: id ?? this.id,
@@ -181,6 +209,9 @@ class Place {
       myScore: clearMyScore ? null : (myScore ?? this.myScore),
       myNotes: myNotes ?? this.myNotes,
       myPhotoAt: clearMyPhotoAt ? null : (myPhotoAt ?? this.myPhotoAt),
+      restaurantType: clearRestaurantType
+          ? null
+          : (restaurantType ?? this.restaurantType),
     );
   }
 
@@ -213,6 +244,7 @@ class Place {
       // ISO-8601 (UTC) keeps this plain JSON — no Firestore Timestamp type
       // leaks into the model.
       'myPhotoAt': myPhotoAt?.toUtc().toIso8601String(),
+      'restaurantType': restaurantType?.name,
     };
   }
 
@@ -257,7 +289,20 @@ class Place {
       myScore: _parseMyScore(json['myScore']),
       myNotes: json['myNotes'] is String ? json['myNotes'] as String : '',
       myPhotoAt: _parseMyPhotoAt(json['myPhotoAt']),
+      restaurantType: _parseRestaurantType(json['restaurantType']),
     );
+  }
+
+  /// Lenient parse for [restaurantType]: an [RestaurantType.name] string
+  /// (what [toJson] writes); anything else — missing, `null`, an unrecognized
+  /// name — falls back to `null` (see [effectiveRestaurantType] for how that
+  /// reads at display time) rather than throwing.
+  static RestaurantType? _parseRestaurantType(dynamic raw) {
+    if (raw is! String) return null;
+    for (final type in RestaurantType.values) {
+      if (type.name == raw) return type;
+    }
+    return null;
   }
 
   /// Lenient parse for [myPhotoAt]: an ISO-8601 string (what [toJson]
@@ -291,6 +336,32 @@ enum PlaceCategory {
   nightlife('Nightlife', '夜生活', '🍸');
 
   const PlaceCategory(this.labelEn, this.labelZh, this.emoji);
+
+  final String labelEn;
+  final String labelZh;
+  final String emoji;
+}
+
+/// Cuisine/style sub-type for [PlaceCategory.restaurant] places — see
+/// [Place.restaurantType]/[Place.effectiveRestaurantType]. Every place starts
+/// at [other] (no field set); the user picks a more specific type from the
+/// detail sheet. Declaration order is display order in the map drawer and
+/// the type picker.
+enum RestaurantType {
+  ramen('Ramen', '拉麵', '🍜'),
+  sushi('Sushi & sashimi', '壽司', '🍣'),
+  izakaya('Izakaya', '居酒屋', '🏮'),
+  yakiniku('Yakiniku & BBQ', '燒肉', '🥩'),
+  hotpot('Hot pot', '火鍋', '🍲'),
+  dimsum('Dim sum & Cantonese', '點心 / 粵菜', '🥟'),
+  chaChaanTeng('Cha chaan teng', '茶餐廳', '🍳'),
+  japanese('Japanese (other)', '日本料理', '🍛'),
+  korean('Korean', '韓國菜', '🥘'),
+  western('Western', '西餐', '🍝'),
+  fineDining('Fine dining', '高級餐廳', '✨'),
+  other('Other', '其他', '🍽️');
+
+  const RestaurantType(this.labelEn, this.labelZh, this.emoji);
 
   final String labelEn;
   final String labelZh;

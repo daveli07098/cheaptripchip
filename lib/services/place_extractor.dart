@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/mock_data.dart';
@@ -40,12 +41,14 @@ class PlaceExtractor {
     );
     final resolved = loc ?? MockData.tokyoCenter; // last-resort default
 
+    final category = _category(_str(json['category']));
+
     return Place(
       id: 'gx${DateTime.now().millisecondsSinceEpoch}',
       name: name,
       areaLabel: areaLabel.isNotEmpty ? areaLabel : region,
       region: region,
-      category: _category(_str(json['category'])),
+      category: category,
       location: resolved,
       descriptionEn: _str(
         json['descriptionEn'],
@@ -61,6 +64,10 @@ class PlaceExtractor {
       rating: _nullableDouble(json['rating']),
       reviewCount: _nullableInt(json['reviewCount']),
       priceRange: _nullableStr(json['priceRange']),
+      restaurantType: parseRestaurantType(
+        _str(json['restaurantType']),
+        category,
+      ),
     );
   }
 
@@ -72,6 +79,9 @@ Return ONLY a JSON object, no prose, with these keys:
 - areaLabel: short neighbourhood/area tag (e.g. "池袋")
 - region: "City, Country" (e.g. "Tokyo, Japan")
 - category: one of restaurant, cafe, food, sightseeing, shopping, stay, nightlife
+- restaurantType: only when category is "restaurant" — cuisine/style, one of:
+  ramen, sushi, izakaya, yakiniku, hotpot, dimsum, chaChaanTeng, japanese,
+  korean, western, fineDining, other. Else null.
 - latitude: number or null if unknown
 - longitude: number or null if unknown
 - descriptionEn: a 1-2 sentence English summary
@@ -134,6 +144,38 @@ $input
     return raw.toLowerCase().contains('tik')
         ? SourcePlatform.tiktok
         : SourcePlatform.instagram;
+  }
+
+  /// Parses Gemini's `restaurantType`, leniently: `null` outright for a
+  /// non-restaurant [category] or empty/missing input; an exact
+  /// [RestaurantType.name] match; else a small set of common synonyms the
+  /// model tends to use instead of the enum name; else `null` — deliberately
+  /// NOT a forced fallback to [RestaurantType.other] here, so an
+  /// unrecognized guess still leaves room for [Place.effectiveRestaurantType]'s
+  /// own keyword detection (see restaurant_type_detect.dart) to try next.
+  ///
+  /// Public (not `_`-prefixed) only so tests can exercise it directly without
+  /// a network round trip — not meant to be called from outside this class.
+  @visibleForTesting
+  RestaurantType? parseRestaurantType(String raw, PlaceCategory category) {
+    if (category != PlaceCategory.restaurant) return null;
+    final v = raw.trim().toLowerCase();
+    if (v.isEmpty) return null;
+    for (final type in RestaurantType.values) {
+      if (type.name.toLowerCase() == v) return type;
+    }
+    const synonyms = <String, RestaurantType>{
+      'sushi': RestaurantType.sushi,
+      'sashimi': RestaurantType.sushi,
+      'yakitori': RestaurantType.izakaya,
+      'dim sum': RestaurantType.dimsum,
+      'cantonese': RestaurantType.dimsum,
+      'bbq': RestaurantType.yakiniku,
+      'barbecue': RestaurantType.yakiniku,
+      'cha chaan teng': RestaurantType.chaChaanTeng,
+      '茶餐廳': RestaurantType.chaChaanTeng,
+    };
+    return synonyms[v];
   }
 
   void dispose() {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:cheaptripchip/services/trip_share.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +17,7 @@ Place _place({
   String address = '3-1-1 Nishi-Ikebukuro, Toshima City, Tokyo',
   String sourceHandle = '@rame.nbon',
   SourcePlatform sourcePlatform = SourcePlatform.tiktok,
+  RestaurantType? restaurantType,
 }) {
   return Place(
     id: id,
@@ -34,6 +36,7 @@ Place _place({
     reviewCount: 85,
     photoUrls: const ['https://example.com/photo1.jpg'],
     isFavorite: true,
+    restaurantType: restaurantType,
   );
 }
 
@@ -79,6 +82,50 @@ void main() {
       expect(place.photoUrls, isEmpty);
       expect(place.isFavorite, isFalse);
     });
+
+    test('preserves a set restaurantType', () {
+      final original = _place(
+        category: PlaceCategory.restaurant,
+        restaurantType: RestaurantType.izakaya,
+      );
+      final bundle = TripBundle(title: 'Tokyo Trip', places: [original]);
+
+      final decoded = TripShare.fromAppLink(TripShare.toAppLink(bundle))!;
+      expect(decoded.places.single.restaurantType, RestaurantType.izakaya);
+    });
+
+    test(
+      'an old link without the rt field decodes with restaurantType null',
+      () {
+        // Simulates a link created before this field existed: same compact
+        // shape, `rt` simply never written.
+        final bundle = TripBundle(title: 'Tokyo Trip', places: [_place()]);
+        final legacyJson = jsonEncode({
+          't': bundle.title,
+          'p': [
+            {
+              'n': _place().name,
+              'lat': _place().location.latitude,
+              'lng': _place().location.longitude,
+              'c': _place().category.name,
+            },
+          ],
+        });
+        final gzipped = const GZipEncoder().encodeBytes(
+          utf8.encode(legacyJson),
+        );
+        final payload = base64Url.encode(gzipped).replaceAll('=', '');
+        final uri = Uri(
+          scheme: TripShare.scheme,
+          host: TripShare.host,
+          queryParameters: {'v': '1', 'd': payload},
+        );
+
+        final decoded = TripShare.fromAppLink(uri);
+        expect(decoded, isNotNull);
+        expect(decoded!.places.single.restaurantType, isNull);
+      },
+    );
 
     test('two places in the same bundle get distinct fresh ids', () {
       final bundle = TripBundle(
@@ -209,6 +256,24 @@ void main() {
       expect(decoded.places[0].name, _place().name);
       expect(decoded.places[1].name, 'Second Spot');
       expect(decoded.places[0].id, isNot('gogo-ikebukuro'));
+    });
+
+    test('round-trips a set restaurantType under the readable key', () {
+      final bundle = TripBundle(
+        title: 'Osaka Weekend',
+        places: [
+          _place(
+            category: PlaceCategory.restaurant,
+            restaurantType: RestaurantType.hotpot,
+          ),
+        ],
+      );
+
+      final fileJson = TripShare.toFileJson(bundle);
+      expect(fileJson, contains('"restaurantType": "hotpot"'));
+
+      final decoded = TripShare.fromFileJson(fileJson);
+      expect(decoded!.places.single.restaurantType, RestaurantType.hotpot);
     });
 
     test('invalid JSON returns null', () {

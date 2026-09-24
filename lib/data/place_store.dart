@@ -120,4 +120,21 @@ class PlaceStore {
     ];
     await _repository.upsert(updated);
   }
+
+  /// Sets (or clears back to the default, when [type] is null)
+  /// [Place.restaurantType] for the place with the given [id]. Optimistic,
+  /// like [toggleFavorite]/[setPhotoMarker].
+  Future<void> setRestaurantType(String id, RestaurantType? type) async {
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    final updated = current.copyWith(
+      restaurantType: type,
+      clearRestaurantType: type == null,
+    );
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
 }

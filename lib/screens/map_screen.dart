@@ -55,6 +55,11 @@ class _MapScreenState extends State<MapScreen> {
   /// null = "All". Otherwise filter pins to the selected category.
   PlaceCategory? _selected;
 
+  /// null = every restaurant (no sub-filter). Only meaningful alongside
+  /// `_selected == PlaceCategory.restaurant` — selecting any other category
+  /// (including "All") clears it back to null.
+  RestaurantType? _selectedType;
+
   /// The place currently highlighted on both the map (max z-order + scale)
   /// and the list (scrolled into view + tinted row).
   String? _selectedPlaceId;
@@ -70,6 +75,11 @@ class _MapScreenState extends State<MapScreen> {
     final query = _searchController.text;
     return all.where((p) {
       if (_selected != null && p.category != _selected) return false;
+      if (_selected == PlaceCategory.restaurant &&
+          _selectedType != null &&
+          p.effectiveRestaurantType != _selectedType) {
+        return false;
+      }
       return placeMatches(p, query);
     }).toList();
   }
@@ -78,6 +88,22 @@ class _MapScreenState extends State<MapScreen> {
     final map = <PlaceCategory, int>{};
     for (final p in all) {
       map[p.category] = (map[p.category] ?? 0) + 1;
+    }
+    return map;
+  }
+
+  /// Restaurant sub-type counts over ALL places (same "not narrowed by
+  /// search" choice as [_counts]) — drives both the drawer's expandable rows
+  /// and the active-category chip's count when a sub-type is selected. Uses
+  /// [Place.effectiveRestaurantType] so an unset type still counts under its
+  /// keyword-detected guess (or "Other"), consistently with the filter in
+  /// [_visible].
+  Map<RestaurantType, int> _restaurantTypeCounts(List<Place> all) {
+    final map = <RestaurantType, int>{};
+    for (final p in all) {
+      final type = p.effectiveRestaurantType;
+      if (type == null) continue;
+      map[type] = (map[type] ?? 0) + 1;
     }
     return map;
   }
@@ -195,6 +221,7 @@ class _MapScreenState extends State<MapScreen> {
         final visible = _visible(all);
         final brightness = Theme.of(context).brightness;
         final counts = _counts(all);
+        final typeCounts = _restaurantTypeCounts(all);
 
         // If a search/category change dropped the selected pin out of
         // `visible`, clear it — deferred to a post-frame callback since
@@ -230,8 +257,20 @@ class _MapScreenState extends State<MapScreen> {
             counts: counts,
             total: all.length,
             selected: _selected,
+            restaurantTypeCounts: typeCounts,
+            selectedType: _selectedType,
             onSelect: (c) {
-              setState(() => _selected = c);
+              setState(() {
+                _selected = c;
+                _selectedType = null;
+              });
+              Navigator.of(context).pop();
+            },
+            onSelectType: (t) {
+              setState(() {
+                _selected = PlaceCategory.restaurant;
+                _selectedType = t;
+              });
               Navigator.of(context).pop();
             },
           ),
@@ -316,11 +355,17 @@ class _MapScreenState extends State<MapScreen> {
                     if (_selected != null)
                       _CategoryChip(
                         category: _selected!,
+                        type: _selectedType,
                         // Same "counts are over ALL places, not the search
                         // results" choice as the drawer (see `_counts`) —
                         // keeps the number stable while the user types.
-                        count: counts[_selected] ?? 0,
-                        onClear: () => setState(() => _selected = null),
+                        count: _selectedType != null
+                            ? (typeCounts[_selectedType] ?? 0)
+                            : (counts[_selected] ?? 0),
+                        onClear: () => setState(() {
+                          _selected = null;
+                          _selectedType = null;
+                        }),
                       ),
                   ],
                 ),
@@ -509,21 +554,27 @@ class _SearchBar extends StatelessWidget {
 /// Small chip under the search pill showing the active category + its count
 /// (over ALL places, same as the drawer — see `_MapScreenState._counts`),
 /// with a ✕ to clear it. Nothing renders for "All" (see the `if (_selected
-/// != null)` guard at the call site).
+/// != null)` guard at the call site). When [type] is set (a restaurant
+/// sub-type is active) it shows that instead of the bare category, e.g.
+/// "🍜 Ramen · 5 ✕".
 class _CategoryChip extends StatelessWidget {
   const _CategoryChip({
     required this.category,
     required this.count,
     required this.onClear,
+    this.type,
   });
 
   final PlaceCategory category;
+  final RestaurantType? type;
   final int count;
   final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final emoji = type?.emoji ?? category.emoji;
+    final label = type?.labelEn ?? category.labelEn;
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
@@ -538,17 +589,14 @@ class _CategoryChip extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Semantics(
-                  label: category.labelEn,
+                  label: label,
                   child: ExcludeSemantics(
-                    child: Text(
-                      category.emoji,
-                      style: const TextStyle(fontSize: 14),
-                    ),
+                    child: Text(emoji, style: const TextStyle(fontSize: 14)),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '${category.labelEn} · $count',
+                  '$label · $count',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -578,19 +626,27 @@ class _CategoryChip extends StatelessWidget {
 }
 
 /// Left drawer listing "All" plus every category present, with counts.
-/// Tapping a row applies the filter and closes the drawer.
+/// Tapping a row applies the filter and closes the drawer. The Restaurant
+/// row is expandable — see [_RestaurantCategoryTile] — to filter by cuisine
+/// sub-type without leaving the Restaurant category.
 class _CategoryDrawer extends StatelessWidget {
   const _CategoryDrawer({
     required this.counts,
     required this.total,
     required this.selected,
     required this.onSelect,
+    required this.restaurantTypeCounts,
+    required this.selectedType,
+    required this.onSelectType,
   });
 
   final Map<PlaceCategory, int> counts;
   final int total;
   final PlaceCategory? selected;
   final ValueChanged<PlaceCategory?> onSelect;
+  final Map<RestaurantType, int> restaurantTypeCounts;
+  final RestaurantType? selectedType;
+  final ValueChanged<RestaurantType> onSelectType;
 
   @override
   Widget build(BuildContext context) {
@@ -616,22 +672,32 @@ class _CategoryDrawer extends StatelessWidget {
               onTap: () => onSelect(null),
             ),
             for (final entry in counts.entries)
-              _CategoryTile(
-                leading: Semantics(
-                  label: entry.key.labelEn,
-                  child: ExcludeSemantics(
-                    child: Text(
-                      entry.key.emoji,
-                      style: const TextStyle(fontSize: 22),
+              if (entry.key == PlaceCategory.restaurant)
+                _RestaurantCategoryTile(
+                  count: entry.value,
+                  typeCounts: restaurantTypeCounts,
+                  selected: selected == PlaceCategory.restaurant,
+                  selectedType: selectedType,
+                  onSelectCategory: () => onSelect(PlaceCategory.restaurant),
+                  onSelectType: onSelectType,
+                )
+              else
+                _CategoryTile(
+                  leading: Semantics(
+                    label: entry.key.labelEn,
+                    child: ExcludeSemantics(
+                      child: Text(
+                        entry.key.emoji,
+                        style: const TextStyle(fontSize: 22),
+                      ),
                     ),
                   ),
+                  label: entry.key.labelEn,
+                  count: entry.value,
+                  color: AppTheme.categoryColor(entry.key, brightness),
+                  selected: selected == entry.key,
+                  onTap: () => onSelect(entry.key),
                 ),
-                label: entry.key.labelEn,
-                count: entry.value,
-                color: AppTheme.categoryColor(entry.key, brightness),
-                selected: selected == entry.key,
-                onTap: () => onSelect(entry.key),
-              ),
             const Divider(height: 24),
             // Moved here from the map's floating row (commit ec3b355) so the
             // search pill can stay a single, uninterrupted control.
@@ -683,6 +749,148 @@ class _CategoryTile extends StatelessWidget {
         trailing: Text('$count'),
         onTap: onTap,
       ),
+    );
+  }
+}
+
+/// Restaurant row in [_CategoryDrawer]: same look as [_CategoryTile] plus an
+/// expand/collapse chevron when there's at least one sub-type to show (only
+/// types with a count > 0, in [RestaurantType] declaration order). Tapping
+/// the row itself still filters to all restaurants (via [onSelectCategory]);
+/// tapping a sub-type row filters to just that type (via [onSelectType]).
+/// Auto-expands whenever a sub-type becomes the active selection, but a
+/// manual collapse otherwise sticks — see [_RestaurantCategoryTileState].
+class _RestaurantCategoryTile extends StatefulWidget {
+  const _RestaurantCategoryTile({
+    required this.count,
+    required this.typeCounts,
+    required this.selected,
+    required this.selectedType,
+    required this.onSelectCategory,
+    required this.onSelectType,
+  });
+
+  final int count;
+  final Map<RestaurantType, int> typeCounts;
+  final bool selected;
+  final RestaurantType? selectedType;
+  final VoidCallback onSelectCategory;
+  final ValueChanged<RestaurantType> onSelectType;
+
+  @override
+  State<_RestaurantCategoryTile> createState() =>
+      _RestaurantCategoryTileState();
+}
+
+class _RestaurantCategoryTileState extends State<_RestaurantCategoryTile> {
+  late bool _expanded = widget.selected;
+
+  @override
+  void didUpdateWidget(covariant _RestaurantCategoryTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedType != null &&
+        widget.selectedType != oldWidget.selectedType) {
+      _expanded = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final color = AppTheme.categoryColor(PlaceCategory.restaurant, brightness);
+    final orderedTypes = [
+      for (final type in RestaurantType.values)
+        if ((widget.typeCounts[type] ?? 0) > 0) type,
+    ];
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+            ),
+            selected: widget.selected,
+            selectedTileColor: color.withValues(alpha: 0.16),
+            selectedColor: Theme.of(context).colorScheme.onSurface,
+            leading: SizedBox(
+              width: 28,
+              child: Center(
+                child: Semantics(
+                  label: PlaceCategory.restaurant.labelEn,
+                  child: ExcludeSemantics(
+                    child: Text(
+                      PlaceCategory.restaurant.emoji,
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            title: Text(
+              PlaceCategory.restaurant.labelEn,
+              style: TextStyle(
+                fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${widget.count}'),
+                if (orderedTypes.isNotEmpty)
+                  IconButton(
+                    icon: Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    tooltip: _expanded ? 'Hide cuisines' : 'Show cuisines',
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                  ),
+              ],
+            ),
+            onTap: widget.onSelectCategory,
+          ),
+        ),
+        if (_expanded)
+          for (final type in orderedTypes)
+            Padding(
+              padding: const EdgeInsets.only(left: 20, right: 12, top: 2),
+              child: ListTile(
+                dense: true,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                selected: widget.selectedType == type,
+                selectedTileColor: color.withValues(alpha: 0.12),
+                selectedColor: Theme.of(context).colorScheme.onSurface,
+                leading: SizedBox(
+                  width: 24,
+                  child: Center(
+                    child: Semantics(
+                      label: type.labelEn,
+                      child: ExcludeSemantics(
+                        child: Text(
+                          type.emoji,
+                          style: const TextStyle(fontSize: 17),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                title: Text(
+                  type.labelEn,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: widget.selectedType == type
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                ),
+                trailing: Text('${widget.typeCounts[type] ?? 0}'),
+                onTap: () => widget.onSelectType(type),
+              ),
+            ),
+      ],
     );
   }
 }

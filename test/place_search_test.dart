@@ -11,6 +11,7 @@ Place _place({
   String descriptionEn = '',
   String sourceHandle = '',
   PlaceCategory category = PlaceCategory.sightseeing,
+  RestaurantType? restaurantType,
 }) {
   return Place(
     id: 'p',
@@ -25,6 +26,7 @@ Place _place({
     hours: '',
     sourceHandle: sourceHandle,
     sourcePlatform: SourcePlatform.instagram,
+    restaurantType: restaurantType,
   );
 }
 
@@ -77,6 +79,32 @@ void main() {
     test('no match returns false', () {
       final place = _place(name: 'Gogo');
       expect(placeMatches(place, 'nonexistent'), isFalse);
+    });
+
+    test('matches an explicitly-set restaurant type (English and Chinese)', () {
+      final place = _place(
+        name: 'Gogo',
+        category: PlaceCategory.restaurant,
+        restaurantType: RestaurantType.ramen,
+      );
+      expect(placeMatches(place, 'ramen'), isTrue);
+      expect(placeMatches(place, '拉麵'), isTrue);
+      expect(placeMatches(place, 'sushi'), isFalse);
+    });
+
+    test('matches a keyword-detected type even when never explicitly set', () {
+      final place = _place(
+        name: 'Some Sushi Bar',
+        category: PlaceCategory.restaurant,
+      );
+      expect(placeMatches(place, 'sushi'), isTrue);
+      expect(placeMatches(place, '壽司'), isTrue);
+    });
+
+    test('restaurantType does not affect non-restaurant places', () {
+      final place = _place(name: 'Gogo', category: PlaceCategory.cafe);
+      expect(placeMatches(place, 'ramen'), isFalse);
+      expect(placeMatches(place, 'other'), isFalse);
     });
   });
 }

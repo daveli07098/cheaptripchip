@@ -278,8 +278,9 @@ class TripShare {
   /// Fields kept: name (`n`), coordinates (`lat`/`lng`), category (`c`,
   /// [PlaceCategory.name] — the emoji is derived from it on decode), and,
   /// only when non-empty, address (`addr`), area label (`area`), region
-  /// (`reg`), source attribution (`src`, see [_sourceString]) and the
-  /// English description (`note`). Dropped: id, photos, favourite flag,
+  /// (`reg`), source attribution (`src`, see [_sourceString]), the English
+  /// description (`note`) and, when set, the restaurant sub-type (`rt`,
+  /// [RestaurantType.name]). Dropped: id, photos, favourite flag,
   /// rating/reviewCount/priceRange/award, hours, original caption —
   /// nothing a recipient needs to see the place on a map.
   static Map<String, dynamic> _placeToCompactJson(Place p) {
@@ -294,6 +295,7 @@ class TripShare {
       if (p.region.isNotEmpty) 'reg': p.region,
       'src': ?source,
       if (p.descriptionEn.isNotEmpty) 'note': p.descriptionEn,
+      if (p.restaurantType != null) 'rt': p.restaurantType!.name,
     };
   }
 
@@ -318,6 +320,7 @@ class TripShare {
       hours: '',
       sourceHandle: source.handle,
       sourcePlatform: source.platform,
+      restaurantType: _parseRestaurantType(json['rt']),
     );
   }
 
@@ -337,6 +340,7 @@ class TripShare {
       if (p.region.isNotEmpty) 'region': p.region,
       'source': ?source,
       if (p.descriptionEn.isNotEmpty) 'note': p.descriptionEn,
+      if (p.restaurantType != null) 'restaurantType': p.restaurantType!.name,
     };
   }
 
@@ -361,7 +365,20 @@ class TripShare {
       hours: '',
       sourceHandle: source.handle,
       sourcePlatform: source.platform,
+      restaurantType: _parseRestaurantType(json['restaurantType']),
     );
+  }
+
+  /// Lenient parse shared by both the compact (`rt`) and readable
+  /// (`restaurantType`) forms: an [RestaurantType.name] string, or `null` for
+  /// anything else (missing, unrecognized) — old links/files without the
+  /// field decode the same way as a place that was never given a type.
+  static RestaurantType? _parseRestaurantType(Object? raw) {
+    if (raw is! String) return null;
+    for (final type in RestaurantType.values) {
+      if (type.name == raw) return type;
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------

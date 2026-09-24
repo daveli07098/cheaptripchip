@@ -92,6 +92,29 @@ void main() {
       );
     });
 
+    test('setRestaurantType sets the type, then clears it', () async {
+      final store = PlaceStore.instance;
+      final target = MockData.places.first; // p1, category restaurant
+
+      await store.setRestaurantType(target.id, RestaurantType.izakaya);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.byId(target.id).restaurantType, RestaurantType.izakaya);
+
+      await store.setRestaurantType(target.id, null);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.byId(target.id).restaurantType, isNull);
+    });
+
+    test('setRestaurantType does nothing for an unknown id', () async {
+      final store = PlaceStore.instance;
+      final beforeCount = store.places.value.length;
+
+      await store.setRestaurantType('does-not-exist', RestaurantType.sushi);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.places.value.length, beforeCount);
+    });
+
     test('binding a second repository replaces the list', () async {
       final store = PlaceStore.instance;
 
