@@ -262,30 +262,10 @@ class _BoardCardState extends State<_BoardCard> {
   }
 
   Future<void> _renameBoard(BuildContext context) async {
-    final controller = TextEditingController(text: widget.board.name);
     final newName = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename board'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          onSubmitted: (value) => Navigator.pop(dialogContext, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      builder: (_) => _RenameBoardDialog(initialName: widget.board.name),
     );
-    controller.dispose();
     if (newName == null) return;
     await BoardStore.instance.renameBoard(widget.board.id, newName);
   }
@@ -479,6 +459,51 @@ class _SectionBlock extends StatelessWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+/// Owns its [TextEditingController] so it is disposed only when the dialog
+/// route is gone. Disposing it right after `showDialog` returned crashed: the
+/// dialog's exit animation still rebuilds the TextField with it.
+class _RenameBoardDialog extends StatefulWidget {
+  const _RenameBoardDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_RenameBoardDialog> createState() => _RenameBoardDialogState();
+}
+
+class _RenameBoardDialogState extends State<_RenameBoardDialog> {
+  late final _controller = TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename board'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        onSubmitted: (value) => Navigator.pop(context, value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

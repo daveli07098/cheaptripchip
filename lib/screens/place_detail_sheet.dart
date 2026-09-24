@@ -507,12 +507,10 @@ class _MyNotes extends StatelessWidget {
   }
 
   Future<void> _editNotes(BuildContext context) async {
-    final controller = TextEditingController(text: place.myNotes);
     final result = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => _NotesDialog(controller: controller),
+      builder: (_) => _NotesDialog(initialText: place.myNotes),
     );
-    controller.dispose();
     // The dialog already popped itself before returning — no BuildContext
     // use after this await, so no `mounted` check is needed here.
     if (result == null) return;
@@ -526,10 +524,25 @@ class _MyNotes extends StatelessWidget {
 
 /// Multiline notes editor, opened by [_MyNotes]. Pops with the trimmed text
 /// on Save, or `null` on Cancel/dismiss — the caller decides what to persist.
-class _NotesDialog extends StatelessWidget {
-  const _NotesDialog({required this.controller});
+/// Owns its controller: disposing it as soon as `showDialog` returned crashed,
+/// because the exit animation still rebuilds the TextField.
+class _NotesDialog extends StatefulWidget {
+  const _NotesDialog({required this.initialText});
 
-  final TextEditingController controller;
+  final String initialText;
+
+  @override
+  State<_NotesDialog> createState() => _NotesDialogState();
+}
+
+class _NotesDialogState extends State<_NotesDialog> {
+  late final controller = TextEditingController(text: widget.initialText);
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
