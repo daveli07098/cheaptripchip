@@ -5,6 +5,39 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Trip sharing (`TripShare`): `cheaptripchip://import` app links, a portable
+  `.cheaptrip.json` file, KML for Google My Maps, and Google Maps
+  place/route URLs.
+- Export sheet (`ExportSheet`) from a share button on every board card and a
+  "Share all saved" action on the Saved tab: Share link (text includes a
+  Google Maps route fallback; disabled with a hint when the link would be too
+  long), Share file, Export to Google My Maps (.kml + import hint), Open route
+  in Google Maps (first 11 stops).
+- Import: incoming app links (`app_links`), shared text containing a link and
+  shared `.cheaptrip.json` files open a preview sheet (`ImportSheet`) before
+  the Gemini path; "Import from link" on the Boards tab (paste dialog, also
+  works on web). `ImportService.importBundle` saves new places, reuses saved
+  ones (same name case-insensitively within 50 m), and creates a 📥 board with
+  one "Shared" section; the app then switches to Boards and reports counts.
+- Platform config: Android VIEW filter for `cheaptripchip://import` and a SEND
+  filter for `application/json`; iOS `CFBundleURLTypes` for the scheme; Flutter
+  built-in deep linking turned off on both (app_links handles links).
+  `docs/firebase-setup.md` step 7 now adds Google Sign-In's reversed client id
+  as a second entry in the existing `CFBundleURLTypes` array.
+- Tests: import/dedupe service and export sheet options (51 total).
+### Changed
+- `BoardStore.createBoard` takes optional `sections`, so a pre-filled board is
+  written in one upsert (a loop of `addPlaceToBoard` can race the repository
+  echo).
+- firebase_core_web 3.11.0 → 3.12.0 (lockfile only): 3.11.0 doesn't compile
+  for web under Flutter 3.41.7 (`isA` on `Object`) — pre-existing, unrelated
+  to this feature.
+### Notes
+- Not verified: on-device deep links (Android/iOS cold and warm start), sharing
+  a `.cheaptrip.json` file into the app, and the native share sheets. Verified
+  by unit/widget tests and `flutter build web`.
+
 ## [2026-09-14] — Session: multi-user accounts (Google sign-in + Firestore)
 ### Added
 - Firebase Auth with the Google provider (`AuthService`: web popup, mobile via

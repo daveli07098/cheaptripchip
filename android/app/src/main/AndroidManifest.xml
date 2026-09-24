@@ -33,6 +33,23 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="text/*"/>
             </intent-filter>
+            <!-- Shared trip files (.cheaptrip.json, see TripShare.toFileJson) shared
+                 into the app; handled by the same share intake. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="application/json"/>
+            </intent-filter>
+            <!-- Trip import links: cheaptripchip://import?v=1&d=... (app_links). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="cheaptripchip" android:host="import"/>
+            </intent-filter>
+            <!-- app_links handles incoming links; keep Flutter's built-in deep
+                 linking off so it doesn't also push the link as a route. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false"/>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

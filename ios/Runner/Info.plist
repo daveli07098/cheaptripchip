@@ -54,14 +54,31 @@
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<!--
-	  Google Sign-In on iOS needs two keys here once `flutterfire configure`
-	  has generated ios/Runner/GoogleService-Info.plist — see
-	  docs/firebase-setup.md step 7 for the exact XML to add:
-	    - GIDClientID           (= GoogleService-Info.plist's CLIENT_ID)
-	    - CFBundleURLTypes      (a URL scheme entry using the reversed
-	                             REVERSED_CLIENT_ID from the same file)
+	  Trip import links: cheaptripchip://import?v=1&d=... (app_links).
+	  Google Sign-In on iOS will need two more things here once
+	  `flutterfire configure` has generated ios/Runner/GoogleService-Info.plist
+	  — see docs/firebase-setup.md step 7 for the exact XML:
+	    - GIDClientID  (= GoogleService-Info.plist's CLIENT_ID), a new key
+	    - the REVERSED_CLIENT_ID URL scheme, ADDED as a second <dict> inside
+	      the CFBundleURLTypes array below — not a new CFBundleURLTypes key
+	      (a duplicate key would silently replace this one).
 	  Not added here to avoid committing placeholder/invalid values.
 	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.cheaptripchip.import</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cheaptripchip</string>
+			</array>
+		</dict>
+	</array>
+	<!-- app_links handles incoming links; Flutter's built-in deep linking
+	     would also push them as routes, so it stays off. -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

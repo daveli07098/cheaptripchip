@@ -4,7 +4,9 @@ import '../data/board_store.dart';
 import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
+import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
+import '../widgets/export_sheet.dart';
 import 'place_detail_sheet.dart';
 
 /// Boards (ANALYSIS.md §5): Board → Section → Item hierarchy, expandable.
@@ -108,19 +110,42 @@ Board? newFindsBoard(List<Place> places, List<Board> boards) {
   );
 }
 
-class _BoardCard extends StatelessWidget {
+class _BoardCard extends StatefulWidget {
   const _BoardCard({required this.board, required this.placesById});
 
   final Board board;
   final Map<String, Place> placesById;
 
   @override
+  State<_BoardCard> createState() => _BoardCardState();
+}
+
+class _BoardCardState extends State<_BoardCard> {
+  late bool _expanded = widget.board.id == 'b1';
+
+  /// The board's places in section order, skipping ids that no longer
+  /// resolve against the live store (same rule as [_SectionBlock]).
+  TripBundle _bundle() {
+    final seen = <String>{};
+    final places = <Place>[
+      for (final section in widget.board.sections)
+        for (final id in section.placeIds)
+          if (seen.add(id) && widget.placesById[id] != null)
+            widget.placesById[id]!,
+    ];
+    return TripBundle(title: widget.board.name, places: places);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final board = widget.board;
+    final placesById = widget.placesById;
     return Card(
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: board.id == 'b1',
+          initiallyExpanded: _expanded,
+          onExpansionChanged: (open) => setState(() => _expanded = open),
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           childrenPadding: const EdgeInsets.only(bottom: 8),
           leading: Text(board.emoji, style: const TextStyle(fontSize: 26)),
@@ -135,6 +160,25 @@ class _BoardCard extends StatelessWidget {
                 context,
               ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
+          ),
+          // A custom trailing replaces ExpansionTile's chevron, so keep one
+          // next to the share button.
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Share ${board.name}',
+                icon: const Icon(Icons.ios_share, size: 20),
+                onPressed: () => ExportSheet.show(context, _bundle()),
+              ),
+              ExcludeSemantics(
+                child: AnimatedRotation(
+                  turns: _expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: const Icon(Icons.expand_more),
+                ),
+              ),
+            ],
           ),
           children: [
             for (final section in board.sections)

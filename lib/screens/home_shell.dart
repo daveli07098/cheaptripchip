@@ -1,14 +1,19 @@
 import 'dart:async';
+import 'dart:io' show File;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../data/place_store.dart';
 import '../services/place_extractor.dart';
+import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
 import '../widgets/account_button.dart';
+import '../widgets/export_sheet.dart';
+import '../widgets/import_sheet.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -25,6 +30,13 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
   StreamSubscription<List<SharedMediaFile>>? _shareSub;
+  StreamSubscription<Uri>? _linkSub;
+
+  /// Guards against the same import arriving twice (receive_sharing_intent
+  /// and app_links both see Android VIEW intents) and stacked prompts.
+  String? _lastImportKey;
+  DateTime? _lastImportAt;
+  bool _importInProgress = false;
 
   static const _titles = ['Explore', 'Saved', 'Boards'];
 
@@ -36,7 +48,25 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void initState() {
     super.initState();
-    if (_shareIntakeSupported) _initShareIntake();
+    if (_shareIntakeSupported) {
+      _initShareIntake();
+      _initAppLinks();
+    }
+  }
+
+  /// `cheaptripchip://import?...` links (see [TripShare.toAppLink]). The
+  /// app_links stream emits the cold-start link too, so there is no separate
+  /// getInitialLink() call — that would prompt twice. Mobile only.
+  void _initAppLinks() {
+    try {
+      _linkSub = AppLinks().uriLinkStream.listen((uri) {
+        final bundle = TripShare.fromAppLink(uri);
+        if (bundle != null) _promptImport(bundle, key: uri.toString());
+      }, onError: (Object e) => debugPrint('app link error: $e'));
+    } catch (e) {
+      // Native plugin not available (e.g. test harness) — links are optional.
+      debugPrint('app links unavailable: $e');
+    }
   }
 
   /// Share-sheet intake (ANALYSIS.md §1): a reel/post shared into the app opens
@@ -66,19 +96,104 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  void _handleShared(List<SharedMediaFile> files) {
+  Future<void> _handleShared(List<SharedMediaFile> files) async {
     if (files.isEmpty || !mounted) return;
     // For text/URL shares the content arrives in `path`.
     final shared = files
         .map((f) => f.path)
         .where((p) => p.trim().isNotEmpty)
         .join('\n');
-    if (shared.isNotEmpty) _openAddSheet(initialText: shared);
+    if (shared.isEmpty) return;
+
+    // A shared trip (app link in text, or a .cheaptrip.json file) imports
+    // directly instead of going through Gemini extraction.
+    final bundle =
+        TripShare.fromText(shared) ?? await _bundleFromSharedFiles(files);
+    if (!mounted) return;
+    if (bundle != null) {
+      _promptImport(bundle, key: shared);
+    } else {
+      _openAddSheet(initialText: shared);
+    }
+  }
+
+  Future<TripBundle?> _bundleFromSharedFiles(
+    List<SharedMediaFile> files,
+  ) async {
+    if (kIsWeb) return null;
+    for (final file in files) {
+      final isJson =
+          file.path.toLowerCase().endsWith('.json') ||
+          file.mimeType == 'application/json';
+      if (!isJson) continue;
+      try {
+        final bundle = TripShare.fromFileJson(
+          await File(file.path).readAsString(),
+        );
+        if (bundle != null) return bundle;
+      } catch (e) {
+        debugPrint('shared file unreadable: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Shows the import preview for [bundle]; on confirm switches to Boards and
+  /// reports what was added. [key] identifies the source so a duplicate
+  /// delivery of the same link within a few seconds is ignored.
+  Future<void> _promptImport(TripBundle bundle, {String? key}) async {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_importInProgress) return;
+    if (key != null &&
+        key == _lastImportKey &&
+        _lastImportAt != null &&
+        now.difference(_lastImportAt!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastImportKey = key;
+    _lastImportAt = now;
+    _importInProgress = true;
+    // Captured before the sheet opens so the SnackBar has a valid messenger.
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await ImportSheet.show(context, bundle);
+      if (result == null || !mounted) return;
+      setState(() => _index = 2);
+      final places = result.added == 1 ? 'place' : 'places';
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Imported ${result.added} $places '
+            '(${result.alreadySaved} already saved)',
+          ),
+        ),
+      );
+    } finally {
+      _importInProgress = false;
+    }
+  }
+
+  /// Manual fallback (works on web too): paste a shared link or message.
+  Future<void> _importFromLinkDialog() async {
+    final bundle = await ImportLinkDialog.show(context);
+    if (bundle != null && mounted) await _promptImport(bundle);
+  }
+
+  void _shareAllSaved() {
+    ExportSheet.show(
+      context,
+      TripBundle(
+        title: 'My saved places',
+        places: List.of(PlaceStore.instance.places.value),
+      ),
+    );
   }
 
   @override
   void dispose() {
     _shareSub?.cancel();
+    _linkSub?.cancel();
     super.dispose();
   }
 
@@ -91,11 +206,23 @@ class _HomeShellState extends State<HomeShell> {
       appBar: showAppBar
           ? AppBar(
               title: Text(_titles[_index]),
-              actions: const [
-                AccountButton(),
-                SizedBox(width: 4),
-                ThemeToggleButton(),
-                SizedBox(width: 4),
+              actions: [
+                if (_index == 1)
+                  IconButton(
+                    tooltip: 'Share all saved',
+                    icon: const Icon(Icons.ios_share),
+                    onPressed: _shareAllSaved,
+                  ),
+                if (_index == 2)
+                  IconButton(
+                    tooltip: 'Import from link',
+                    icon: const Icon(Icons.download_outlined),
+                    onPressed: _importFromLinkDialog,
+                  ),
+                const AccountButton(),
+                const SizedBox(width: 4),
+                const ThemeToggleButton(),
+                const SizedBox(width: 4),
               ],
             )
           : null,

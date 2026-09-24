@@ -242,6 +242,17 @@ void main() {
       );
     });
 
+    test('places without numeric coordinates are dropped', () {
+      final decoded = TripShare.fromFileJson(
+        '{"format": "cheaptripchip.trip", "version": 1, "title": "X", '
+        '"places": [{"name": "No coords"}, '
+        '{"name": "Bad", "lat": "35.6", "lng": 139.7}, '
+        '{"name": "Good", "lat": 35.6, "lng": 139.7}]}',
+      );
+      expect(decoded, isNotNull);
+      expect(decoded!.places.map((p) => p.name), ['Good']);
+    });
+
     test('fileName slugifies the title', () {
       final bundle = TripBundle(title: 'Tokyo & Osaka Trip!', places: const []);
       expect(TripShare.fileName(bundle), 'tokyo-osaka-trip.cheaptrip.json');

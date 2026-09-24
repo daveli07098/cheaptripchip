@@ -127,6 +127,7 @@ class TripShare {
       if (placesJson is! List) return null;
       final places = placesJson
           .whereType<Map>()
+          .where(_hasCoords)
           .map((m) => _placeFromReadableJson(Map<String, dynamic>.from(m)))
           .toList();
       return TripBundle(
@@ -256,6 +257,10 @@ class TripShare {
   // Compact JSON (link payload) — short keys, empty optionals omitted.
   // ---------------------------------------------------------------------
 
+  /// Places without numeric coordinates are dropped rather than imported at
+  /// (0, 0) — the local repository has no "null island" filter.
+  static bool _hasCoords(Map m) => m['lat'] is num && m['lng'] is num;
+
   static Map<String, dynamic> _bundleToCompactJson(TripBundle bundle) => {
     't': bundle.title,
     'p': bundle.places.map(_placeToCompactJson).toList(),
@@ -266,6 +271,7 @@ class TripShare {
     final places = placesJson is List
         ? placesJson
               .whereType<Map>()
+              .where(_hasCoords)
               .map((m) => _placeFromCompactJson(Map<String, dynamic>.from(m)))
               .toList()
         : <Place>[];

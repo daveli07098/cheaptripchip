@@ -56,13 +56,20 @@ class BoardStore {
     return null;
   }
 
-  /// Creates a new, empty board and adds it to [boards] (optimistic), writing
-  /// through the repository.
-  Future<Board> createBoard(String name, {String emoji = '📌'}) async {
+  /// Creates a new board (empty unless [sections] is given) and adds it to
+  /// [boards] (optimistic), writing through the repository. Passing
+  /// [sections] writes a pre-filled board in one upsert — prefer it over a
+  /// loop of [addPlaceToBoard] calls, which read back [boards] and can race
+  /// the repository's asynchronous echo.
+  Future<Board> createBoard(
+    String name, {
+    String emoji = '📌',
+    List<BoardSection> sections = const [],
+  }) async {
     final id =
         'board-${DateTime.now().millisecondsSinceEpoch}-'
         '${_idRandom.nextInt(10000).toString().padLeft(4, '0')}';
-    final board = Board(id: id, name: name, emoji: emoji, sections: const []);
+    final board = Board(id: id, name: name, emoji: emoji, sections: sections);
     boards.value = [board, ...boards.value];
     await _repository.upsert(board);
     return board;

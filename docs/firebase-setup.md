@@ -31,13 +31,28 @@ Follow these steps once to turn on sign-in and cross-device sync.
    release keystore). Re-download `google-services.json` afterwards if it
    changed.
 7. **iOS Info.plist keys.** Open the generated `ios/Runner/GoogleService-Info.plist`
-   and copy two values into `ios/Runner/Info.plist` (see the placeholder
-   comment already there):
+   and copy two values into `ios/Runner/Info.plist` (see the comment already
+   there). Add `GIDClientID` as a new key:
    ```xml
    <key>GIDClientID</key>
    <string>YOUR_CLIENT_ID_FROM_GoogleService-Info.plist</string>
+   ```
+   `CFBundleURLTypes` **already exists** (it registers the `cheaptripchip://`
+   trip-import scheme). Do not add a second `CFBundleURLTypes` key — a
+   duplicate key silently replaces the first and breaks import links. Instead
+   add the reversed client id as a second `<dict>` inside the existing array:
+   ```xml
    <key>CFBundleURLTypes</key>
    <array>
+     <dict>
+       <key>CFBundleURLName</key>
+       <string>com.cheaptripchip.import</string>
+       <key>CFBundleURLSchemes</key>
+       <array>
+         <string>cheaptripchip</string>
+       </array>
+     </dict>
+     <!-- added for Google Sign-In: -->
      <dict>
        <key>CFBundleURLSchemes</key>
        <array>
