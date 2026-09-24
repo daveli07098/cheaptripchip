@@ -342,6 +342,16 @@ class _AddFindSheetState extends State<AddFindSheet> {
   }
 
   String _friendly(Object e) {
+    if (e is CaptionUnavailableException) {
+      debugPrint('extraction error: $e');
+      return "Couldn't read this post's caption (it may be private). "
+          'Paste the caption or the place name too.';
+    }
+    if (e is NoPlaceFoundException) {
+      debugPrint('extraction error: $e');
+      return "Couldn't find a place in this post. "
+          'Add the place name and try again.';
+    }
     final msg = e.toString();
     debugPrint('extraction error: $msg');
     if (msg.contains('GEMINI_API_KEY')) {

@@ -96,6 +96,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   synonym mapping, store `setRestaurantType`, search matches, share codec
   round-trip + legacy-link decode, and a map-screen drawer widget test
   (25 new, 119 project-wide).
+- `PostMetadata`/`fetchPostMetadata` (`lib/services/post_metadata.dart`):
+  scrapes an Instagram/TikTok post's `og:title`/`og:description` via a
+  crawler User-Agent (public pages 200 with these tags for that UA; a normal
+  browser UA gets a login-wall shell) and derives a caption + author handle,
+  HTML-entity-decoded (named, decimal, hex, including astral emoji and
+  multi-line captions). No-ops on web (CORS blocks the cross-origin fetch).
+  `PlaceExtractor.extract` uses it to enrich a bare-link share with the real
+  caption before calling Gemini. Tests: og-tag parsing (attribute order,
+  quote style, multi-line content), entity decoding, caption/author
+  derivation for Instagram- and TikTok-shaped pages, `extractFirstPostUrl`
+  on messy share text, and `fetchPostMetadata` against a mocked client
+  (200-with-tags / 200-without / 404 / timeout).
 ### Changed
 - `firestore.rules`: explicit `places`/`boards`/`photos` matches replace the
   `users/{uid}/{document=**}` wildcard (any allow wins, so the wildcard would
@@ -120,6 +132,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no-opped: the button now reads "In <board name>" / "In N boards" (kept in
   sync with `BoardStore.boards`), and the picker shows a checkbox per board
   reflecting membership instead of an always-tappable "add" row.
+- Sharing a bare Instagram/TikTok link (no caption — Android's IG share
+  sheet only sends the URL) silently saved an "Untitled place" pinned to
+  Tokyo, with no error shown. `PlaceExtractor.extract` now fetches the
+  post's caption first (see `PostMetadata` above) and throws
+  `CaptionUnavailableException` for a bare link it still can't read (private
+  post, deleted, rate-limited), and `NoPlaceFoundException` whenever Gemini's
+  result has no name/address/coordinates to save — `AddFindSheet` shows a
+  friendly message for each and never saves a placeholder place.
 ### Notes
 - Not verified: on-device deep links (Android/iOS cold and warm start), sharing
   a `.cheaptrip.json` file into the app, and the native share sheets. Verified
