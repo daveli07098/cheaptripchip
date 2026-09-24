@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
+import '../data/place_search.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
@@ -14,11 +15,12 @@ import '../widgets/place_list_sheet.dart';
 import 'place_detail_sheet.dart';
 
 /// Map-first surface (ANALYSIS.md §3): theme-aware CartoDB tiles, coral pins
-/// grid-clustered at low zoom, a category filter in a left drawer (the
-/// top-left button shows the active filter), and a
-/// persistent (non-modal) place-list sheet kept in sync with the pins —
-/// tap a pin to preview it in the list, tap a row (or a pin twice) to open
-/// the full detail sheet.
+/// grid-clustered at low zoom, a category filter in a left drawer (opened
+/// from the search bar's leading ☰, with the theme toggle in its footer), a
+/// Google-Maps-style search bar (free-text over [placeMatches], submit fits
+/// the camera to the matches), and a persistent (non-modal) place-list sheet
+/// kept in sync with the pins — tap a pin to preview it in the list, tap a
+/// row (or a pin twice) to open the full detail sheet.
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, required this.onAddFind});
 
@@ -39,8 +41,13 @@ class _MapScreenState extends State<MapScreen> {
 
   final _listSheetController = PlaceListSheetController();
 
-  /// Opens the category drawer from the top-left filter button.
+  /// Opens the category drawer from the search bar's leading ☰ button.
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// Backs the search pill's [TextField]; read directly in [_visible] rather
+  /// than mirrored into a separate `_query` field.
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
 
   /// null = "All". Otherwise filter pins to the selected category.
   PlaceCategory? _selected;
@@ -49,9 +56,16 @@ class _MapScreenState extends State<MapScreen> {
   /// and the list (scrolled into view + tinted row).
   String? _selectedPlaceId;
 
-  List<Place> _visible(List<Place> all) => _selected == null
-      ? all
-      : all.where((p) => p.category == _selected).toList();
+  /// Category filter AND free-text search (via [placeMatches]) — search
+  /// terms are matched across name/area/region/address/description/category
+  /// labels/source handle, so it also narrows results within a category.
+  List<Place> _visible(List<Place> all) {
+    final query = _searchController.text;
+    return all.where((p) {
+      if (_selected != null && p.category != _selected) return false;
+      return placeMatches(p, query);
+    }).toList();
+  }
 
   Map<PlaceCategory, int> _counts(List<Place> all) {
     final map = <PlaceCategory, int>{};
@@ -108,9 +122,32 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// Keyboard "search" action: unfocus and, like [_focusCluster], fit the
+  /// camera to every currently-matching place (category filter + query
+  /// already applied by the caller). No-op on zero matches; a single match
+  /// pans/zooms to it (matching [_selectFromList]) rather than "fitting" to
+  /// one point.
+  void _submitSearch(BuildContext context, List<Place> matches) {
+    _searchFocusNode.unfocus();
+    if (matches.isEmpty) return;
+    if (matches.length == 1) {
+      _selectFromList(context, matches.first);
+      return;
+    }
+    _mapController.fitCamera(
+      CameraFit.coordinates(
+        coordinates: [for (final p in matches) p.location],
+        padding: EdgeInsets.fromLTRB(48, 96, 48, 48 + _sheetPixels(context)),
+        maxZoom: 17,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _sheetExtentController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -122,8 +159,31 @@ class _MapScreenState extends State<MapScreen> {
         final visible = _visible(all);
         final brightness = Theme.of(context).brightness;
         final counts = _counts(all);
+
+        // If a search/category change dropped the selected pin out of
+        // `visible`, clear it — deferred to a post-frame callback since
+        // `all`/`visible` are only known mid-build, and mutating state
+        // directly here would call setState during build. Re-checks
+        // `_selectedPlaceId` still equals the id that dropped out before
+        // clearing, in case more changes landed before the frame runs.
+        if (_selectedPlaceId != null &&
+            !visible.any((p) => p.id == _selectedPlaceId)) {
+          final droppedId = _selectedPlaceId;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _selectedPlaceId == droppedId) {
+              setState(() => _selectedPlaceId = null);
+            }
+          });
+        }
+
         return Scaffold(
           key: _scaffoldKey,
+          // Keep the map/sheet full-size while the search field is focused
+          // (Google Maps behaviour) — without this, the keyboard shrinks the
+          // Stack, and `_submitSearch`'s camera fit (computed right after
+          // `unfocus()`, before the keyboard animates away) would be sized
+          // against that shrunk viewport and land off once it closes.
+          resizeToAvoidBottomInset: false,
           // Edge-swipe would fight map panning and Android's back gesture;
           // the drawer opens from the filter button only.
           drawerEnableOpenDragGesture: false,
@@ -162,6 +222,9 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   minZoom: 3,
                   maxZoom: 18,
+                  // Tapping the map (not a pin/cluster) drops keyboard focus
+                  // from the search field, matching Google Maps.
+                  onTap: (_, _) => _searchFocusNode.unfocus(),
                 ),
                 children: [
                   TileLayer(
@@ -191,14 +254,30 @@ class _MapScreenState extends State<MapScreen> {
                 bottom: false,
                 child: Column(
                   children: [
-                    _TopBar(
-                      selected: _selected,
-                      count: _selected == null
-                          ? all.length
-                          : (counts[_selected] ?? 0),
+                    _SearchBar(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
                       onOpenFilter: () =>
                           _scaffoldKey.currentState?.openDrawer(),
+                      // The controller already holds the latest text by the
+                      // time this fires — just triggers a rebuild so
+                      // `_visible`/the clear button re-read it.
+                      onChanged: (_) => setState(() {}),
+                      onSubmitted: (_) => _submitSearch(context, visible),
+                      onClear: () {
+                        _searchController.clear();
+                        setState(() {});
+                      },
                     ),
+                    if (_selected != null)
+                      _CategoryChip(
+                        category: _selected!,
+                        // Same "counts are over ALL places, not the search
+                        // results" choice as the drawer (see `_counts`) —
+                        // keeps the number stable while the user types.
+                        count: counts[_selected] ?? 0,
+                        onClear: () => setState(() => _selected = null),
+                      ),
                   ],
                 ),
               ),
@@ -294,94 +373,154 @@ class _ClusterMarkerLayer extends StatelessWidget {
   }
 }
 
-/// Floating top row: the filter button (opens [_CategoryDrawer] and shows
-/// the active category + count) on the left, account + theme on the right.
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.selected,
-    required this.count,
+/// Floating full-width search pill: leading ☰ opens [_CategoryDrawer], a
+/// free-text field (submit fits the map to the matches — see
+/// [_MapScreenState._submitSearch]), a clear ✕ once there's text, and the
+/// account button trailing. The theme toggle lives in the drawer's footer
+/// instead of out here (see [_CategoryDrawer]).
+class _SearchBar extends StatelessWidget {
+  const _SearchBar({
+    required this.controller,
+    required this.focusNode,
     required this.onOpenFilter,
+    required this.onChanged,
+    required this.onSubmitted,
+    required this.onClear,
   });
 
-  final PlaceCategory? selected;
-  final int count;
+  final TextEditingController controller;
+  final FocusNode focusNode;
   final VoidCallback onOpenFilter;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final label = selected == null ? 'All' : selected!.labelEn;
-    return SizedBox(
-      height: 56,
-      child: Row(
-        children: [
-          const SizedBox(width: 12),
-          Material(
-            color: scheme.surface,
-            elevation: 2,
-            borderRadius: BorderRadius.circular(24),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(24),
-              onTap: onOpenFilter,
-              child: Semantics(
-                button: true,
-                label: 'Filter by category, showing $label, $count places',
-                child: ExcludeSemantics(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.menu, size: 20),
-                          const SizedBox(width: 8),
-                          if (selected != null) ...[
-                            Text(
-                              selected!.emoji,
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Text(
-                            '$label · $count',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Material(
+        color: scheme.surface,
+        elevation: 2,
+        borderRadius: BorderRadius.circular(28),
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              // IconButton/TextField already derive their a11y label from
+              // `tooltip`/`hintText` — an outer `Semantics` would just add a
+              // second, redundant node for screen readers to announce.
+              IconButton(
+                icon: const Icon(Icons.menu),
+                tooltip: 'Categories',
+                onPressed: onOpenFilter,
+              ),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  textInputAction: TextInputAction.search,
+                  onChanged: onChanged,
+                  onSubmitted: onSubmitted,
+                  decoration: const InputDecoration(
+                    hintText: 'Search your finds',
+                    border: InputBorder.none,
+                    isCollapsed: true,
                   ),
                 ),
               ),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (context, value, _) {
+                  if (value.text.isEmpty) return const SizedBox.shrink();
+                  return IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    tooltip: 'Clear search',
+                    onPressed: onClear,
+                  );
+                },
+              ),
+              const SizedBox(width: 4),
+              const SizedBox.square(
+                dimension: 48,
+                child: Center(child: AccountButton()),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small chip under the search pill showing the active category + its count
+/// (over ALL places, same as the drawer — see `_MapScreenState._counts`),
+/// with a ✕ to clear it. Nothing renders for "All" (see the `if (_selected
+/// != null)` guard at the call site).
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({
+    required this.category,
+    required this.count,
+    required this.onClear,
+  });
+
+  final PlaceCategory category;
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+        child: Material(
+          color: scheme.surface,
+          elevation: 1,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Semantics(
+                  label: category.labelEn,
+                  child: ExcludeSemantics(
+                    child: Text(
+                      category.emoji,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${category.labelEn} · $count',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Semantics(
+                  button: true,
+                  label: 'Clear category filter',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: onClear,
+                    child: const Padding(
+                      padding: EdgeInsets.all(3),
+                      child: Icon(Icons.close, size: 15),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const Spacer(),
-          Material(
-            color: scheme.surface,
-            shape: const CircleBorder(),
-            elevation: 2,
-            // AccountButton's own tap target is 40x40 (per spec); padded out
-            // to 48x48 here so its disc matches ThemeToggleButton's — that
-            // one's an IconButton, whose default 48dp footprint drives its
-            // own Material's size.
-            child: const SizedBox.square(
-              dimension: 48,
-              child: Center(child: AccountButton()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Material(
-            color: scheme.surface,
-            shape: const CircleBorder(),
-            elevation: 2,
-            child: const ThemeToggleButton(),
-          ),
-          const SizedBox(width: 12),
-        ],
+        ),
       ),
     );
   }
@@ -442,6 +581,14 @@ class _CategoryDrawer extends StatelessWidget {
                 selected: selected == entry.key,
                 onTap: () => onSelect(entry.key),
               ),
+            const Divider(height: 24),
+            // Moved here from the map's floating row (commit ec3b355) so the
+            // search pill can stay a single, uninterrupted control.
+            const ListTile(
+              leading: Icon(Icons.brightness_6_outlined),
+              title: Text('Theme'),
+              trailing: ThemeToggleButton(),
+            ),
           ],
         ),
       ),

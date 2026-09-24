@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/place_search.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
 import '../widgets/place_card.dart';
@@ -16,16 +17,12 @@ class FeedScreen extends StatefulWidget {
 class _FeedScreenState extends State<FeedScreen> {
   String _query = '';
 
-  List<Place> _filter(List<Place> all) {
-    if (_query.trim().isEmpty) return all;
-    final q = _query.toLowerCase();
-    return all.where((p) {
-      return p.name.toLowerCase().contains(q) ||
-          p.areaLabel.toLowerCase().contains(q) ||
-          p.descriptionEn.toLowerCase().contains(q) ||
-          p.category.labelEn.toLowerCase().contains(q);
-    }).toList();
-  }
+  // Delegates to the shared placeMatches matcher (lib/data/place_search.dart)
+  // — a superset of what this screen searched before (name, areaLabel,
+  // descriptionEn, category.labelEn), now also matching region, address,
+  // category.labelZh and sourceHandle, plus multi-term AND.
+  List<Place> _filter(List<Place> all) =>
+      all.where((p) => placeMatches(p, _query)).toList();
 
   @override
   Widget build(BuildContext context) {

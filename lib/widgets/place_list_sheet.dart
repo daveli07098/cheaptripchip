@@ -250,16 +250,16 @@ class _DragHandle extends StatelessWidget {
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.filtered});
 
-  /// True when the store has places but the active category filter hides
-  /// them all — the copy must not claim the user has "no finds".
+  /// True when the store has places but the active search and/or category
+  /// filter hides them all — the copy must not claim the user has "no finds".
   final bool filtered;
 
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
-    final title = filtered ? 'Nothing in this category' : 'No finds yet';
+    final title = filtered ? 'No matches' : 'No finds yet';
     final body = filtered
-        ? 'Pick another category, or All.'
+        ? 'Try another search, or pick All in the ☰ menu.'
         : 'Tap Add a find to save your first place.';
     return Center(
       child: Padding(
