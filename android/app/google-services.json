@@ -12,7 +12,20 @@
           "package_name": "com.cheaptripchip.cheaptripchip"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "208192307721-66don9t1h66fcdn0rj3k5eddoajmiqdo.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.cheaptripchip.cheaptripchip",
+            "certificate_hash": "2ae18814237b491a7c6745c4dc0ccccf2c434471"
+          }
+        },
+        {
+          "client_id": "208192307721-r7sc741gssu4sfq99u0t87q69j2h4v85.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBaHqkzl5gH4o1KbpDMCc3J1SDXEpOfbXg"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "208192307721-r7sc741gssu4sfq99u0t87q69j2h4v85.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "208192307721-8uqtshb3gcb251lf5nsnkmv0kfgpl2ts.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.cheaptripchip.cheaptripchip"
+              }
+            }
+          ]
         }
       }
     }

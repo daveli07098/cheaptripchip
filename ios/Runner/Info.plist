@@ -54,16 +54,15 @@
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<!--
-	  Trip import links: cheaptripchip://import?v=1&d=... (app_links).
-	  Google Sign-In on iOS will need two more things here once
-	  `flutterfire configure` has generated ios/Runner/GoogleService-Info.plist
-	  — see docs/firebase-setup.md step 7 for the exact XML:
-	    - GIDClientID  (= GoogleService-Info.plist's CLIENT_ID), a new key
-	    - the REVERSED_CLIENT_ID URL scheme, ADDED as a second <dict> inside
-	      the CFBundleURLTypes array below — not a new CFBundleURLTypes key
-	      (a duplicate key would silently replace this one).
-	  Not added here to avoid committing placeholder/invalid values.
+	  Two URL types share the one CFBundleURLTypes array (a duplicate key would
+	  silently replace the first):
+	    - trip import links: cheaptripchip://import?v=1&d=... (app_links)
+	    - Google Sign-In redirect: REVERSED_CLIENT_ID from
+	      ios/Runner/GoogleService-Info.plist (see docs/firebase-setup.md step 7)
+	  GIDClientID is that plist's CLIENT_ID. Both are public OAuth client ids.
 	-->
+	<key>GIDClientID</key>
+	<string>208192307721-8uqtshb3gcb251lf5nsnkmv0kfgpl2ts.apps.googleusercontent.com</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -72,6 +71,12 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>cheaptripchip</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.208192307721-8uqtshb3gcb251lf5nsnkmv0kfgpl2ts</string>
 			</array>
 		</dict>
 	</array>
