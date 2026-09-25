@@ -82,12 +82,17 @@ class PlaceListSheet extends StatefulWidget {
 }
 
 class _PlaceListSheetState extends State<PlaceListSheet> {
-  // A plain (non-lazy) list of rows — built eagerly into a
-  // `SliverChildListDelegate`, so every row's GlobalKey/context exists
-  // regardless of the sheet's current extent — the mock dataset is small
-  // enough that this is cheap, and it's what makes `Scrollable.ensureVisible`
-  // reliable even while the sheet is collapsed to its "peek" state.
+  // Rows are built lazily (`SliverChildBuilderDelegate`) — a My Maps import
+  // brings ~1,700 places, too many to build eagerly. Only built rows have a
+  // GlobalKey context for `Scrollable.ensureVisible`; [_scrollToPlace]
+  // first jumps near an unbuilt row (index × measured row height), then
+  // fine-tunes once it is built.
   final Map<String, GlobalKey> _rowKeys = {};
+  final GlobalKey _headerKey = GlobalKey();
+
+  /// The sheet's inner scroll controller, from the
+  /// [DraggableScrollableSheet] builder.
+  ScrollController? _scrollController;
 
   @override
   void initState() {
@@ -114,13 +119,51 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
 
   void _scrollToPlace(String placeId) {
     final rowContext = _rowKeys[placeId]?.currentContext;
-    if (rowContext == null) return;
-    Scrollable.ensureVisible(
-      rowContext,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
-      alignment: 0.5,
+    if (rowContext != null) {
+      Scrollable.ensureVisible(
+        rowContext,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        alignment: 0.5,
+      );
+      return;
+    }
+    // Not built yet (off-screen in the lazy list): every row has the same
+    // layout, so one built row's height locates any index.
+    final controller = _scrollController;
+    final index = widget.places.indexWhere((p) => p.id == placeId);
+    if (controller == null || !controller.hasClients || index < 0) return;
+    double? rowHeight;
+    for (final key in _rowKeys.values) {
+      final box = key.currentContext?.findRenderObject();
+      if (box is RenderBox && box.hasSize) {
+        rowHeight = box.size.height;
+        break;
+      }
+    }
+    if (rowHeight == null) return;
+    final headerBox = _headerKey.currentContext?.findRenderObject();
+    final headerHeight = headerBox is RenderBox && headerBox.hasSize
+        ? headerBox.size.height
+        : 0.0;
+    final position = controller.position;
+    final target =
+        headerHeight +
+        index * rowHeight -
+        (position.viewportDimension - rowHeight) / 2;
+    controller.jumpTo(
+      target.clamp(position.minScrollExtent, position.maxScrollExtent),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final built = _rowKeys[placeId]?.currentContext;
+      if (built == null || !mounted) return;
+      Scrollable.ensureVisible(
+        built,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        alignment: 0.5,
+      );
+    });
   }
 
   @override
@@ -138,6 +181,7 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
       // velocity, so slow releases crept to the snap point.
       snapAnimationDuration: const Duration(milliseconds: 220),
       builder: (context, scrollController) {
+        _scrollController = scrollController;
         return Container(
           decoration: BoxDecoration(
             color: scheme.surface,
@@ -161,6 +205,7 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
             slivers: [
               SliverToBoxAdapter(
                 child: Column(
+                  key: _headerKey,
                   children: [
                     const _DragHandle(),
                     Padding(
@@ -201,17 +246,18 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
                   padding: EdgeInsets.only(
                     bottom: 24 + MediaQuery.of(context).padding.bottom,
                   ),
-                  sliver: SliverList(
-                    delegate: SliverChildListDelegate([
-                      for (final place in widget.places)
-                        _PlaceRow(
-                          key: _keyFor(place.id),
-                          place: place,
-                          selected: place.id == widget.selectedId,
-                          onTap: () => widget.onSelectPlace(place),
-                          onOpenDetail: () => widget.onOpenDetail(place),
-                        ),
-                    ]),
+                  sliver: SliverList.builder(
+                    itemCount: widget.places.length,
+                    itemBuilder: (context, i) {
+                      final place = widget.places[i];
+                      return _PlaceRow(
+                        key: _keyFor(place.id),
+                        place: place,
+                        selected: place.id == widget.selectedId,
+                        onTap: () => widget.onSelectPlace(place),
+                        onOpenDetail: () => widget.onOpenDetail(place),
+                      );
+                    },
                   ),
                 ),
             ],

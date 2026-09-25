@@ -75,6 +75,30 @@ class FirestorePlaceRepository implements PlaceRepository {
     await docRef.set(data, SetOptions(merge: true));
   }
 
+  /// Firestore caps a batch at 500 writes; stay well under it.
+  static const _batchSize = 450;
+
+  /// Bulk counterpart to [upsert] for imports: [WriteBatch]es of
+  /// [_batchSize] with no per-doc `get()`, so `savedAt` is set
+  /// unconditionally. Only call it with places that are new to the user
+  /// (the import service dedupes against saved places first) — on an
+  /// existing doc this would reset its `savedAt`. One batch shares one
+  /// server timestamp, so the feed orders those places by name.
+  @override
+  Future<void> upsertAll(List<Place> places) async {
+    final firestore = FirebaseFirestore.instance;
+    for (var start = 0; start < places.length; start += _batchSize) {
+      final batch = firestore.batch();
+      for (final place in places.skip(start).take(_batchSize)) {
+        final data = place.toJson();
+        data['updatedAt'] = FieldValue.serverTimestamp();
+        data['savedAt'] = FieldValue.serverTimestamp();
+        batch.set(_collection.doc(place.id), data, SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+  }
+
   @override
   Future<void> delete(String id) => _collection.doc(id).delete();
 }

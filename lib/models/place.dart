@@ -370,7 +370,10 @@ enum RestaurantType {
 
 enum SourcePlatform {
   instagram('Instagram'),
-  tiktok('TikTok');
+  tiktok('TikTok'),
+
+  /// Imported from a shared Google My Maps map (see my_maps_import.dart).
+  googleMyMaps('Google My Maps');
 
   const SourcePlatform(this.label);
 

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/board.dart';
 import '../services/auth_service.dart';
 import 'firestore_repositories.dart';
+import 'guest_storage.dart';
 import 'local_repositories.dart';
 import 'mock_data.dart';
 import 'place_store.dart';
@@ -25,6 +26,9 @@ class BoardStore {
   BoardRepository _repository = LocalBoardRepository();
   StreamSubscription<List<Board>>? _subscription;
 
+  /// Persisted guest repository, reused across binds (see PlaceStore).
+  LocalBoardRepository? _guestRepository;
+
   static final Random _idRandom = Random();
 
   /// Index each board held at the moment it was removed by [deleteBoard],
@@ -37,7 +41,9 @@ class BoardStore {
   /// cancelling any previous subscription first.
   Future<void> bind(AppUser? user) async {
     final repository = user == null
-        ? LocalBoardRepository()
+        ? _guestRepository ??= LocalBoardRepository(
+            storage: GuestSnapshotStore.forCollection('boards'),
+          )
         : FirestoreBoardRepository(user.uid);
     bindRepository(repository);
   }

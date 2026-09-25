@@ -7,6 +7,10 @@ import '../models/place.dart';
 abstract class PlaceRepository {
   Stream<List<Place>> watch();
   Future<void> upsert(Place place);
+
+  /// Saves many places at once (bulk import) — one change event / batched
+  /// writes instead of [upsert] per place.
+  Future<void> upsertAll(List<Place> places);
   Future<void> delete(String id);
 }
 

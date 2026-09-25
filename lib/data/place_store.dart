@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/place.dart';
 import '../services/auth_service.dart';
 import 'firestore_repositories.dart';
+import 'guest_storage.dart';
 import 'local_repositories.dart';
 import 'mock_data.dart';
 import 'repositories.dart';
@@ -27,13 +28,20 @@ class PlaceStore {
   PlaceRepository _repository = LocalPlaceRepository();
   StreamSubscription<List<Place>>? _subscription;
 
+  /// The persisted guest repository, created on the first guest [bind] and
+  /// reused afterwards so a sign-out → guest round trip never races its own
+  /// pending snapshot write.
+  LocalPlaceRepository? _guestRepository;
+
   /// Picks [LocalPlaceRepository] when [user] is null (guest mode) or
   /// [FirestorePlaceRepository] under `users/{uid}/places` when signed in,
   /// cancelling any previous subscription first. Guest data is NOT uploaded
   /// on sign-in — this is deliberate (see the multi-user contract).
   Future<void> bind(AppUser? user) async {
     final repository = user == null
-        ? LocalPlaceRepository()
+        ? _guestRepository ??= LocalPlaceRepository(
+            storage: GuestSnapshotStore.forCollection('places'),
+          )
         : FirestorePlaceRepository(user.uid);
     bindRepository(repository);
   }
@@ -67,6 +75,15 @@ class PlaceStore {
   Future<void> add(Place place) async {
     places.value = [place, ...places.value];
     await _repository.upsert(place);
+  }
+
+  /// Bulk [add] for imports: prepends [newPlaces] (in their given order) in
+  /// one [places] update and one repository batch, instead of one listener
+  /// notification + write per place.
+  Future<void> addAll(List<Place> newPlaces) async {
+    if (newPlaces.isEmpty) return;
+    places.value = [...newPlaces, ...places.value];
+    await _repository.upsertAll(newPlaces);
   }
 
   /// Flips [Place.isFavorite] for the place with the given [id], replacing it

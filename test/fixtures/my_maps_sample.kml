@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample Trip 🗺️</name>
+    <description><![CDATA[Legend<br>灰 - 未食<br>綠 - 好好食]]></description>
+    <Style id="icon-1577-0F9D58-nodesc-normal">
+      <IconStyle>
+        <color>ff589d0f</color>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+    <Folder>
+      <name>Food</name>
+      <Placemark>
+        <name>Sample Tonkatsu</name>
+        <description><![CDATA[<img src="https://example.com/hostedimage/a1?fife=s16383" height="200" width="auto" /><br><br>Cat: カツ丼<br>評分: 4/5<br>預約制: Online<br>備註:<br>Link/食評: Crispy &amp; juicy.<br><br><img src="https://example.com/hostedimage/a2?fife=s16383" height="200" width="auto" />]]></description>
+        <styleUrl>#icon-1577-0F9D58-nodesc</styleUrl>
+        <ExtendedData>
+          <Data name="gx_media_links">
+            <value>https://example.com/hostedimage/a1?fife=s16383 https://example.com/hostedimage/a2?fife=s16383 ftp://example.com/skip.jpg</value>
+          </Data>
+        </ExtendedData>
+        <Point>
+          <coordinates>
+            139.7671,35.6712,0
+          </coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Sample Noodles</name>
+        <description><![CDATA[Cat: Ramen<br>評分: ?/5<br>Price: 1000-2000 Yen]]></description>
+        <styleUrl>#icon-1640-FFEA00-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7700,35.6980,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name><![CDATA[Bean & Cup]]></name>
+        <styleUrl>#icon-1534-FF5252-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7010,35.6580,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Untried Diner</name>
+        <styleUrl>#icon-1577-BDBDBD-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7100,35.6600,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Hotel</name>
+      <Placemark>
+        <name>Sample Inn</name>
+        <styleUrl>#icon-1602-0F9D58-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7745,35.6984,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>景點</name>
+      <Placemark>
+        <name>Sample Shrine</name>
+        <styleUrl>#icon-1677-0F9D58-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.6993,35.6764,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>A walking route</name>
+        <LineString>
+          <coordinates>139.70,35.67,0 139.71,35.68,0</coordinates>
+        </LineString>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>temp</name>
+      <Placemark>
+        <name>Sample Mall</name>
+        <styleUrl>#icon-1684-0288D1-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7000,35.6900,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Sample Tonkatsu</name>
+        <styleUrl>#icon-1577-0F9D58-nodesc</styleUrl>
+        <Point>
+          <coordinates>139.7671,35.6712,0</coordinates>
+        </Point>
+      </Placemark>
+      <Placemark>
+        <name>Some Pin</name>
+        <description>Rating: 7/10</description>
+        <styleUrl>#icon-1899-0288D1</styleUrl>
+        <Point>
+          <coordinates>139.8000,35.7000,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

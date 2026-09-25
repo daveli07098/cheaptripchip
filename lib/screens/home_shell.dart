@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../data/place_store.dart';
+import '../services/import_service.dart';
+import '../services/my_maps_import.dart';
 import '../services/place_extractor.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
@@ -14,10 +16,14 @@ import '../theme/theme_toggle_button.dart';
 import '../widgets/account_button.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
+import '../widgets/my_maps_import_sheet.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
 import 'place_detail_sheet.dart';
+
+/// Entries of the Boards tab's Import menu.
+enum _ImportSource { tripLink, myMaps }
 
 /// App shell with the Map ⇄ Saved ⇄ Boards triad (ANALYSIS.md §§3,5,6).
 class HomeShell extends StatefulWidget {
@@ -112,6 +118,13 @@ class _HomeShellState extends State<HomeShell> {
     if (!mounted) return;
     if (bundle != null) {
       _promptImport(bundle, key: shared);
+      return;
+    }
+    // A shared Google My Maps link imports the whole map. Only the URL form
+    // counts here (not a bare id), so ordinary shares never land in it.
+    final mid = shared.contains('/maps/d/') ? parseMyMapsId(shared) : null;
+    if (mid != null) {
+      _promptMyMapsImport(mid, key: shared);
     } else {
       _openAddSheet(initialText: shared);
     }
@@ -141,7 +154,35 @@ class _HomeShellState extends State<HomeShell> {
   /// Shows the import preview for [bundle]; on confirm switches to Boards and
   /// reports what was added. [key] identifies the source so a duplicate
   /// delivery of the same link within a few seconds is ignored.
-  Future<void> _promptImport(TripBundle bundle, {String? key}) async {
+  Future<void> _promptImport(TripBundle bundle, {String? key}) {
+    return _runImport(
+      key: key,
+      open: () => ImportSheet.show(context, bundle),
+      describe: (result, places) =>
+          'Imported ${result.added} $places '
+          '(${result.alreadySaved} already saved)',
+    );
+  }
+
+  /// Same flow for a Google My Maps map [mid]: load → preview → import.
+  Future<void> _promptMyMapsImport(String mid, {String? key}) {
+    return _runImport(
+      key: key,
+      open: () => MyMapsImportSheet.show(context, mid),
+      describe: (result, places) =>
+          'Imported ${result.added} $places into “${result.board.name}” '
+          '(${result.alreadySaved} already saved)',
+    );
+  }
+
+  /// Shared guard + result handling for both import sheets: ignores a
+  /// duplicate delivery of [key] within a few seconds and stacked prompts;
+  /// on success switches to Boards and shows [describe]'s SnackBar.
+  Future<void> _runImport({
+    required String? key,
+    required Future<ImportResult?> Function() open,
+    required String Function(ImportResult result, String places) describe,
+  }) async {
     if (!mounted) return;
     final now = DateTime.now();
     if (_importInProgress) return;
@@ -157,18 +198,11 @@ class _HomeShellState extends State<HomeShell> {
     // Captured before the sheet opens so the SnackBar has a valid messenger.
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final result = await ImportSheet.show(context, bundle);
+      final result = await open();
       if (result == null || !mounted) return;
       setState(() => _index = 2);
       final places = result.added == 1 ? 'place' : 'places';
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'Imported ${result.added} $places '
-            '(${result.alreadySaved} already saved)',
-          ),
-        ),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(describe(result, places))));
     } finally {
       _importInProgress = false;
     }
@@ -178,6 +212,12 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _importFromLinkDialog() async {
     final bundle = await ImportLinkDialog.show(context);
     if (bundle != null && mounted) await _promptImport(bundle);
+  }
+
+  /// Boards tab → Import → From Google My Maps: paste a link, then preview.
+  Future<void> _importFromMyMapsDialog() async {
+    final mid = await MyMapsLinkDialog.show(context);
+    if (mid != null && mounted) await _promptMyMapsImport(mid);
   }
 
   void _shareAllSaved() {
@@ -214,10 +254,29 @@ class _HomeShellState extends State<HomeShell> {
                     onPressed: _shareAllSaved,
                   ),
                 if (_index == 2)
-                  IconButton(
-                    tooltip: 'Import from link',
+                  PopupMenuButton<_ImportSource>(
+                    tooltip: 'Import',
                     icon: const Icon(Icons.download_outlined),
-                    onPressed: _importFromLinkDialog,
+                    onSelected: (source) => switch (source) {
+                      _ImportSource.tripLink => _importFromLinkDialog(),
+                      _ImportSource.myMaps => _importFromMyMapsDialog(),
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: _ImportSource.tripLink,
+                        child: ListTile(
+                          leading: Icon(Icons.link),
+                          title: Text('From a shared trip link'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _ImportSource.myMaps,
+                        child: ListTile(
+                          leading: Icon(Icons.map_outlined),
+                          title: Text('From Google My Maps'),
+                        ),
+                      ),
+                    ],
                   ),
                 const AccountButton(),
                 const SizedBox(width: 4),

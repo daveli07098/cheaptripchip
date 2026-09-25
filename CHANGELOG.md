@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Import from Google My Maps: Boards tab → Import menu ("From a shared trip
+  link" / "From Google My Maps"), or share a My Maps link into the app. Paste
+  a link (edit/viewer/`/u/N/` or a bare map id; clipboard prefilled), the app
+  downloads the KML export (`/maps/d/kml?mid=…&forcekml=1`, parsed with
+  `package:xml` in a background isolate) and previews title, place count and
+  one checkbox per layer plus the board name (default "temp"). Import creates
+  one 🗺️ board with a section per layer. Category comes from the layer (Food →
+  restaurant/café by icon, Hotel → stay, 景點 → sightseeing, Shopping →
+  shopping) or, for other layers, from the My Maps icon code; own score from a
+  written `評分: x/5` / `Rating: x/10`, else the icon colour (green 9,
+  yellow 5, red 2); description → plain-text notes; `<img>` and
+  `gx_media_links` → photo URLs. Private maps get a "Share → Anyone with the
+  link" hint; the web preview explains it can't download maps (CORS).
+  New `SourcePlatform.googleMyMaps`.
+- `PlaceStore.addAll` / `PlaceRepository.upsertAll`: bulk save in one update
+  (Firestore: `WriteBatch`es of 450). `ImportService.importSections` (used by
+  both importers) dedupes via a name-bucketed `DuplicateIndex` instead of
+  scanning every saved place per incoming one.
+- Tests: My Maps link/KML parsing on a trimmed fixture, category/score/notes
+  mapping, sectioned board import, guest persistence round trip.
 - Trip sharing (`TripShare`): `cheaptripchip://import` app links, a portable
   `.cheaptrip.json` file, KML for Google My Maps, and Google Maps
   place/route URLs.
@@ -109,6 +129,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on messy share text, and `fetchPostMetadata` against a mocked client
   (200-with-tags / 200-without / 404 / timeout).
 ### Changed
+- Guest mode now persists: places and boards are saved as JSON snapshots
+  (`<app documents>/guest/*.json`, atomic write, debounced; web:
+  shared_preferences) instead of living only in memory until restart.
+  `MockData` only seeds the very first launch.
+- Map list sheet builds rows lazily; pin taps still scroll off-screen rows
+  into view (jump by index, then fine-tune). Board sections show 100 rows at
+  a time ("Show more").
 - `firestore.rules`: explicit `places`/`boards`/`photos` matches replace the
   `users/{uid}/{document=**}` wildcard (any allow wins, so the wildcard would
   bypass the new photo guard: `jpeg is bytes`, `< 1000000` bytes, only

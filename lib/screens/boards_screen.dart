@@ -312,7 +312,7 @@ class _BoardCardState extends State<_BoardCard> {
   }
 }
 
-class _SectionBlock extends StatelessWidget {
+class _SectionBlock extends StatefulWidget {
   const _SectionBlock({
     required this.boardId,
     required this.boardName,
@@ -334,10 +334,28 @@ class _SectionBlock extends StatelessWidget {
   final bool isAuto;
 
   @override
+  State<_SectionBlock> createState() => _SectionBlockState();
+}
+
+class _SectionBlockState extends State<_SectionBlock> {
+  /// Rows shown per step. The rows sit in a Column inside the board card,
+  /// so they are built eagerly — a My Maps import can put 500+ places in
+  /// one section, which would stall the first expand if built at once.
+  static const _pageSize = 100;
+  int _shown = _pageSize;
+
+  String get boardId => widget.boardId;
+  String get boardName => widget.boardName;
+  BoardSection get section => widget.section;
+  Map<String, Place> get placesById => widget.placesById;
+  bool get isAuto => widget.isAuto;
+
+  @override
   Widget build(BuildContext context) {
     // A section place id that no longer resolves against the live store
     // (e.g. removed) is skipped rather than crashing the tile.
     final ids = section.placeIds.where(placesById.containsKey).toList();
+    final hidden = ids.length - _shown;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -355,7 +373,18 @@ class _SectionBlock extends StatelessWidget {
             ),
           ),
         ),
-        for (final id in ids) _itemTile(context, placesById[id]!),
+        for (final id in ids.take(_shown)) _itemTile(context, placesById[id]!),
+        if (hidden > 0)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: TextButton(
+              onPressed: () => setState(() => _shown += _pageSize),
+              child: Text(
+                'Show ${hidden > _pageSize ? _pageSize : hidden} more '
+                '($hidden hidden)',
+              ),
+            ),
+          ),
       ],
     );
   }
