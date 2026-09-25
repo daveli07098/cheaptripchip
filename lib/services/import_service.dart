@@ -74,10 +74,13 @@ class ImportService {
 
   /// Imports the chosen layers of a Google My Maps export into one board
   /// named [boardName] (emoji 🗺️), one section per layer, in map order.
+  /// Area-label pins ([MyMapsPlacemark.isAreaLabel]) are left out unless
+  /// [skipAreaLabels] is false.
   static Future<ImportResult> importMyMaps(
     MyMapsDocument map, {
     required List<MyMapsFolder> folders,
     String boardName = defaultMyMapsBoardName,
+    bool skipAreaLabels = true,
     PlaceStore? placeStore,
     BoardStore? boardStore,
   }) {
@@ -96,7 +99,11 @@ class ImportService {
         for (final folder in folders)
           ImportSection(folder.name, [
             for (final placemark in folder.placemarks)
-              placemark.toPlace(id: 'mm-$stamp-${index++}', mapTitle: mapTitle),
+              if (!skipAreaLabels || !placemark.isAreaLabel)
+                placemark.toPlace(
+                  id: 'mm-$stamp-${index++}',
+                  mapTitle: mapTitle,
+                ),
           ]),
       ],
       placeStore: placeStore,

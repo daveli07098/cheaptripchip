@@ -28,6 +28,7 @@ bool placeMatches(Place place, String query) {
     place.region,
     place.address,
     place.descriptionEn,
+    place.myNotes,
     place.category.labelEn,
     place.category.labelZh,
     if (restaurantType != null) restaurantType.labelEn,

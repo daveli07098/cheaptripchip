@@ -42,6 +42,14 @@ void main() {
       expect(detectRestaurantType(place), isNull);
     });
 
+    test("reads the user's notes (e.g. imported from My Maps)", () {
+      final place = _restaurant(
+        name: 'Menya Honda',
+      ).copyWith(myNotes: 'Cat: Ramen\n評分: 4/5');
+      expect(detectRestaurantType(place), RestaurantType.ramen);
+      expect(place.effectiveRestaurantType, RestaurantType.ramen);
+    });
+
     test('matches English keywords across name/description/address', () {
       expect(
         detectRestaurantType(_restaurant(descriptionEn: 'Best ramen in town')),

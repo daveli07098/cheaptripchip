@@ -2,7 +2,7 @@ import 'place.dart';
 
 /// Keyword-based fallback for [Place.effectiveRestaurantType]: guesses a
 /// [RestaurantType] from a restaurant's own text (name/description/original
-/// caption/address) when nobody — neither the user via the detail-sheet
+/// caption/address/the user's notes) when nobody — neither the user via the detail-sheet
 /// picker, nor Gemini extraction — has set [Place.restaurantType] yet. Pure
 /// and read-only: never writes back to the place, so there's nothing to
 /// migrate when the keyword list changes; it's just re-derived every time
@@ -28,6 +28,8 @@ RestaurantType? detectRestaurantType(Place place) {
     place.descriptionEn,
     place.originalCaption,
     place.address,
+    // The user's own notes — e.g. "Cat: Ramen" from a My Maps import.
+    place.myNotes,
   ].join('\n').toLowerCase();
 
   for (final (type, keywords) in _detectionOrder) {

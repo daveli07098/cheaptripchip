@@ -94,8 +94,9 @@ void main() {
     test('title, folders in KML order, counts; non-points skipped', () {
       expect(doc.title, 'Sample Trip 🗺️');
       expect(doc.folders.map((f) => f.name), ['Food', 'Hotel', '景點', 'temp']);
-      expect(doc.folders.map((f) => f.count), [4, 1, 1, 3]);
-      expect(doc.placeCount, 9);
+      expect(doc.folders.map((f) => f.count), [4, 1, 1, 4]);
+      expect(doc.placeCount, 10);
+      expect(doc.areaLabelCount, 1);
     });
 
     test('coordinates are lng,lat in KML', () {
@@ -141,8 +142,9 @@ void main() {
       expect(byName('Food', 'Sample Noodles').myScore, 5);
       expect(byName('Food', 'Bean & Cup').myScore, 2); // red
       expect(byName('Food', 'Untried Diner').myScore, isNull); // grey
-      // The colour applies to every category.
-      expect(byName('Hotel', 'Sample Inn').myScore, 9);
+      // Colour legend is for food (restaurant/cafe) only.
+      expect(byName('Hotel', 'Sample Inn').myScore, isNull);
+      expect(byName('景點', 'Sample Shrine').myScore, isNull);
       expect(byName('temp', 'Some Pin').myScore, 7); // Rating: 7/10
     });
 
@@ -156,8 +158,8 @@ void main() {
 
     test('photo urls from <img> and gx_media_links, deduped, http only', () {
       expect(byName('Food', 'Sample Tonkatsu').photoUrls, [
-        'https://example.com/hostedimage/a1?fife=s16383',
-        'https://example.com/hostedimage/a2?fife=s16383',
+        'https://mymaps.usercontent.google.com/hostedimage/m/*/a1?fife=s1280',
+        'https://mymaps.usercontent.google.com/hostedimage/m/*/a2?fife=s1280',
       ]);
       expect(byName('Hotel', 'Sample Inn').photoUrls, isEmpty);
     });
@@ -178,11 +180,20 @@ void main() {
     test('parses in a background isolate (compute)', () async {
       final xml = File('test/fixtures/my_maps_sample.kml').readAsStringSync();
       final parsed = await compute(parseMyMapsKml, xml);
-      expect(parsed.placeCount, 9);
+      expect(parsed.placeCount, 10);
       expect(
         parsed.folders.first.placemarks.first.location.longitude,
         139.7671,
       );
+    });
+
+    test('area labels: generic pin, no description, area name', () {
+      final label = byName('temp', '東京都');
+      expect(label.isAreaLabel, isTrue);
+      expect(label.category, PlaceCategory.sightseeing);
+      // Generic pin but with a description → a real place.
+      expect(byName('temp', 'Some Pin').isAreaLabel, isFalse);
+      expect(byName('Food', 'Sample Tonkatsu').isAreaLabel, isFalse);
     });
 
     test('rejects non-KML', () {
@@ -209,9 +220,41 @@ void main() {
       expect(myMapsCategory('Shopping', 1899), PlaceCategory.shopping);
     });
 
+    test('isAreaName is conservative', () {
+      for (final name in ['東京都', '北海道', '大阪府', '神奈川縣', '千葉市', '有珠郡', '香港']) {
+        expect(isAreaName(name), isTrue, reason: name);
+      }
+      for (final name in ['東京巨蛋', '築地市場', 'Kyoto City Hall', '明治神宮', '']) {
+        expect(isAreaName(name), isFalse, reason: name);
+      }
+    });
+
+    test('phoneSizedPhotoUrl asks Google for ~1280 px', () {
+      const base = 'https://mymaps.usercontent.google.com/hostedimage/m/*/3AAj';
+      expect(phoneSizedPhotoUrl('$base?fife=s16383'), '$base?fife=s1280');
+      expect(
+        phoneSizedPhotoUrl('https://lh3.googleusercontent.com/abc=w4000-h3000'),
+        'https://lh3.googleusercontent.com/abc=s1280',
+      );
+      expect(
+        phoneSizedPhotoUrl('https://lh5.googleusercontent.com/p/xyz=s0'),
+        'https://lh5.googleusercontent.com/p/xyz=s1280',
+      );
+      // Other hosts and unsized Google URLs are left alone.
+      for (final url in [
+        'https://example.com/photo.jpg?fife=s16383',
+        'https://lh3.googleusercontent.com/abc',
+      ]) {
+        expect(phoneSizedPhotoUrl(url), url);
+      }
+    });
+
     test('myMapsScore converts and clamps', () {
-      int? score(String notes, [String? colour]) =>
-          myMapsScore(colour: colour, notes: notes);
+      int? score(String notes, [String? colour]) => myMapsScore(
+        colour: colour,
+        notes: notes,
+        category: PlaceCategory.restaurant,
+      );
       expect(score('評分: 2.5/5'), 5);
       expect(score('評分：3.8/5'), 8);
       expect(score('評分: 0/5'), 1);
@@ -219,6 +262,27 @@ void main() {
       expect(score('評分: 7/5', '0F9D58'), 9, reason: 'out of range');
       expect(score('評分:  ？/5', 'FF5252'), 2);
       expect(score(''), isNull);
+      // Colour only counts for food; a written rating counts everywhere.
+      expect(
+        myMapsScore(
+          colour: '0F9D58',
+          notes: '',
+          category: PlaceCategory.sightseeing,
+        ),
+        isNull,
+      );
+      expect(
+        myMapsScore(colour: '0F9D58', notes: '', category: PlaceCategory.cafe),
+        9,
+      );
+      expect(
+        myMapsScore(
+          colour: null,
+          notes: '評分: 3/5',
+          category: PlaceCategory.stay,
+        ),
+        6,
+      );
     });
 
     test('descriptionToNotes caps long text', () {

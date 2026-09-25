@@ -69,8 +69,9 @@ class _MapScreenState extends State<MapScreen> {
   bool _previewVisible = false;
 
   /// Category filter AND free-text search (via [placeMatches]) — search
-  /// terms are matched across name/area/region/address/description/category
-  /// labels/source handle, so it also narrows results within a category.
+  /// terms are matched across name/area/region/address/description/notes/
+  /// category labels/source handle, so it also narrows results within a
+  /// category.
   List<Place> _visible(List<Place> all) {
     final query = _searchController.text;
     return all.where((p) {

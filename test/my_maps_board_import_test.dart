@@ -75,7 +75,8 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
 
-    // 9 placemarks − 1 in-map duplicate (Sample Tonkatsu twice) − 1 saved.
+    // 10 placemarks − 1 area label (skipped by default) − 1 in-map
+    // duplicate (Sample Tonkatsu twice) − 1 saved.
     expect(result.added, 7);
     expect(result.alreadySaved, 1);
     expect(PlaceStore.instance.places.value.length, before + 7);
@@ -89,10 +90,27 @@ void main() {
     // The collapsed duplicate is the same place in both sections.
     expect(board.sections[3].placeIds, contains(board.sections[0].placeIds[0]));
     expect(BoardStore.instance.byIdOrNull(board.id)?.itemCount, 9);
+    expect(
+      PlaceStore.instance.places.value.any((p) => p.name == '東京都'),
+      isFalse,
+    );
 
     final tonkatsu = PlaceStore.instance.byId(board.sections[0].placeIds[0]);
     expect(tonkatsu.sourcePlatform, SourcePlatform.googleMyMaps);
     expect(tonkatsu.myScore, 8);
+  });
+
+  test('importMyMaps imports area labels as sightseeing when asked', () async {
+    final result = await ImportService.importMyMaps(
+      map,
+      folders: [map.folders.last],
+      skipAreaLabels: false,
+    );
+    expect(result.board.sections.single.placeIds.length, 4);
+    final label = PlaceStore.instance.places.value.firstWhere(
+      (p) => p.name == '東京都',
+    );
+    expect(label.category, PlaceCategory.sightseeing);
   });
 
   test('importMyMaps honours the chosen layers and board name', () async {

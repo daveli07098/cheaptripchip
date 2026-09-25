@@ -101,6 +101,9 @@ class MyMapsDocument {
   final List<MyMapsFolder> folders;
 
   int get placeCount => folders.fold(0, (sum, f) => sum + f.placemarks.length);
+
+  /// Placemarks that are only area labels (see [MyMapsPlacemark.isAreaLabel]).
+  int get areaLabelCount => folders.fold(0, (sum, f) => sum + f.areaLabelCount);
 }
 
 /// One My Maps layer (KML `Folder`).
@@ -113,6 +116,8 @@ class MyMapsFolder {
   final List<MyMapsPlacemark> placemarks;
 
   int get count => placemarks.length;
+
+  int get areaLabelCount => placemarks.where((p) => p.isAreaLabel).length;
 }
 
 /// One point from a My Maps layer, already mapped onto the app's model.
@@ -126,6 +131,7 @@ class MyMapsPlacemark {
     this.myScore,
     this.notes = '',
     this.photoUrls = const [],
+    this.isAreaLabel = false,
   });
 
   final String name;
@@ -147,6 +153,12 @@ class MyMapsPlacemark {
   final String notes;
 
   final List<String> photoUrls;
+
+  /// A generic-pin placemark with no description whose name is an
+  /// administrative area (東京都, 千葉市, 神奈川縣…) — a map label rather than
+  /// a place to visit. The importer skips these unless asked not to; when
+  /// imported they are sightseeing.
+  final bool isAreaLabel;
 
   /// A new [Place] for this placemark. [mapTitle] becomes the source
   /// handle ("By <map> on Google My Maps" on the detail sheet).
@@ -223,11 +235,16 @@ MyMapsPlacemark? _placemark(XmlElement pm, String layer) {
   final style = _styleUrl.firstMatch(_childText(pm, 'styleUrl'));
   final iconCode = style == null ? null : int.tryParse(style.group(1)!);
   final colour = style?.group(2)?.toUpperCase();
-  final category = myMapsCategory(layer, iconCode);
-
   final html = _childText(pm, 'description');
+  final name = _childText(pm, 'name');
+  final areaLabel =
+      iconCode == _genericPinIcon && html.isEmpty && isAreaName(name);
+  final category = areaLabel
+      ? PlaceCategory.sightseeing
+      : myMapsCategory(layer, iconCode);
+
   final notes = descriptionToNotes(html);
-  final photos = <String>{..._imageUrls(html)};
+  final photos = <String>{..._imageUrls(html).map(phoneSizedPhotoUrl)};
   final extended = _child(pm, 'ExtendedData');
   if (extended != null) {
     for (final data in extended.childElements) {
@@ -236,22 +253,77 @@ MyMapsPlacemark? _placemark(XmlElement pm, String layer) {
         continue;
       }
       photos.addAll(
-        _childText(data, 'value').split(RegExp(r'\s+')).where(_isHttpUrl),
+        _childText(
+          data,
+          'value',
+        ).split(RegExp(r'\s+')).where(_isHttpUrl).map(phoneSizedPhotoUrl),
       );
     }
   }
 
-  final name = _childText(pm, 'name');
   return MyMapsPlacemark(
     name: name.isEmpty ? 'Untitled place' : name,
     location: location,
     category: category,
     iconCode: iconCode,
     colour: colour,
-    myScore: myMapsScore(colour: colour, notes: notes),
+    myScore: myMapsScore(colour: colour, notes: notes, category: category),
     notes: notes,
     photoUrls: photos.toList(),
+    isAreaLabel: areaLabel,
   );
+}
+
+/// My Maps' plain pin icon — what the map shows for a searched area.
+const _genericPinIcon = 1899;
+
+/// CJK name ending in an administrative-area suffix: prefecture/metropolis
+/// (都道府県縣), city/ward/town/village/district (市区區町村郡).
+final _areaSuffix = RegExp(
+  r'^[\u3040-\u30FF\u3400-\u9FFF\uF900-\uFAFFヶ]{1,6}[都道府県縣市区區町村郡]$',
+);
+
+/// Area names without such a suffix that maps commonly pin as labels.
+const _knownAreas = {
+  '香港', '澳門', '澳门', '新加坡', '臺中', '台中', '臺南', '台南', //
+  '釜山', '首爾', '首尔', '曼谷', '東京', '大阪', '京都', '沖繩', '沖縄',
+};
+
+/// Whether [name] is just an administrative area (東京都, 千葉市, 香港).
+/// Conservative: CJK-only names with an area suffix, or a short known list.
+bool isAreaName(String name) {
+  final trimmed = name.trim();
+  return _areaSuffix.hasMatch(trimmed) || _knownAreas.contains(trimmed);
+}
+
+/// Longest edge requested for imported photos — plenty for a phone screen;
+/// My Maps links ask for the original (`fife=s16383`), often several MB.
+const phonePhotoSize = 1280;
+
+final _sizeSuffix = RegExp(r'=[swh]\d+(?:-[a-z0-9]+)*$');
+
+/// [url] resized to [phonePhotoSize] when it is a Google-hosted image with a
+/// size parameter (`?fife=s16383`, or a trailing `=s1600` / `=w800-h600`
+/// path suffix). Other URLs are returned unchanged.
+String phoneSizedPhotoUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return url;
+  final host = uri.host;
+  if (host != 'mymaps.usercontent.google.com' &&
+      !host.endsWith('.googleusercontent.com')) {
+    return url;
+  }
+  if (uri.queryParameters.containsKey('fife')) {
+    return uri
+        .replace(
+          queryParameters: {...uri.queryParameters, 'fife': 's$phonePhotoSize'},
+        )
+        .toString();
+  }
+  if (!uri.hasQuery && _sizeSuffix.hasMatch(uri.path)) {
+    return url.replaceFirst(_sizeSuffix, '=s$phonePhotoSize');
+  }
+  return url;
 }
 
 /// KML coordinates are `lng,lat[,alt]`.
@@ -370,10 +442,14 @@ final _ratingInNotes = RegExp(
 );
 
 /// The user's own 1–10 score: a written rating in the notes (`評分: 4/5`,
-/// `Rating: 7/10`) wins; otherwise the icon colour (applied to every
-/// category, though the map legend describes it for food). Null when
-/// neither says anything.
-int? myMapsScore({required String? colour, required String notes}) {
+/// `Rating: 7/10`) wins for any category; otherwise the icon colour, for
+/// restaurants and cafés only (the map legend describes food icon colours).
+/// Null when neither says anything.
+int? myMapsScore({
+  required String? colour,
+  required String notes,
+  required PlaceCategory category,
+}) {
   final match = _ratingInNotes.firstMatch(notes);
   if (match != null) {
     final value = double.parse(match.group(1)!);
@@ -383,7 +459,11 @@ int? myMapsScore({required String? colour, required String notes}) {
       return score.round().clamp(1, 10);
     }
   }
-  if (colour == null) return null;
+  if (colour == null ||
+      (category != PlaceCategory.restaurant &&
+          category != PlaceCategory.cafe)) {
+    return null;
+  }
   return _colourScores[colour.toUpperCase()];
 }
 

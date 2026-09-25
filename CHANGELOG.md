@@ -20,6 +20,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `gx_media_links` → photo URLs. Private maps get a "Share → Anyone with the
   link" hint; the web preview explains it can't download maps (CORS).
   New `SourcePlatform.googleMyMaps`.
+- My Maps import refinements: icon colour scores only restaurants/cafés
+  (a written `評分: x/5` still scores anything); area-label pins (generic pin,
+  no description, name like 東京都/千葉市) are skipped by default via a "Skip
+  area labels (N)" checkbox (unticked → imported as sightseeing); photo URLs
+  request ~1280 px (`fife=s1280` / `=s1280`) instead of the original.
+  Restaurant sub-type detection and search now also read `myNotes`.
 - `PlaceStore.addAll` / `PlaceRepository.upsertAll`: bulk save in one update
   (Firestore: `WriteBatch`es of 450). `ImportService.importSections` (used by
   both importers) dedupes via a name-bucketed `DuplicateIndex` instead of

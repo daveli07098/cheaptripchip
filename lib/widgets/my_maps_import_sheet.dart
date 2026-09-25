@@ -146,6 +146,7 @@ class _MyMapsImportSheetState extends State<MyMapsImportSheet> {
   List<bool> _selected = const [];
   String? _error;
   bool _importing = false;
+  bool _skipAreaLabels = true;
 
   @override
   void initState() {
@@ -183,7 +184,9 @@ class _MyMapsImportSheetState extends State<MyMapsImportSheet> {
     if (map == null) return 0;
     var n = 0;
     for (var i = 0; i < map.folders.length; i++) {
-      if (_selected[i]) n += map.folders[i].count;
+      if (!_selected[i]) continue;
+      final folder = map.folders[i];
+      n += folder.count - (_skipAreaLabels ? folder.areaLabelCount : 0);
     }
     return n;
   }
@@ -200,6 +203,7 @@ class _MyMapsImportSheetState extends State<MyMapsImportSheet> {
             if (_selected[i]) map.folders[i],
         ],
         boardName: _nameController.text,
+        skipAreaLabels: _skipAreaLabels,
       );
       if (mounted) Navigator.pop(context, result);
     } catch (e) {
@@ -302,6 +306,20 @@ class _MyMapsImportSheetState extends State<MyMapsImportSheet> {
             },
           ),
         ),
+        if (map.areaLabelCount > 0)
+          CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: _skipAreaLabels,
+            onChanged: _importing
+                ? null
+                : (v) => setState(() => _skipAreaLabels = v ?? true),
+            title: Text(
+              'Skip area labels (${_formatCount(map.areaLabelCount)})',
+            ),
+            subtitle: const Text('Pins like 東京都 or 千葉市 that only name an area'),
+          ),
         const SizedBox(height: 8),
         TextField(
           controller: _nameController,

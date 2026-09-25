@@ -37,6 +37,12 @@ void main() {
       expect(placeMatches(_place(name: 'Gogo'), '   '), isTrue);
     });
 
+    test("matches the user's notes (e.g. imported from My Maps)", () {
+      final place = _place(name: 'Gogo').copyWith(myNotes: 'Cat: カツ丼');
+      expect(placeMatches(place, 'カツ丼'), isTrue);
+      expect(placeMatches(_place(name: 'Gogo'), 'カツ丼'), isFalse);
+    });
+
     test('is case-insensitive', () {
       final place = _place(name: 'Gogo Cafe');
       expect(placeMatches(place, 'GOGO'), isTrue);
