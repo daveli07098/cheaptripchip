@@ -80,7 +80,7 @@ class MapPin extends StatelessWidget {
                 // WCAG 1.4.1: the emoji glyph alone isn't an accessible
                 // label, so screen readers get the category's English name
                 // instead of (or in addition to) the glyph.
-                label: place.category.labelEn,
+                label: _pinLabel(place),
                 selected: selected,
                 child: ExcludeSemantics(
                   child: Center(
@@ -89,7 +89,7 @@ class MapPin extends StatelessWidget {
                     // plus this outer `Center` (not `TextAlign.center`) is
                     // what actually keeps the glyph centered in the circle.
                     child: Text(
-                      place.category.emoji,
+                      _pinEmoji(place),
                       style: const TextStyle(fontSize: 20, height: 1),
                     ),
                   ),
@@ -176,4 +176,20 @@ class ClusterPin extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The pin shows the same icon as the place's entry in the ☰ drawer: a
+/// restaurant's sub-type (🍜 Ramen, 🍣 Sushi…) when known, otherwise the
+/// category emoji. "Other" restaurants keep the generic 🍽️.
+String _pinEmoji(Place place) {
+  final type = place.effectiveRestaurantType;
+  if (type != null && type != RestaurantType.other) return type.emoji;
+  return place.category.emoji;
+}
+
+/// Accessible name matching [_pinEmoji] (WCAG 1.4.1).
+String _pinLabel(Place place) {
+  final type = place.effectiveRestaurantType;
+  if (type != null && type != RestaurantType.other) return type.labelEn;
+  return place.category.labelEn;
 }
