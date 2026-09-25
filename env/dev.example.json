@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to dev.json and fill in. dev.json is git-ignored — never commit real keys.",
+  "_comment": "Copy to dev.json and fill in. dev.json is git-ignored — never commit real keys. If Gemini 400s with 'User location is not supported' (e.g. from Hong Kong), deploy server/ (docs/gemini-proxy.md) and point GEMINI_BASE_URL at it instead — e.g. https://cheaptripchip-api.vercel.app. In that mode GEMINI_API_KEY holds the proxy's APP_TOKEN, not the real Gemini key; the real key only lives in the proxy's Vercel env.",
   "GEMINI_API_KEY": "AIza...",
   "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
 }
