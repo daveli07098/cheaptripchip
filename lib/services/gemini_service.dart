@@ -23,10 +23,10 @@ class GeminiService {
     String? baseUrl,
     List<String>? models,
     http.Client? client,
-  })  : apiKey = apiKey ?? _envApiKey,
-        baseUrl = _trimSlashes(baseUrl ?? _envBaseUrl),
-        models = models ?? defaultModels,
-        _client = client ?? http.Client();
+  }) : apiKey = apiKey ?? _envApiKey,
+       baseUrl = _trimSlashes(baseUrl ?? _envBaseUrl),
+       models = models ?? defaultModels,
+       _client = client ?? http.Client();
 
   static const _envApiKey = String.fromEnvironment('GEMINI_API_KEY');
   static const _envBaseUrl = String.fromEnvironment(
@@ -36,12 +36,13 @@ class GeminiService {
 
   /// Cascade priority order, mirroring event-calendar's GEMINI_POOL
   /// (strongest / most-available first). Lite models are cheap fallbacks.
+  ///
+  /// Checked 2026-09-25 against a new AI Studio key: gemini-2.5-* is closed to
+  /// new users and gemini-3-flash is not found, so they're dropped.
   static const List<String> defaultModels = [
+    'gemini-3.8-flash',
     'gemini-3.5-flash',
     'gemini-3.1-flash-lite',
-    'gemini-3-flash',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
   ];
 
   final String apiKey;
@@ -77,14 +78,16 @@ class GeminiService {
   }
 
   Future<Map<String, dynamic>> _callJson(String prompt, String model) async {
-    final uri = Uri.parse('$baseUrl/v1beta/models/$model:generateContent?key=$apiKey');
+    final uri = Uri.parse(
+      '$baseUrl/v1beta/models/$model:generateContent?key=$apiKey',
+    );
     final body = jsonEncode({
       'contents': [
         {
           'parts': [
-            {'text': prompt}
-          ]
-        }
+            {'text': prompt},
+          ],
+        },
       ],
       // temperature 0 → deterministic extraction (same rationale as the TS client).
       'generationConfig': {
@@ -113,8 +116,12 @@ class GeminiService {
         final err = jsonDecode(res?.body ?? '') as Map<String, dynamic>;
         final m = (err['error'] as Map?)?['message'];
         if (m is String) detail = ' — $m';
-      } catch (_) {/* non-JSON error body */}
-      throw Exception('Gemini API error: ${res?.statusCode ?? 'unknown'}$detail');
+      } catch (_) {
+        /* non-JSON error body */
+      }
+      throw Exception(
+        'Gemini API error: ${res?.statusCode ?? 'unknown'}$detail',
+      );
     }
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -161,7 +168,8 @@ class GeminiService {
     }
 
     final salvaged =
-        cleaned.replaceAll(RegExp(r',\s*$'), '') + (cleaned.contains('{') ? '}' : '');
+        cleaned.replaceAll(RegExp(r',\s*$'), '') +
+        (cleaned.contains('{') ? '}' : '');
     return tryParse(salvaged) ?? <String, dynamic>{};
   }
 
