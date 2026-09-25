@@ -278,8 +278,9 @@ class TripShare {
   /// Fields kept: name (`n`), coordinates (`lat`/`lng`), category (`c`,
   /// [PlaceCategory.name] — the emoji is derived from it on decode), and,
   /// only when non-empty, address (`addr`), area label (`area`), region
-  /// (`reg`), source attribution (`src`, see [_sourceString]), the English
-  /// description (`note`) and, when set, the restaurant sub-type (`rt`,
+  /// (`reg`), country code (`cc`), source attribution (`src`, see
+  /// [_sourceString]), the English description (`note`) and, when set, the
+  /// restaurant sub-type (`rt`,
   /// [RestaurantType.name]). Dropped: id, photos, favourite flag,
   /// rating/reviewCount/priceRange/award, hours, original caption —
   /// nothing a recipient needs to see the place on a map.
@@ -293,6 +294,7 @@ class TripShare {
       if (p.address.isNotEmpty) 'addr': p.address,
       if (p.areaLabel.isNotEmpty) 'area': p.areaLabel,
       if (p.region.isNotEmpty) 'reg': p.region,
+      if (p.countryCode.isNotEmpty) 'cc': p.countryCode,
       'src': ?source,
       if (p.descriptionEn.isNotEmpty) 'note': p.descriptionEn,
       if (p.restaurantType != null) 'rt': p.restaurantType!.name,
@@ -306,6 +308,7 @@ class TripShare {
       name: json['n'] as String? ?? '',
       areaLabel: json['area'] as String? ?? '',
       region: json['reg'] as String? ?? '',
+      countryCode: (json['cc'] as String? ?? '').toUpperCase(),
       category: PlaceCategory.values.firstWhere(
         (e) => e.name == json['c'],
         orElse: () => PlaceCategory.sightseeing,
@@ -338,6 +341,7 @@ class TripShare {
       if (p.address.isNotEmpty) 'address': p.address,
       if (p.areaLabel.isNotEmpty) 'area': p.areaLabel,
       if (p.region.isNotEmpty) 'region': p.region,
+      if (p.countryCode.isNotEmpty) 'countryCode': p.countryCode,
       'source': ?source,
       if (p.descriptionEn.isNotEmpty) 'note': p.descriptionEn,
       if (p.restaurantType != null) 'restaurantType': p.restaurantType!.name,
@@ -351,6 +355,7 @@ class TripShare {
       name: json['name'] as String? ?? '',
       areaLabel: json['area'] as String? ?? '',
       region: json['region'] as String? ?? '',
+      countryCode: (json['countryCode'] as String? ?? '').toUpperCase(),
       category: PlaceCategory.values.firstWhere(
         (e) => e.name == json['category'],
         orElse: () => PlaceCategory.sightseeing,

@@ -6,6 +6,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Filter the map by location: the ☰ drawer has an "Areas" section under
+  Categories — cities with flag and count (count desc), each expandable to
+  its districts; "Unknown area (N)" for places not resolved yet; counts are
+  over all places, like the category counts. The area filter is ANDed with
+  category/cuisine and search, and shows as its own chip ("Shibuya, Tokyo ·
+  12 ✕") next to the category chip, each with its own ✕.
+- `AreaResolver` (lib/services/area_resolver.dart): background backfill of
+  city → district for places missing them (e.g. My Maps imports) via
+  Nominatim reverse geocoding (English names, zoom 14) — strictly
+  sequential, ≥1.1 s apart, identifying User-Agent, backoff on 429/5xx,
+  gives up after 5 failures in a row or any other 4xx. Starts ~5 s after
+  launch/idle, pauses when the app is backgrounded, resumable; answers
+  (including "nothing here") cached per 4-decimal coordinate in
+  `guest/area_cache.json`. Results are saved in batches (every ~20 s or 50
+  places) via `PlaceStore.updateAreas` → new `PlaceRepository.updateAll`,
+  which on Firestore leaves `savedAt` (feed order) untouched. Existing
+  city/district values (Gemini) are kept. A ~1,650-place backfill is ~30
+  min of foreground time, once. Drawer shows "Finding areas… 320 / 1,650".
+  Mapping rules per country (Tokyo wards, HK/Macau from `ISO3166-2-lvl3`,
+  Korean gu, suffix/macron cleanup) are tested against 12 captured
+  responses in test/fixtures/reverse_geocode/.
+- `Place.countryCode` (ISO2; lenient JSON, `cc`/`countryCode` in the share
+  codecs) and `Place.city`/`district`/`areaDisplay` getters (handle the
+  older "Tokyo, Japan" region format). Detail sheet: the area badge shows
+  "Shibuya, Tokyo" and is tappable to edit City/District by hand.
 - Import from Google My Maps: Boards tab → Import menu ("From a shared trip
   link" / "From Google My Maps"), or share a My Maps link into the app. Paste
   a link (edit/viewer/`/u/N/` or a bare map id; clipboard prefilled), the app

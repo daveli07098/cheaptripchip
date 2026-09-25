@@ -44,6 +44,10 @@ class LocalPlaceRepository implements PlaceRepository {
   @override
   Future<void> upsertAll(List<Place> places) => _collection.upsertAll(places);
 
+  /// Existing places are replaced by id in place, so this is [upsertAll].
+  @override
+  Future<void> updateAll(List<Place> places) => _collection.upsertAll(places);
+
   @override
   Future<void> delete(String id) => _collection.delete(id);
 

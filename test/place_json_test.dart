@@ -328,4 +328,41 @@ void main() {
       expect(noKeywords.effectiveRestaurantType, RestaurantType.other);
     });
   });
+
+  group('Place area fields', () {
+    Place make({String region = '', String area = '', String? cc}) {
+      final json = <String, dynamic>{
+        'id': 'x',
+        'region': region,
+        'areaLabel': area,
+        'countryCode': ?cc,
+      };
+      return Place.fromJson(json);
+    }
+
+    test('countryCode round-trips and is lenient', () {
+      final place = make(region: 'Tokyo', area: 'Shibuya', cc: 'jp');
+      expect(place.countryCode, 'JP');
+      expect(Place.fromJson(place.toJson()).countryCode, 'JP');
+      expect(make().countryCode, '');
+      expect(Place.fromJson({'countryCode': 42}).countryCode, '');
+    });
+
+    test('city/district handle "City, Country", placeholders and copies', () {
+      final gemini = make(region: 'Tokyo, Japan', area: '池袋');
+      expect(gemini.city, 'Tokyo');
+      expect(gemini.district, '池袋');
+      expect(gemini.areaDisplay, '池袋, Tokyo');
+
+      // The extractor copies the region into areaLabel when it has none.
+      final copied = make(region: 'Osaka, Japan', area: 'Osaka, Japan');
+      expect(copied.district, '');
+      expect(copied.areaDisplay, 'Osaka');
+
+      final unknown = make(region: 'Unknown', area: 'Unknown');
+      expect(unknown.city, '');
+      expect(unknown.district, '');
+      expect(unknown.areaDisplay, '');
+    });
+  });
 }

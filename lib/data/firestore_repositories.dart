@@ -99,6 +99,24 @@ class FirestorePlaceRepository implements PlaceRepository {
     }
   }
 
+  /// Bulk edit of existing docs: [WriteBatch]es of [_batchSize] merging
+  /// the full place with only `updatedAt` bumped — `savedAt` is left alone,
+  /// so the feed order doesn't change (see [upsertAll] for why that
+  /// matters).
+  @override
+  Future<void> updateAll(List<Place> places) async {
+    final firestore = FirebaseFirestore.instance;
+    for (var start = 0; start < places.length; start += _batchSize) {
+      final batch = firestore.batch();
+      for (final place in places.skip(start).take(_batchSize)) {
+        final data = place.toJson();
+        data['updatedAt'] = FieldValue.serverTimestamp();
+        batch.set(_collection.doc(place.id), data, SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+  }
+
   @override
   Future<void> delete(String id) => _collection.doc(id).delete();
 }

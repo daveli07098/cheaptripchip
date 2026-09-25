@@ -8,6 +8,7 @@ import '../data/mock_data.dart';
 import '../data/place_search.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
+import '../services/area_resolver.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
 import '../widgets/account_button.dart';
@@ -62,6 +63,15 @@ class _MapScreenState extends State<MapScreen> {
   /// (including "All") clears it back to null.
   RestaurantType? _selectedType;
 
+  /// null = every area. Otherwise only places whose [Place.city] equals
+  /// it — the empty string selects "Unknown area" (no city yet). ANDed with
+  /// the category filter; the drawer's "All" row leaves it alone.
+  String? _selectedCity;
+
+  /// null = the whole [_selectedCity]. Otherwise only places whose
+  /// [Place.district] equals it (always set together with its city).
+  String? _selectedArea;
+
   /// The place currently highlighted on both the map (max z-order + scale)
   /// and the list (scrolled into view + tinted row).
   String? _selectedPlaceId;
@@ -91,6 +101,8 @@ class _MapScreenState extends State<MapScreen> {
           p.effectiveRestaurantType != _selectedType) {
         return false;
       }
+      if (_selectedCity != null && p.city != _selectedCity) return false;
+      if (_selectedArea != null && p.district != _selectedArea) return false;
       return placeMatches(p, query);
     }).toList();
   }
@@ -117,6 +129,34 @@ class _MapScreenState extends State<MapScreen> {
       map[type] = (map[type] ?? 0) + 1;
     }
     return map;
+  }
+
+  /// City → district counts over ALL places (same "not narrowed by
+  /// category or search" choice as [_counts]), cities by count desc then
+  /// name. Places without a city are counted in [_AreaIndex.unknownCount].
+  _AreaIndex _areaIndex(List<Place> all) {
+    final byCity = <String, _CityGroup>{};
+    var unknown = 0;
+    for (final p in all) {
+      final city = p.city;
+      if (city.isEmpty) {
+        unknown++;
+        continue;
+      }
+      final group = byCity.putIfAbsent(city, () => _CityGroup(city));
+      group.count++;
+      if (group.countryCode.isEmpty) group.countryCode = p.countryCode;
+      final district = p.district;
+      if (district.isNotEmpty) {
+        group.districts[district] = (group.districts[district] ?? 0) + 1;
+      }
+    }
+    final cities = byCity.values.toList()
+      ..sort((a, b) {
+        final byCount = b.count.compareTo(a.count);
+        return byCount != 0 ? byCount : a.city.compareTo(b.city);
+      });
+    return _AreaIndex(cities: cities, unknownCount: unknown);
   }
 
   /// How many logical pixels of screen height the list sheet currently
@@ -270,6 +310,7 @@ class _MapScreenState extends State<MapScreen> {
         final brightness = Theme.of(context).brightness;
         final counts = _counts(all);
         final typeCounts = _restaurantTypeCounts(all);
+        final areas = _areaIndex(all);
 
         // If a search/category change dropped the selected pin out of
         // `visible`, clear it — deferred to a post-frame callback since
@@ -318,6 +359,16 @@ class _MapScreenState extends State<MapScreen> {
               setState(() {
                 _selected = PlaceCategory.restaurant;
                 _selectedType = t;
+              });
+              Navigator.of(context).pop();
+            },
+            areas: areas,
+            selectedCity: _selectedCity,
+            selectedArea: _selectedArea,
+            onSelectArea: (city, district) {
+              setState(() {
+                _selectedCity = city;
+                _selectedArea = district;
               });
               Navigator.of(context).pop();
             },
@@ -395,20 +446,50 @@ class _MapScreenState extends State<MapScreen> {
                         setState(() {});
                       },
                     ),
-                    if (_selected != null)
-                      _CategoryChip(
-                        category: _selected!,
-                        type: _selectedType,
-                        // Same "counts are over ALL places, not the search
-                        // results" choice as the drawer (see `_counts`) —
-                        // keeps the number stable while the user types.
-                        count: _selectedType != null
-                            ? (typeCounts[_selectedType] ?? 0)
-                            : (counts[_selected] ?? 0),
-                        onClear: () => setState(() {
-                          _selected = null;
-                          _selectedType = null;
-                        }),
+                    if (_selected != null || _selectedCity != null)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              if (_selected != null)
+                                _CategoryChip(
+                                  category: _selected!,
+                                  type: _selectedType,
+                                  // Same "counts are over ALL places, not
+                                  // the search results" choice as the
+                                  // drawer (see `_counts`) — keeps the
+                                  // number stable while the user types.
+                                  count: _selectedType != null
+                                      ? (typeCounts[_selectedType] ?? 0)
+                                      : (counts[_selected] ?? 0),
+                                  onClear: () => setState(() {
+                                    _selected = null;
+                                    _selectedType = null;
+                                  }),
+                                ),
+                              if (_selectedCity != null)
+                                _AreaChip(
+                                  city: _selectedCity!,
+                                  district: _selectedArea,
+                                  countryCode: areas.countryCodeOf(
+                                    _selectedCity!,
+                                  ),
+                                  count: areas.countOf(
+                                    _selectedCity!,
+                                    _selectedArea,
+                                  ),
+                                  onClear: () => setState(() {
+                                    _selectedCity = null;
+                                    _selectedArea = null;
+                                  }),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -618,54 +699,184 @@ class _CategoryChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final emoji = type?.emoji ?? category.emoji;
     final label = type?.labelEn ?? category.labelEn;
-    return Align(
-      alignment: Alignment.centerLeft,
+    return Material(
+      color: scheme.surface,
+      elevation: 1,
+      borderRadius: BorderRadius.circular(18),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
-        child: Material(
-          color: scheme.surface,
-          elevation: 1,
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Semantics(
-                  label: label,
-                  child: ExcludeSemantics(
-                    child: Text(emoji, style: const TextStyle(fontSize: 14)),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '$label · $count',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Semantics(
-                  button: true,
-                  label: 'Clear category filter',
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: onClear,
-                    child: const Padding(
-                      padding: EdgeInsets.all(3),
-                      child: Icon(Icons.close, size: 15),
-                    ),
-                  ),
-                ),
-              ],
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              label: label,
+              child: ExcludeSemantics(
+                child: Text(emoji, style: const TextStyle(fontSize: 14)),
+              ),
             ),
-          ),
+            const SizedBox(width: 6),
+            Text(
+              '$label · $count',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Semantics(
+              button: true,
+              label: 'Clear category filter',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onClear,
+                child: const Padding(
+                  padding: EdgeInsets.all(3),
+                  child: Icon(Icons.close, size: 15),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// Area counterpart to [_CategoryChip], shown next to it: flag + "Shibuya,
+/// Tokyo · 12" (or just the city, or "Unknown area") with its own ✕ that
+/// clears only the area filter.
+class _AreaChip extends StatelessWidget {
+  const _AreaChip({
+    required this.city,
+    required this.district,
+    required this.countryCode,
+    required this.count,
+    required this.onClear,
+  });
+
+  final String city;
+  final String? district;
+  final String countryCode;
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final label = city.isEmpty
+        ? 'Unknown area'
+        : (district == null ? city : '$district, $city');
+    return Material(
+      color: scheme.surface,
+      elevation: 1,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _AreaLeading(countryCode: countryCode, size: 14),
+            const SizedBox(width: 6),
+            Text(
+              '$label · $count',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Semantics(
+              button: true,
+              label: 'Clear area filter',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onClear,
+                child: const Padding(
+                  padding: EdgeInsets.all(3),
+                  child: Icon(Icons.close, size: 15),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A flag for [countryCode] (wrapped in [Semantics], per the emoji rule),
+/// or a pin icon when the country is unknown.
+class _AreaLeading extends StatelessWidget {
+  const _AreaLeading({required this.countryCode, required this.size});
+
+  final String countryCode;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final flag = flagEmoji(countryCode);
+    if (flag.isEmpty) return Icon(Icons.place_outlined, size: size + 4);
+    return Semantics(
+      label: 'Country: $countryCode',
+      child: ExcludeSemantics(
+        child: Text(flag, style: TextStyle(fontSize: size)),
+      ),
+    );
+  }
+}
+
+/// One city in the drawer's Areas section (see `_areaIndex`).
+class _CityGroup {
+  _CityGroup(this.city);
+
+  final String city;
+  String countryCode = '';
+  int count = 0;
+  final Map<String, int> districts = {};
+
+  /// Districts by count desc, then name.
+  List<MapEntry<String, int>> get sortedDistricts =>
+      districts.entries.toList()..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        return byCount != 0 ? byCount : a.key.compareTo(b.key);
+      });
+}
+
+class _AreaIndex {
+  const _AreaIndex({required this.cities, required this.unknownCount});
+
+  final List<_CityGroup> cities;
+  final int unknownCount;
+
+  _CityGroup? _group(String city) {
+    for (final group in cities) {
+      if (group.city == city) return group;
+    }
+    return null;
+  }
+
+  String countryCodeOf(String city) => _group(city)?.countryCode ?? '';
+
+  /// Places in [city] (and [district], when given); "" = Unknown area.
+  int countOf(String city, String? district) {
+    if (city.isEmpty) return unknownCount;
+    final group = _group(city);
+    if (group == null) return 0;
+    return district == null ? group.count : (group.districts[district] ?? 0);
+  }
+}
+
+/// "1,650" — thousands separators without pulling in package:intl.
+String _formatCount(int n) {
+  final digits = '$n';
+  final buffer = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
+    buffer.write(digits[i]);
+  }
+  return buffer.toString();
 }
 
 /// Left drawer listing "All" plus every category present, with counts.
@@ -681,6 +892,10 @@ class _CategoryDrawer extends StatelessWidget {
     required this.restaurantTypeCounts,
     required this.selectedType,
     required this.onSelectType,
+    required this.areas,
+    required this.selectedCity,
+    required this.selectedArea,
+    required this.onSelectArea,
   });
 
   final Map<PlaceCategory, int> counts;
@@ -690,6 +905,13 @@ class _CategoryDrawer extends StatelessWidget {
   final Map<RestaurantType, int> restaurantTypeCounts;
   final RestaurantType? selectedType;
   final ValueChanged<RestaurantType> onSelectType;
+  final _AreaIndex areas;
+  final String? selectedCity;
+  final String? selectedArea;
+
+  /// (city, district): (null, null) = all areas, ("", null) = unknown,
+  /// (city, null) = a whole city, (city, district) = one district.
+  final void Function(String? city, String? district) onSelectArea;
 
   @override
   Widget build(BuildContext context) {
@@ -741,6 +963,42 @@ class _CategoryDrawer extends StatelessWidget {
                   selected: selected == entry.key,
                   onTap: () => onSelect(entry.key),
                 ),
+            const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                'Areas',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            const _AreaProgressLine(),
+            _CategoryTile(
+              leading: const Icon(Icons.public),
+              label: 'All areas',
+              count: total,
+              color: AppTheme.coral,
+              selected: selectedCity == null,
+              onTap: () => onSelectArea(null, null),
+            ),
+            for (final group in areas.cities)
+              _CityTile(
+                group: group,
+                selected: selectedCity == group.city,
+                selectedDistrict: selectedCity == group.city
+                    ? selectedArea
+                    : null,
+                onSelectCity: () => onSelectArea(group.city, null),
+                onSelectDistrict: (d) => onSelectArea(group.city, d),
+              ),
+            if (areas.unknownCount > 0)
+              _CategoryTile(
+                leading: const Icon(Icons.help_outline),
+                label: 'Unknown area',
+                count: areas.unknownCount,
+                color: AppTheme.coral,
+                selected: selectedCity == '',
+                onTap: () => onSelectArea('', null),
+              ),
             const Divider(height: 24),
             // Moved here from the map's floating row (commit ec3b355) so the
             // search pill can stay a single, uninterrupted control.
@@ -931,6 +1189,160 @@ class _RestaurantCategoryTileState extends State<_RestaurantCategoryTile> {
                 ),
                 trailing: Text('${widget.typeCounts[type] ?? 0}'),
                 onTap: () => widget.onSelectType(type),
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+/// "Finding areas… 320 / 1,650" + a thin bar while [AreaResolver] is
+/// backfilling cities/districts; nothing otherwise.
+class _AreaProgressLine extends StatelessWidget {
+  const _AreaProgressLine();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AreaProgress>(
+      valueListenable: AreaResolver.instance.progress,
+      builder: (context, progress, _) {
+        if (!progress.running || progress.total == 0) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Finding areas… ${_formatCount(progress.done)} / '
+                '${_formatCount(progress.total)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 6),
+              LinearProgressIndicator(
+                value: progress.done / progress.total,
+                minHeight: 3,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// City row in the drawer's Areas section: flag + city + count, expandable
+/// (same pattern as [_RestaurantCategoryTile]) to its districts by count.
+/// Tapping the row filters to the city; a district row to that district.
+class _CityTile extends StatefulWidget {
+  const _CityTile({
+    required this.group,
+    required this.selected,
+    required this.selectedDistrict,
+    required this.onSelectCity,
+    required this.onSelectDistrict,
+  });
+
+  final _CityGroup group;
+  final bool selected;
+  final String? selectedDistrict;
+  final VoidCallback onSelectCity;
+  final ValueChanged<String> onSelectDistrict;
+
+  @override
+  State<_CityTile> createState() => _CityTileState();
+}
+
+class _CityTileState extends State<_CityTile> {
+  late bool _expanded = widget.selectedDistrict != null;
+
+  @override
+  void didUpdateWidget(covariant _CityTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedDistrict != null &&
+        widget.selectedDistrict != oldWidget.selectedDistrict) {
+      _expanded = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = AppTheme.coral;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final districts = widget.group.sortedDistricts;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+            ),
+            selected: widget.selected && widget.selectedDistrict == null,
+            selectedTileColor: color.withValues(alpha: 0.16),
+            selectedColor: onSurface,
+            leading: SizedBox(
+              width: 28,
+              child: Center(
+                child: _AreaLeading(
+                  countryCode: widget.group.countryCode,
+                  size: 20,
+                ),
+              ),
+            ),
+            title: Text(
+              widget.group.city,
+              style: TextStyle(
+                fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${widget.group.count}'),
+                if (districts.isNotEmpty)
+                  IconButton(
+                    icon: Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    tooltip: _expanded
+                        ? 'Hide ${widget.group.city} districts'
+                        : 'Show ${widget.group.city} districts',
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                  ),
+              ],
+            ),
+            onTap: widget.onSelectCity,
+          ),
+        ),
+        if (_expanded)
+          for (final entry in districts)
+            Padding(
+              padding: const EdgeInsets.only(left: 20, right: 12, top: 2),
+              child: ListTile(
+                dense: true,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                selected: widget.selectedDistrict == entry.key,
+                selectedTileColor: color.withValues(alpha: 0.12),
+                selectedColor: onSurface,
+                leading: const SizedBox(
+                  width: 24,
+                  child: Icon(Icons.subdirectory_arrow_right, size: 16),
+                ),
+                title: Text(
+                  entry.key,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: widget.selectedDistrict == entry.key
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                ),
+                trailing: Text('${entry.value}'),
+                onTap: () => widget.onSelectDistrict(entry.key),
               ),
             ),
       ],

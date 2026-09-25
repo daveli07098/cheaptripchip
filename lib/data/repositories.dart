@@ -11,6 +11,11 @@ abstract class PlaceRepository {
   /// Saves many places at once (bulk import) — one change event / batched
   /// writes instead of [upsert] per place.
   Future<void> upsertAll(List<Place> places);
+
+  /// Saves edits to many places that already exist (e.g. the area
+  /// backfill) in one change event / batched writes. Unlike [upsertAll] it
+  /// never resets the "first saved" ordering marker.
+  Future<void> updateAll(List<Place> places);
   Future<void> delete(String id);
 }
 

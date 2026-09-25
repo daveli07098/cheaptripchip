@@ -9,6 +9,7 @@ import '../data/photo_store.dart';
 import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
+import '../models/place_area.dart';
 import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/place_photo.dart';
@@ -86,7 +87,7 @@ class PlaceDetailSheet extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _AreaBadge(label: place.areaLabel, color: color),
+                _AreaBadge(place: place, color: color),
                 const SizedBox(height: 12),
                 Text(
                   place.name,
@@ -281,35 +282,158 @@ class _PhotoButtons extends StatelessWidget {
   }
 }
 
+/// "Shibuya, Tokyo" location badge (district, city — whichever are known;
+/// the raw area label for older places that only have that). Live like
+/// [_RestaurantTypeChip]: re-reads the place from [PlaceStore] so the
+/// background area backfill or a manual edit shows up immediately. Tap to
+/// correct the city/district by hand via [_AreaDialog].
 class _AreaBadge extends StatelessWidget {
-  const _AreaBadge({required this.label, required this.color});
+  const _AreaBadge({required this.place, required this.color});
 
-  final String label;
+  final Place place;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(20),
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) {
+        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+        final display = current.areaDisplay.isNotEmpty
+            ? current.areaDisplay
+            : current.areaLabel.trim();
+        final label = display.isEmpty ? 'Add area' : display;
+        return Semantics(
+          button: true,
+          label: 'Area: $label. Tap to edit.',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _edit(context, current),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: ExcludeSemantics(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.place, size: 14, color: color),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.edit_outlined, size: 13, color: color),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _edit(BuildContext context, Place current) async {
+    final result = await showDialog<PlaceArea>(
+      context: context,
+      builder: (_) => _AreaDialog(
+        city: current.city,
+        district: current.district.isNotEmpty
+            ? current.district
+            : (current.city.isEmpty ? current.areaLabel.trim() : ''),
+        countryCode: current.countryCode,
       ),
-      child: Row(
+    );
+    // The dialog already popped itself — no BuildContext use after this.
+    if (result == null) return;
+    await PlaceStore.instance.updateAreas({current.id: result});
+  }
+}
+
+/// City + District editor, opened by [_AreaBadge]. Pops with the new
+/// [PlaceArea] on Save (keeping the country code), `null` on Cancel. Owns
+/// its controllers for the same reason as [_NotesDialog].
+class _AreaDialog extends StatefulWidget {
+  const _AreaDialog({
+    required this.city,
+    required this.district,
+    required this.countryCode,
+  });
+
+  final String city;
+  final String district;
+  final String countryCode;
+
+  @override
+  State<_AreaDialog> createState() => _AreaDialogState();
+}
+
+class _AreaDialogState extends State<_AreaDialog> {
+  late final _city = TextEditingController(text: widget.city);
+  late final _district = TextEditingController(text: widget.district);
+
+  @override
+  void dispose() {
+    _city.dispose();
+    _district.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Area'),
+      content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.place, size: 14, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
+          TextField(
+            controller: _city,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'City',
+              hintText: 'e.g. Tokyo',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _district,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'District',
+              hintText: 'e.g. Shibuya',
             ),
           ),
         ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            PlaceArea(
+              city: _city.text.trim(),
+              district: _district.text.trim(),
+              countryCode: widget.countryCode,
+            ),
+          ),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

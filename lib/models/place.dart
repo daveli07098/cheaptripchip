@@ -31,6 +31,7 @@ class Place {
     this.myNotes = '',
     this.myPhotoAt,
     this.restaurantType,
+    this.countryCode = '',
   });
 
   final String id;
@@ -41,7 +42,10 @@ class Place {
   /// Short area tag shown as a badge (e.g. "池袋").
   final String areaLabel;
 
-  /// Human region label (e.g. "Tokyo, Japan").
+  /// City-level label. Places resolved by AreaResolver
+  /// (lib/services/area_resolver.dart) store just the city ("Tokyo",
+  /// "Hong Kong"); older Gemini extractions store "City, Country"
+  /// ("Tokyo, Japan"). Group/filter on [city], which handles both.
   final String region;
 
   final PlaceCategory category;
@@ -111,6 +115,32 @@ class Place {
   /// [effectiveRestaurantType] for the display-time default, and
   /// [copyWith]'s `clearRestaurantType` for how to reset it.
   final RestaurantType? restaurantType;
+
+  /// ISO 3166-1 alpha-2 country code, upper-case ("JP", "HK", "TW"), used
+  /// for the flag and grouping in the map drawer's Areas section. Empty when
+  /// unknown (e.g. not reverse-geocoded yet).
+  final String countryCode;
+
+  /// The city part of [region] ("Tokyo, Japan" → "Tokyo"); empty when
+  /// [region] is empty or the extractor's "Unknown" placeholder.
+  String get city {
+    final value = region.split(',').first.trim();
+    return value.toLowerCase() == 'unknown' ? '' : value;
+  }
+
+  /// [areaLabel] as a district under [city]; empty when unset, the
+  /// "Unknown" placeholder, or just a copy of the region (the extractor
+  /// falls back to the region when Gemini returns no area).
+  String get district {
+    final value = areaLabel.trim();
+    if (value.isEmpty || value.toLowerCase() == 'unknown') return '';
+    if (value == region.trim() || value == city) return '';
+    return value;
+  }
+
+  /// "Shibuya, Tokyo", or whichever part is known; empty when neither is.
+  String get areaDisplay =>
+      [district, city].where((s) => s.isNotEmpty).join(', ');
 
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
@@ -185,6 +215,7 @@ class Place {
 
     /// Same as `clearMyScore`, for [Place.restaurantType].
     bool clearRestaurantType = false,
+    String? countryCode,
   }) {
     return Place(
       id: id ?? this.id,
@@ -212,6 +243,7 @@ class Place {
       restaurantType: clearRestaurantType
           ? null
           : (restaurantType ?? this.restaurantType),
+      countryCode: countryCode ?? this.countryCode,
     );
   }
 
@@ -245,6 +277,7 @@ class Place {
       // leaks into the model.
       'myPhotoAt': myPhotoAt?.toUtc().toIso8601String(),
       'restaurantType': restaurantType?.name,
+      'countryCode': countryCode,
     };
   }
 
@@ -290,6 +323,9 @@ class Place {
       myNotes: json['myNotes'] is String ? json['myNotes'] as String : '',
       myPhotoAt: _parseMyPhotoAt(json['myPhotoAt']),
       restaurantType: _parseRestaurantType(json['restaurantType']),
+      countryCode: json['countryCode'] is String
+          ? (json['countryCode'] as String).toUpperCase()
+          : '',
     );
   }
 

@@ -6,6 +6,7 @@ import 'data/photo_store.dart';
 import 'data/place_store.dart';
 import 'firebase_options.dart';
 import 'screens/home_shell.dart';
+import 'services/area_resolver.dart';
 import 'services/auth_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
@@ -23,6 +24,9 @@ Future<void> main() async {
   AuthService.instance.start();
   AuthService.instance.user.addListener(_bindStores);
   _bindStores();
+  // Reverse-geocodes city/district for places that lack them, in the
+  // background once the app has been idle a few seconds (see AreaResolver).
+  AreaResolver.instance.start();
   runApp(const CheapTripChipApp());
 }
 

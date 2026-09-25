@@ -94,6 +94,13 @@ void main() {
       expect(decoded.places.single.restaurantType, RestaurantType.izakaya);
     });
 
+    test('preserves the country code (cc)', () {
+      final original = _place().copyWith(countryCode: 'HK');
+      final bundle = TripBundle(title: 'HK', places: [original]);
+      final decoded = TripShare.fromAppLink(TripShare.toAppLink(bundle))!;
+      expect(decoded.places.single.countryCode, 'HK');
+    });
+
     test(
       'an old link without the rt field decodes with restaurantType null',
       () {

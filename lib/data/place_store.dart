@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/place.dart';
+import '../models/place_area.dart';
 import '../services/auth_service.dart';
 import 'firestore_repositories.dart';
 import 'guest_storage.dart';
@@ -84,6 +85,46 @@ class PlaceStore {
     if (newPlaces.isEmpty) return;
     places.value = [...newPlaces, ...places.value];
     await _repository.upsertAll(newPlaces);
+  }
+
+  /// Firestore chunk size for [updateAreas] — a flush is a few small
+  /// batched writes rather than one huge one.
+  static const areaWriteChunk = 50;
+
+  /// Sets [Place.region]/[Place.areaLabel]/[Place.countryCode] for many
+  /// places at once — the area backfill (AreaResolver) and the detail
+  /// sheet's manual edit. Values are written as given (callers decide what
+  /// to keep); unknown ids and no-op entries are skipped. One [places]
+  /// update, then [PlaceRepository.updateAll] (which, unlike [addAll],
+  /// keeps the feed order) in chunks of [areaWriteChunk].
+  Future<void> updateAreas(Map<String, PlaceArea> areas) async {
+    if (areas.isEmpty) return;
+    final changed = <Place>[];
+    final next = <Place>[];
+    for (final place in places.value) {
+      final area = areas[place.id];
+      if (area == null ||
+          (area.city == place.region &&
+              area.district == place.areaLabel &&
+              area.countryCode == place.countryCode)) {
+        next.add(place);
+        continue;
+      }
+      final updated = place.copyWith(
+        region: area.city,
+        areaLabel: area.district,
+        countryCode: area.countryCode,
+      );
+      changed.add(updated);
+      next.add(updated);
+    }
+    if (changed.isEmpty) return;
+    places.value = next;
+    for (var start = 0; start < changed.length; start += areaWriteChunk) {
+      await _repository.updateAll(
+        changed.skip(start).take(areaWriteChunk).toList(),
+      );
+    }
   }
 
   /// Flips [Place.isFavorite] for the place with the given [id], replacing it
