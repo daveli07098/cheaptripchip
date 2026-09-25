@@ -2,7 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../data/mock_data.dart';
 import '../data/place_search.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
@@ -67,6 +69,14 @@ class _MapScreenState extends State<MapScreen> {
   /// Whether the floating [PlacePreviewCard] is shown for [_selectedPlaceId].
   /// Only pin taps raise it; list selection and empty-map taps clear it.
   bool _previewVisible = false;
+
+  /// Whether the camera has been fitted to real places yet. Guest places
+  /// load from disk after the first frame, so the map can start empty and
+  /// must fit once they arrive.
+  bool _fittedToPlaces = false;
+
+  /// Set once FlutterMap has laid out; before that the controller can't move.
+  bool _mapReady = false;
 
   /// Category filter AND free-text search (via [placeMatches]) — search
   /// terms are matched across name/area/region/address/description/notes/
@@ -176,13 +186,8 @@ class _MapScreenState extends State<MapScreen> {
   /// padding the bottom by the sheet's current height so the fit result
   /// isn't computed as if that space were still available.
   void _focusCluster(BuildContext context, PlaceCluster cluster) {
-    _mapController.fitCamera(
-      CameraFit.coordinates(
-        coordinates: [for (final p in cluster.places) p.location],
-        padding: EdgeInsets.fromLTRB(48, 96, 48, 48 + _sheetPixels(context)),
-        maxZoom: 17,
-      ),
-    );
+    final fit = _fitFor(context, cluster.places);
+    if (fit != null) _mapController.fitCamera(fit);
   }
 
   /// Keyboard "search" action: unfocus and, like [_focusCluster], fit the
@@ -197,14 +202,41 @@ class _MapScreenState extends State<MapScreen> {
       _selectFromList(context, matches.first);
       return;
     }
-    _mapController.fitCamera(
-      CameraFit.coordinates(
-        coordinates: [for (final p in matches) p.location],
-        padding: EdgeInsets.fromLTRB(48, 96, 48, 48 + _sheetPixels(context)),
+    final fit = _fitFor(context, matches);
+    if (fit != null) _mapController.fitCamera(fit);
+  }
+
+  /// A camera fit for [points], or null when there's nothing valid to fit.
+  /// Fitting an empty list yields a NaN camera and a red screen, so callers
+  /// must handle null; non-finite coordinates are ignored for the same reason.
+  CameraFit? _fitFor(BuildContext context, Iterable<Place> places) {
+    final points = [
+      for (final p in places)
+        if (_isFinite(p)) p.location,
+    ];
+    if (points.isEmpty) return null;
+    final padding = EdgeInsets.fromLTRB(48, 96, 48, 48 + _sheetPixels(context));
+    if (points.length == 1) {
+      // A single point has zero-size bounds; fit a small box around it.
+      final c = points.first;
+      return CameraFit.bounds(
+        bounds: LatLngBounds(
+          LatLng(c.latitude - 0.005, c.longitude - 0.005),
+          LatLng(c.latitude + 0.005, c.longitude + 0.005),
+        ),
+        padding: padding,
         maxZoom: 17,
-      ),
+      );
+    }
+    return CameraFit.coordinates(
+      coordinates: points,
+      padding: padding,
+      maxZoom: 17,
     );
   }
+
+  static bool _isFinite(Place p) =>
+      p.location.latitude.isFinite && p.location.longitude.isFinite;
 
   @override
   void dispose() {
@@ -218,8 +250,23 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<Place>>(
       valueListenable: PlaceStore.instance.places,
-      builder: (context, all, _) {
+      builder: (context, loaded, _) {
+        // Drop places with non-finite coordinates: one NaN pin would crash
+        // the map's camera and tile layer.
+        final all = loaded.where(_isFinite).toList();
         final visible = _visible(all);
+        final initialFit = _fitFor(context, all);
+        if (!_fittedToPlaces && initialFit != null) {
+          // First frame with places: if the map started empty (places were
+          // still loading), fit once now that they're here.
+          final startedEmpty = !_fittedToPlaces && _mapReady;
+          _fittedToPlaces = true;
+          if (startedEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _mapController.fitCamera(initialFit);
+            });
+          }
+        }
         final brightness = Theme.of(context).brightness;
         final counts = _counts(all);
         final typeCounts = _restaurantTypeCounts(all);
@@ -289,16 +336,11 @@ class _MapScreenState extends State<MapScreen> {
                   // resolved against the map's actual layout size, so — like
                   // those two — it's computed with the sheet's current height
                   // padded out from the bottom so no pin lands underneath it.
-                  initialCameraFit: CameraFit.coordinates(
-                    coordinates: [for (final p in all) p.location],
-                    padding: EdgeInsets.fromLTRB(
-                      48,
-                      96,
-                      48,
-                      48 + _sheetPixels(context),
-                    ),
-                    maxZoom: 17,
-                  ),
+                  initialCameraFit: initialFit,
+                  // Used only when there are no places yet (initialFit null).
+                  initialCenter: MockData.tokyoCenter,
+                  initialZoom: 11,
+                  onMapReady: () => _mapReady = true,
                   minZoom: 3,
                   maxZoom: 18,
                   // Tapping the map (not a pin/cluster) drops keyboard focus
