@@ -17,6 +17,7 @@ import '../widgets/account_button.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
 import '../widgets/my_maps_import_sheet.dart';
+import '../widgets/new_board_dialog.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -295,16 +296,25 @@ class _HomeShellState extends State<HomeShell> {
       ),
       // The map tab surfaces its own "Add a find" button in the sheet
       // header (so it stays reachable at any drag extent and doesn't cover
-      // the sheet/attribution); other tabs keep the FAB.
-      floatingActionButton: _index == 0
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () => _openAddSheet(),
-              backgroundColor: AppTheme.coral,
-              foregroundColor: Theme.of(context).colorScheme.onPrimary,
-              icon: const Icon(Icons.add_link),
-              label: const Text('Add a find'),
-            ),
+      // the sheet/attribution); Saved keeps the "Add a find" FAB; Boards
+      // gets a "New board" FAB instead (its own creation flow, not a find).
+      floatingActionButton: switch (_index) {
+        0 => null,
+        2 => FloatingActionButton.extended(
+          onPressed: () => NewBoardDialog.showAndContinue(context),
+          backgroundColor: AppTheme.coral,
+          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          icon: const Icon(Icons.add),
+          label: const Text('New board'),
+        ),
+        _ => FloatingActionButton.extended(
+          onPressed: () => _openAddSheet(),
+          backgroundColor: AppTheme.coral,
+          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          icon: const Icon(Icons.add_link),
+          label: const Text('Add a find'),
+        ),
+      },
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),

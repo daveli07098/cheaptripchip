@@ -226,6 +226,68 @@ class BoardStore {
     return removedFrom;
   }
 
+  /// Applies [add]/[remove] place ids to board [boardId] in a single
+  /// repository write — used by AddPlacesSheet, where a loop of
+  /// [addPlaceToBoard]/[removePlaceFromBoard] calls (each of which reads
+  /// back [boards] and upserts) would issue one write per toggled place
+  /// instead of one for the whole batch. [remove] ids are dropped from every
+  /// section (pruning any section left empty, same rule as
+  /// [removePlaceFromBoard]); [add] ids are then folded in, each landing in
+  /// the section titled by the place's `category.labelEn` (falling back to
+  /// 'Saved' if unknown) — same resolution as [addPlaceToBoard]. A place id
+  /// in both sets is treated as a removal (it ends up out of the board).
+  /// No-op if the board doesn't exist or both sets are empty.
+  Future<void> updateBoardPlaces({
+    required String boardId,
+    required Set<String> add,
+    required Set<String> remove,
+  }) async {
+    final board = byIdOrNull(boardId);
+    if (board == null) return;
+    if (add.isEmpty && remove.isEmpty) return;
+
+    var sections = [
+      for (final section in board.sections)
+        section.copyWith(
+          placeIds: section.placeIds
+              .where((id) => !remove.contains(id))
+              .toList(),
+        ),
+    ].where((section) => section.placeIds.isNotEmpty).toList();
+
+    final alreadyIn = <String>{
+      for (final section in sections) ...section.placeIds,
+    };
+    for (final placeId in add) {
+      if (remove.contains(placeId) || alreadyIn.contains(placeId)) continue;
+      final title =
+          PlaceStore.instance.byIdOrNull(placeId)?.category.labelEn ?? 'Saved';
+      final index = sections.indexWhere((section) => section.title == title);
+      if (index == -1) {
+        sections = [
+          ...sections,
+          BoardSection(title: title, placeIds: [placeId]),
+        ];
+      } else {
+        sections = [
+          for (var i = 0; i < sections.length; i++)
+            if (i == index)
+              sections[i].copyWith(placeIds: [...sections[i].placeIds, placeId])
+            else
+              sections[i],
+        ];
+      }
+      alreadyIn.add(placeId);
+    }
+
+    final updated = board.copyWith(sections: sections);
+    boards.value = [
+      for (final b in boards.value)
+        if (b.id == boardId) updated else b,
+    ];
+    await _repository.upsert(updated);
+  }
+
   /// True if board [boardId] has any section containing [placeId].
   bool containsPlace(String boardId, String placeId) {
     final board = byIdOrNull(boardId);

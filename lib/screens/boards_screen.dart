@@ -7,7 +7,9 @@ import '../models/board.dart';
 import '../models/place.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
+import '../widgets/add_places_sheet.dart';
 import '../widgets/export_sheet.dart';
+import '../widgets/new_board_dialog.dart';
 import 'place_detail_sheet.dart';
 
 /// Boards (ANALYSIS.md §5): Board → Section → Item hierarchy, expandable.
@@ -74,6 +76,16 @@ class _EmptyBoardsState extends StatelessWidget {
                 color: onSurfaceVariant.withValues(alpha: 0.6),
               ),
             ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: () => NewBoardDialog.showAndContinue(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Create your first board'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.coral,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              ),
+            ),
           ],
         ),
       ),
@@ -126,7 +138,7 @@ class _BoardCard extends StatefulWidget {
   State<_BoardCard> createState() => _BoardCardState();
 }
 
-enum _BoardMenuAction { share, rename, delete }
+enum _BoardMenuAction { share, addPlaces, rename, delete }
 
 class _BoardCardState extends State<_BoardCard> {
   late bool _expanded = widget.board.id == 'b1';
@@ -197,6 +209,14 @@ class _BoardCardState extends State<_BoardCard> {
                   ),
                   if (!_isAuto) ...[
                     const PopupMenuItem(
+                      value: _BoardMenuAction.addPlaces,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.playlist_add),
+                        title: Text('Add places…'),
+                      ),
+                    ),
+                    const PopupMenuItem(
                       value: _BoardMenuAction.rename,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -254,6 +274,8 @@ class _BoardCardState extends State<_BoardCard> {
     switch (action) {
       case _BoardMenuAction.share:
         ExportSheet.show(context, _bundle());
+      case _BoardMenuAction.addPlaces:
+        await AddPlacesSheet.show(context, widget.board);
       case _BoardMenuAction.rename:
         await _renameBoard(context);
       case _BoardMenuAction.delete:
