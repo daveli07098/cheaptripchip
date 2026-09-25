@@ -3,13 +3,18 @@ import 'package:flutter/semantics.dart';
 
 import '../data/board_store.dart';
 import '../data/place_store.dart';
+import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
+import '../models/shared_board.dart';
+import '../services/auth_service.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_places_sheet.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/new_board_dialog.dart';
+import '../widgets/sharing_sheet.dart';
+import 'account_sheet.dart';
 import 'place_detail_sheet.dart';
 
 /// Boards (ANALYSIS.md §5): Board → Section → Item hierarchy, expandable.
@@ -18,26 +23,57 @@ class BoardsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, places, _) {
-        return ValueListenableBuilder<List<Board>>(
-          valueListenable: BoardStore.instance.boards,
-          builder: (context, storeBoards, _) {
-            final placesById = {for (final p in places) p.id: p};
-            final autoBoard = newFindsBoard(places, storeBoards);
-            final boards = [?autoBoard, ...storeBoards];
-            if (boards.isEmpty) return const _EmptyBoardsState();
-            return ListView.separated(
-              // Bottom padding keeps the last board clear of the floating
-              // "Add a find" button.
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              itemCount: boards.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, i) =>
-                  _BoardCard(board: boards[i], placesById: placesById),
-            );
-          },
+    final shared = SharedBoardStore.instance;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        PlaceStore.instance.places,
+        BoardStore.instance.boards,
+        shared.boards,
+        shared.places,
+      ]),
+      builder: (context, _) {
+        final places = PlaceStore.instance.places.value;
+        final storeBoards = BoardStore.instance.boards.value;
+        final sharedBoards = shared.boards.value;
+        final placesById = {for (final p in places) p.id: p};
+        // Shared boards count as "referenced" too — otherwise sharing a
+        // board would drop the owner's places back into "New finds".
+        final autoBoard = newFindsBoard(places, [
+          ...storeBoards,
+          for (final board in sharedBoards) board.board,
+        ]);
+        final cards = <Widget>[
+          if (autoBoard != null)
+            _BoardCard(
+              key: const ValueKey('auto'),
+              board: autoBoard,
+              placesById: placesById,
+              permissions: BoardPermissions.auto,
+            ),
+          for (final board in sharedBoards)
+            _BoardCard(
+              key: ValueKey('shared/${board.id}'),
+              board: board.board,
+              placesById: shared.placesOf(board.id),
+              shared: board,
+              permissions: BoardPermissions.forRole(board.roleOf(shared.uid)),
+            ),
+          for (final board in storeBoards)
+            _BoardCard(
+              key: ValueKey('personal/${board.id}'),
+              board: board,
+              placesById: placesById,
+              permissions: BoardPermissions.personal,
+            ),
+        ];
+        if (cards.isEmpty) return const _EmptyBoardsState();
+        return ListView.separated(
+          // Bottom padding keeps the last board clear of the floating
+          // "Add a find" button.
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+          itemCount: cards.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, i) => cards[i],
         );
       },
     );
@@ -129,16 +165,39 @@ Board? newFindsBoard(List<Place> places, List<Board> boards) {
 }
 
 class _BoardCard extends StatefulWidget {
-  const _BoardCard({required this.board, required this.placesById});
+  const _BoardCard({
+    super.key,
+    required this.board,
+    required this.placesById,
+    required this.permissions,
+    this.shared,
+  });
 
   final Board board;
+
+  /// Resolves the board's place ids: the user's Saved places for personal
+  /// boards, the board's own place copies for shared ones.
   final Map<String, Place> placesById;
+
+  /// What the user may do here — gates every edit affordance.
+  final BoardPermissions permissions;
+
+  /// Set for collaborative boards (see SharedBoardStore).
+  final SharedBoard? shared;
 
   @override
   State<_BoardCard> createState() => _BoardCardState();
 }
 
-enum _BoardMenuAction { share, addPlaces, rename, delete }
+enum _BoardMenuAction {
+  sendCopy,
+  shareBoard,
+  sharing,
+  addPlaces,
+  rename,
+  delete,
+  leave,
+}
 
 class _BoardCardState extends State<_BoardCard> {
   late bool _expanded = widget.board.id == 'b1';
@@ -146,6 +205,22 @@ class _BoardCardState extends State<_BoardCard> {
   /// The auto-generated "New finds" board (see [kNewFindsBoardId]) isn't a
   /// stored [Board] — it never offers rename/delete/remove-place.
   bool get _isAuto => widget.board.id == kNewFindsBoardId;
+
+  SharedBoard? get _shared => widget.shared;
+  BoardPermissions get _can => widget.permissions;
+
+  /// "Shared · 3 people" for the owner; "Shared by Ann · View only" for
+  /// everyone else.
+  String? get _sharedBadge {
+    final shared = _shared;
+    if (shared == null) return null;
+    final role = shared.roleOf(SharedBoardStore.instance.uid);
+    if (role == BoardRole.owner) {
+      final n = shared.memberCount;
+      return 'Shared · $n ${n == 1 ? 'person' : 'people'}';
+    }
+    return 'Shared by ${shared.ownerName} · ${role?.label ?? ''}';
+  }
 
   /// The board's places in section order, skipping ids that no longer
   /// resolve against the live store (same rule as [_SectionBlock]).
@@ -179,13 +254,44 @@ class _BoardCardState extends State<_BoardCard> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
           ),
-          subtitle: Text(
-            '${board.sections.length} ${board.sections.length == 1 ? 'section' : 'sections'} · ${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
-            style: TextStyle(
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-            ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${board.sections.length} ${board.sections.length == 1 ? 'section' : 'sections'} · ${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+              if (_sharedBadge case final badge?)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.group_outlined,
+                        size: 14,
+                        color: AppTheme.coral,
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          badge,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.coral,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
           // A custom trailing replaces ExpansionTile's chevron. Share (and,
           // for stored boards, Rename/Delete) live in a single ⋮ menu rather
@@ -198,50 +304,7 @@ class _BoardCardState extends State<_BoardCard> {
                 tooltip: 'Board options',
                 icon: const Icon(Icons.more_vert, size: 20),
                 onSelected: (action) => _handleMenuAction(context, action),
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: _BoardMenuAction.share,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.ios_share),
-                      title: Text('Share'),
-                    ),
-                  ),
-                  if (!_isAuto) ...[
-                    const PopupMenuItem(
-                      value: _BoardMenuAction.addPlaces,
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.playlist_add),
-                        title: Text('Add places…'),
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: _BoardMenuAction.rename,
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.edit_outlined),
-                        title: Text('Rename'),
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: _BoardMenuAction.delete,
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          Icons.delete_outline,
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                        title: Text(
-                          'Delete',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                itemBuilder: (context) => _menuItems(context),
               ),
               ExcludeSemantics(
                 child: AnimatedRotation(
@@ -259,7 +322,9 @@ class _BoardCardState extends State<_BoardCard> {
                 boardName: board.name,
                 section: section,
                 placesById: placesById,
-                isAuto: _isAuto,
+                canRemove: _can.canEditPlaces,
+                canSaveCopies: _can.canSaveCopies,
+                shared: _shared != null,
               ),
           ],
         ),
@@ -272,15 +337,178 @@ class _BoardCardState extends State<_BoardCard> {
     _BoardMenuAction action,
   ) async {
     switch (action) {
-      case _BoardMenuAction.share:
+      case _BoardMenuAction.sendCopy:
         ExportSheet.show(context, _bundle());
+      case _BoardMenuAction.shareBoard:
+        await _shareBoard(context);
+      case _BoardMenuAction.sharing:
+        await SharingSheet.show(context, widget.board.id);
       case _BoardMenuAction.addPlaces:
-        await AddPlacesSheet.show(context, widget.board);
+        final shared = _shared;
+        await AddPlacesSheet.show(
+          context,
+          widget.board,
+          onApply: shared == null
+              ? null
+              : (add, remove) => SharedBoardStore.instance.updateFromSaved(
+                  shared.id,
+                  add: add,
+                  remove: remove,
+                ),
+        );
       case _BoardMenuAction.rename:
         await _renameBoard(context);
       case _BoardMenuAction.delete:
-        await _deleteBoard(context);
+        if (_shared == null) {
+          await _deleteBoard(context);
+        } else {
+          await _deleteSharedBoard(context);
+        }
+      case _BoardMenuAction.leave:
+        await SharingSheet.confirmLeave(context, _shared!);
     }
+  }
+
+  /// ⋮ entries by role: personal boards get Share board…, shared boards
+  /// Sharing settings…/info; edit entries only where [_can] allows.
+  List<PopupMenuEntry<_BoardMenuAction>> _menuItems(BuildContext context) {
+    final error = Theme.of(context).colorScheme.error;
+    PopupMenuItem<_BoardMenuAction> item(
+      _BoardMenuAction value,
+      IconData icon,
+      String label, {
+      Color? color,
+    }) {
+      return PopupMenuItem(
+        value: value,
+        child: ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(icon, color: color),
+          title: Text(label, style: TextStyle(color: color)),
+        ),
+      );
+    }
+
+    final shared = _shared;
+    return [
+      if (shared != null)
+        item(
+          _BoardMenuAction.sharing,
+          Icons.group_outlined,
+          _can.canManage ? 'Sharing settings…' : 'Sharing info',
+        )
+      else if (!_isAuto)
+        item(_BoardMenuAction.shareBoard, Icons.person_add_alt, 'Share board…'),
+      item(_BoardMenuAction.sendCopy, Icons.ios_share, 'Send a copy'),
+      if (!_isAuto && _can.canEditPlaces)
+        item(_BoardMenuAction.addPlaces, Icons.playlist_add, 'Add places…'),
+      if (!_isAuto && _can.canManage) ...[
+        item(_BoardMenuAction.rename, Icons.edit_outlined, 'Rename'),
+        item(
+          _BoardMenuAction.delete,
+          Icons.delete_outline,
+          'Delete',
+          color: error,
+        ),
+      ],
+      if (_can.canLeave)
+        item(_BoardMenuAction.leave, Icons.logout, 'Leave board', color: error),
+    ];
+  }
+
+  /// Personal → shared: guests are asked to sign in first; otherwise the
+  /// board moves to a shared board and the sharing sheet opens.
+  Future<void> _shareBoard(BuildContext context) async {
+    final board = widget.board;
+    if (AuthService.instance.user.value == null ||
+        SharedBoardStore.instance.uid == null) {
+      final signIn = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Sign in to share'),
+          content: const Text(
+            'Shared boards live in your account, so friends can view or '
+            'edit them with you.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Not now'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Sign in'),
+            ),
+          ],
+        ),
+      );
+      if (signIn == true && context.mounted) await showAccountSheet(context);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Share “${board.name}”?'),
+        content: const Text(
+          'It becomes a shared board you can invite people to. Your scores '
+          '& notes stay private unless you choose to include them.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Share'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    // This card is replaced by the shared one once the move lands — keep
+    // handles that outlive it.
+    final navigatorContext = Navigator.of(context).context;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final shared = await SharedBoardStore.instance.shareBoard(board);
+      if (shared == null || !navigatorContext.mounted) return;
+      await SharingSheet.show(navigatorContext, shared.id);
+    } catch (e) {
+      debugPrint('share board failed: $e');
+      messenger.showSnackBar(
+        const SnackBar(content: Text("Couldn't share the board. Try again.")),
+      );
+    }
+  }
+
+  /// Owner deleting a shared board: gone for everyone, no undo.
+  Future<void> _deleteSharedBoard(BuildContext context) async {
+    final board = widget.board;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete “${board.name}” for everyone?'),
+        content: const Text(
+          'Everyone loses access. Your own places stay in your Saved list.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await SharedBoardStore.instance.delete(board.id);
   }
 
   Future<void> _renameBoard(BuildContext context) async {
@@ -289,7 +517,11 @@ class _BoardCardState extends State<_BoardCard> {
       builder: (_) => _RenameBoardDialog(initialName: widget.board.name),
     );
     if (newName == null) return;
-    await BoardStore.instance.renameBoard(widget.board.id, newName);
+    if (_shared != null) {
+      await SharedBoardStore.instance.rename(widget.board.id, newName);
+    } else {
+      await BoardStore.instance.renameBoard(widget.board.id, newName);
+    }
   }
 
   Future<void> _deleteBoard(BuildContext context) async {
@@ -340,20 +572,29 @@ class _SectionBlock extends StatefulWidget {
     required this.boardName,
     required this.section,
     required this.placesById,
-    required this.isAuto,
+    required this.canRemove,
+    required this.canSaveCopies,
+    required this.shared,
   });
 
   /// Board and board name the section belongs to — used to call
   /// [BoardStore.removePlaceFromBoard] and to word the "Removed from"
-  /// SnackBar. Unused (and rows aren't swipeable) when [isAuto] is true.
+  /// SnackBar. Unused (and rows aren't swipeable) unless [canRemove].
   final String boardId;
   final String boardName;
   final BoardSection section;
   final Map<String, Place> placesById;
 
-  /// True for the auto-generated "New finds" board ([kNewFindsBoardId]),
-  /// which isn't a stored [Board] — its rows can't be removed.
-  final bool isAuto;
+  /// Rows are swipe-to-remove. False for the auto-generated "New finds"
+  /// board ([kNewFindsBoardId]) — not a stored [Board] — and for viewers of
+  /// a shared board.
+  final bool canRemove;
+
+  /// Rows offer "Save to my places" (shared boards, non-owners).
+  final bool canSaveCopies;
+
+  /// The board is a shared board — removals go through SharedBoardStore.
+  final bool shared;
 
   @override
   State<_SectionBlock> createState() => _SectionBlockState();
@@ -370,7 +611,6 @@ class _SectionBlockState extends State<_SectionBlock> {
   String get boardName => widget.boardName;
   BoardSection get section => widget.section;
   Map<String, Place> get placesById => widget.placesById;
-  bool get isAuto => widget.isAuto;
 
   @override
   Widget build(BuildContext context) {
@@ -442,10 +682,16 @@ class _SectionBlockState extends State<_SectionBlock> {
           ).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
         ),
       ),
-      trailing: const Icon(Icons.chevron_right, size: 20),
+      trailing: widget.canSaveCopies
+          ? IconButton(
+              tooltip: 'Save to my places',
+              icon: const Icon(Icons.bookmark_add_outlined, size: 20),
+              onPressed: () => _saveToMyPlaces(context, place),
+            )
+          : const Icon(Icons.chevron_right, size: 20),
       onTap: () => PlaceDetailSheet.show(context, place),
     );
-    if (isAuto) return tile;
+    if (!widget.canRemove) return tile;
 
     return Dismissible(
       key: ValueKey('$boardId/${section.title}/${place.id}'),
@@ -485,10 +731,48 @@ class _SectionBlockState extends State<_SectionBlock> {
     );
   }
 
+  Future<void> _saveToMyPlaces(BuildContext context, Place place) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final added = await SharedBoardStore.instance.saveToMyPlaces(place);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          added
+              ? 'Saved “${place.name}” to your places'
+              : '“${place.name}” is already in your Saved list',
+        ),
+      ),
+    );
+  }
+
   Future<void> _removePlace(BuildContext context, Place place) async {
     // Grabbed before the store mutation optimistically rebuilds this row's
     // ancestors without it.
     final messenger = ScaffoldMessenger.of(context);
+    if (widget.shared) {
+      final removed = await SharedBoardStore.instance.removePlace(
+        boardId,
+        place.id,
+      );
+      if (removed == null) return;
+      final (copy, titles) = removed;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Removed from $boardName'),
+          action: SnackBarAction(
+            label: 'UNDO',
+            // Re-adding puts the place in one section — the first it was
+            // in (it may have sat in several).
+            onPressed: () => SharedBoardStore.instance.updatePlaces(
+              boardId,
+              newPlaces: [copy],
+              sectionTitle: titles.isEmpty ? null : titles.first,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final removedFrom = await BoardStore.instance.removePlaceFromBoard(
       boardId: boardId,
       placeId: place.id,

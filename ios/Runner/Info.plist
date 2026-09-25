@@ -62,6 +62,10 @@
 	  Two URL types share the one CFBundleURLTypes array (a duplicate key would
 	  silently replace the first):
 	    - trip import links: cheaptripchip://import?v=1&d=... (app_links)
+	      and shared-board invites cheaptripchip://board/{id}?c=... (same
+	      scheme; the host isn't part of the URL type).
+	      TODO: universal links for https://cheaptripchip-api.vercel.app/b/...
+	      need an Apple team id (Associated Domains + apple-app-site-association).
 	    - Google Sign-In redirect: REVERSED_CLIENT_ID from
 	      ios/Runner/GoogleService-Info.plist (see docs/firebase-setup.md step 7)
 	  GIDClientID is that plist's CLIENT_ID. Both are public OAuth client ids.

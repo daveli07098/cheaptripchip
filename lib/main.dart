@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'data/board_store.dart';
 import 'data/photo_store.dart';
 import 'data/place_store.dart';
+import 'data/shared_board_store.dart';
 import 'firebase_options.dart';
 import 'screens/home_shell.dart';
 import 'services/area_resolver.dart';
@@ -32,12 +33,14 @@ Future<void> main() async {
 
 /// Rebinds [PlaceStore], [BoardStore] and [PhotoStore] to the current user
 /// (or to local, guest-mode repos when signed out / unconfigured) whenever
-/// auth state changes.
+/// auth state changes. [SharedBoardStore] is signed-in only (empty for
+/// guests).
 void _bindStores() {
   final user = AuthService.instance.user.value;
   PlaceStore.instance.bind(user);
   BoardStore.instance.bind(user);
   PhotoStore.instance.bind(user);
+  SharedBoardStore.instance.bind(user);
 }
 
 class CheapTripChipApp extends StatelessWidget {

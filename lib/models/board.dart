@@ -90,3 +90,46 @@ class BoardSection {
     );
   }
 }
+
+/// [sections] with the [remove] place ids dropped from every section (any
+/// section left empty is pruned — it would render as a bare header), then
+/// the [add] ids folded in, each into the section titled [sectionTitleFor]
+/// (created at the end if missing). An id in both sets ends up removed; an
+/// id already on the board isn't added twice. Shared by BoardStore (personal
+/// boards) and SharedBoardStore.
+List<BoardSection> sectionsWithChanges(
+  List<BoardSection> sections, {
+  Iterable<String> add = const [],
+  Set<String> remove = const {},
+  required String Function(String placeId) sectionTitleFor,
+}) {
+  var result = [
+    for (final section in sections)
+      section.copyWith(
+        placeIds: section.placeIds.where((id) => !remove.contains(id)).toList(),
+      ),
+  ].where((section) => section.placeIds.isNotEmpty).toList();
+
+  final alreadyIn = <String>{for (final section in result) ...section.placeIds};
+  for (final placeId in add) {
+    if (remove.contains(placeId) || alreadyIn.contains(placeId)) continue;
+    final title = sectionTitleFor(placeId);
+    final index = result.indexWhere((section) => section.title == title);
+    if (index == -1) {
+      result = [
+        ...result,
+        BoardSection(title: title, placeIds: [placeId]),
+      ];
+    } else {
+      result = [
+        for (var i = 0; i < result.length; i++)
+          if (i == index)
+            result[i].copyWith(placeIds: [...result[i].placeIds, placeId])
+          else
+            result[i],
+      ];
+    }
+    alreadyIn.add(placeId);
+  }
+  return result;
+}

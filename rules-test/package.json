@@ -1,0 +1,16 @@
+{
+  "name": "cheaptripchip-rules-test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firestore security rules tests (firestore.rules) against the local emulator.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:emulator": "firebase emulators:exec --only firestore --project demo-cheaptripchip \"npm test\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0",
+    "vitest": "^2.1.8"
+  }
+}

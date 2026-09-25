@@ -6,7 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/trip_share.dart';
 
-/// Bottom sheet offering every way to get a [TripBundle] out of the app:
+/// "Send a copy" sheet — every way to get a snapshot [TripBundle] out of the
+/// app (unlike a shared board, the copy never updates):
 /// app link, portable file, KML for Google My Maps, and a Google Maps route.
 class ExportSheet extends StatelessWidget {
   const ExportSheet({super.key, required this.bundle});
@@ -122,7 +123,7 @@ class ExportSheet extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                'Share “${bundle.title}”',
+                'Send a copy of “${bundle.title}”',
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,

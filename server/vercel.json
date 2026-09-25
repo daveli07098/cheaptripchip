@@ -10,6 +10,19 @@
     {
       "source": "/v1beta/models/:modelAction",
       "destination": "/api/v1beta/models/:modelAction"
+    },
+    {
+      "source": "/b/:id",
+      "destination": "/api/b/:id"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
     }
   ]
 }

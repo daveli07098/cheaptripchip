@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../data/place_store.dart';
+import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
 import '../services/my_maps_import.dart';
 import '../services/place_extractor.dart';
@@ -14,6 +15,7 @@ import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
 import '../widgets/account_button.dart';
+import '../widgets/board_invite_flow.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
 import '../widgets/my_maps_import_sheet.dart';
@@ -45,6 +47,10 @@ class _HomeShellState extends State<HomeShell> {
   DateTime? _lastImportAt;
   bool _importInProgress = false;
 
+  /// Same duplicate-delivery guard for shared-board invite links.
+  String? _lastInviteKey;
+  DateTime? _lastInviteAt;
+
   static const _titles = ['Explore', 'Saved', 'Boards'];
 
   bool get _shareIntakeSupported =>
@@ -61,12 +67,19 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  /// `cheaptripchip://import?...` links (see [TripShare.toAppLink]). The
+  /// `cheaptripchip://import?...` links (see [TripShare.toAppLink]) and
+  /// shared-board invites (`https://…/b/{id}?c=…` App Links and
+  /// `cheaptripchip://board/{id}?c=…`, see [BoardInviteLink]). The
   /// app_links stream emits the cold-start link too, so there is no separate
   /// getInitialLink() call — that would prompt twice. Mobile only.
   void _initAppLinks() {
     try {
       _linkSub = AppLinks().uriLinkStream.listen((uri) {
+        final invite = BoardInviteLink.parse(uri);
+        if (invite != null) {
+          _openInvite(invite);
+          return;
+        }
         final bundle = TripShare.fromAppLink(uri);
         if (bundle != null) _promptImport(bundle, key: uri.toString());
       }, onError: (Object e) => debugPrint('app link error: $e'));
@@ -112,6 +125,13 @@ class _HomeShellState extends State<HomeShell> {
         .join('\n');
     if (shared.isEmpty) return;
 
+    // A shared-board invite link joins the board rather than importing.
+    final invite = BoardInviteLink.fromText(shared);
+    if (invite != null) {
+      _openInvite(invite);
+      return;
+    }
+
     // A shared trip (app link in text, or a .cheaptrip.json file) imports
     // directly instead of going through Gemini extraction.
     final bundle =
@@ -150,6 +170,29 @@ class _HomeShellState extends State<HomeShell> {
       }
     }
     return null;
+  }
+
+  /// Joins the board behind [invite] (signing in first if needed), ignoring
+  /// a duplicate delivery of the same link within a few seconds —
+  /// receive_sharing_intent and app_links can both see one VIEW intent.
+  Future<void> _openInvite(BoardInvite invite) async {
+    if (!mounted) return;
+    final key = '${invite.boardId}?${invite.code}';
+    final now = DateTime.now();
+    if (key == _lastInviteKey &&
+        _lastInviteAt != null &&
+        now.difference(_lastInviteAt!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastInviteKey = key;
+    _lastInviteAt = now;
+    await openBoardInvite(
+      context,
+      invite,
+      onShowBoards: () {
+        if (mounted) setState(() => _index = 2);
+      },
+    );
   }
 
   /// Shows the import preview for [bundle]; on confirm switches to Boards and

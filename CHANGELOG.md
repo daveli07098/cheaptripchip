@@ -6,6 +6,39 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Collaborative shared boards with roles (signed-in only). ⋮ → "Share
+  board…" MOVES a personal board to top-level `sharedBoards/{id}` (board +
+  place copies in `sharedBoards/{id}/places`, same place ids; your own
+  places stay in Saved; scores/notes/favourite/photo marker stripped unless
+  the owner turns on "Include my scores & notes"). Roles: owner (everything),
+  editor (add/remove places & sections), viewer (read only + "Save to my
+  places", deduped via `ImportService.isDuplicate`). Sharing sheet: link
+  Off / View only / Can edit, Copy / Share / Reset link, members with role
+  dropdown and remove, "Stop sharing" (back to a personal board, places
+  others added are saved to Saved, everyone else loses access); non-owners
+  see their role and "Leave board". Boards tab badges: "Shared · 3 people" /
+  "Shared by Ann · View only". Live via `SharedBoardStore` snapshot
+  listeners, bound on auth in main.dart. Guests get "Sign in to share".
+- Invite links `https://cheaptripchip-api.vercel.app/b/{id}?c={code}` and
+  `cheaptripchip://board/{id}?c={code}` (`BoardInviteLink`), handled via
+  app_links and the share sheet: sign in if needed, then a blind self-join
+  (the rules check the invite code and link role server-side). Android: new
+  custom-scheme intent filter and an `autoVerify` App Links filter for
+  `/b/`. iOS: the existing `cheaptripchip` scheme covers board links;
+  universal links are a TODO (needs an Apple team).
+- server/: `GET /b/:id` landing page (no board data; "Open in
+  CheapTripChip" button + one scripted attempt, CSP-pinned, no-store,
+  noindex, no-referrer; malformed ids/codes → 404) and
+  `/.well-known/assetlinks.json` with the debug keystore's SHA-256 (add the
+  release key before shipping). vitest covers both.
+- firestore.rules: `sharedBoards` — members read (the Boards-tab query is
+  `memberIds` array-contains); create only as sole owner; owner updates
+  anything but `ownerId`; editors only `sections`; self-join only with the
+  current invite code, the link's role, and nothing but self added;
+  members may remove only themself; `members`/`memberIds` must stay in sync
+  with exactly one owner. Place copies: member read, owner/editor write,
+  allow-listed keys and capped field sizes. 25 emulator tests in
+  `rules-test/` (`npm run test:emulator`).
 - Filter the map by location: the ☰ drawer has an "Areas" section under
   Categories — cities with flag and count (count desc), each expandable to
   its districts; "Unknown area (N)" for places not resolved yet; counts are
@@ -160,6 +193,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on messy share text, and `fetchPostMetadata` against a mocked client
   (200-with-tags / 200-without / 404 / timeout).
 ### Changed
+- Boards ⋮ "Share" is now "Send a copy" (the snapshot export sheet,
+  unchanged otherwise).
+- `sectionsWithChanges` (lib/models/board.dart) holds the add/remove
+  section merge shared by `BoardStore.updateBoardPlaces` and the shared
+  store; `AddPlacesSheet` takes an optional `onApply`.
 - Guest mode now persists: places and boards are saved as JSON snapshots
   (`<app documents>/guest/*.json`, atomic write, debounced; web:
   shared_preferences) instead of living only in memory until restart.

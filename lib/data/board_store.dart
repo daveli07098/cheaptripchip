@@ -246,39 +246,13 @@ class BoardStore {
     if (board == null) return;
     if (add.isEmpty && remove.isEmpty) return;
 
-    var sections = [
-      for (final section in board.sections)
-        section.copyWith(
-          placeIds: section.placeIds
-              .where((id) => !remove.contains(id))
-              .toList(),
-        ),
-    ].where((section) => section.placeIds.isNotEmpty).toList();
-
-    final alreadyIn = <String>{
-      for (final section in sections) ...section.placeIds,
-    };
-    for (final placeId in add) {
-      if (remove.contains(placeId) || alreadyIn.contains(placeId)) continue;
-      final title =
-          PlaceStore.instance.byIdOrNull(placeId)?.category.labelEn ?? 'Saved';
-      final index = sections.indexWhere((section) => section.title == title);
-      if (index == -1) {
-        sections = [
-          ...sections,
-          BoardSection(title: title, placeIds: [placeId]),
-        ];
-      } else {
-        sections = [
-          for (var i = 0; i < sections.length; i++)
-            if (i == index)
-              sections[i].copyWith(placeIds: [...sections[i].placeIds, placeId])
-            else
-              sections[i],
-        ];
-      }
-      alreadyIn.add(placeId);
-    }
+    final sections = sectionsWithChanges(
+      board.sections,
+      add: add,
+      remove: remove,
+      sectionTitleFor: (placeId) =>
+          PlaceStore.instance.byIdOrNull(placeId)?.category.labelEn ?? 'Saved',
+    );
 
     final updated = board.copyWith(sections: sections);
     boards.value = [

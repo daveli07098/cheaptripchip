@@ -33,6 +33,159 @@ service cloud.firestore {
         && request.resource.data.jpeg.size() < 1000000;
     }
 
+    // ── Collaborative shared boards ──────────────────────────────────────
+    // sharedBoards/{boardId} (lib/data/shared_board_repository.dart):
+    // {ownerId, ownerName, name, emoji, sections, members: {uid: role},
+    //  memberIds: [uid], memberNames: {uid: name}, linkRole, inviteCode,
+    //  includeOwnerNotes, joinCode?, createdAt, updatedAt}.
+    // memberIds mirrors members' keys (array-contains query for the Boards
+    // tab); every write must keep the two in sync. The owner is ownerId —
+    // the only member whose role is 'owner'.
+    function boardRoles() {
+      return ['owner', 'editor', 'viewer'];
+    }
+
+    function validLinkRole(role) {
+      return role == null || role in ['viewer', 'editor'];
+    }
+
+    // Invariants every stored board doc must satisfy.
+    function validBoard(d) {
+      return d.ownerId is string
+        && d.members is map
+        && d.memberIds is list
+        && d.memberNames is map
+        && d.memberIds.size() == d.members.size()
+        && d.memberIds.toSet() == d.members.keys().toSet()
+        && d.members[d.ownerId] == 'owner'
+        && d.members.values().toSet().hasOnly(boardRoles())
+        && d.members.values().removeAll(['editor', 'viewer']).size() == 1
+        && d.memberNames.keys().toSet().hasOnly(d.memberIds.toSet())
+        && d.name is string && d.name.size() <= 200
+        && d.sections is list && d.sections.size() <= 200
+        && validLinkRole(d.linkRole)
+        && d.inviteCode is string && d.inviteCode.size() >= 22
+        && d.inviteCode.size() <= 64;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isBoardOwner() {
+      return signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    function isBoardEditor() {
+      return signedIn()
+        && request.auth.uid in resource.data.memberIds
+        && resource.data.members[request.auth.uid] == 'editor';
+    }
+
+    // Blind self-join from an invite link: the client can't read the board
+    // yet, but update rules can still compare against resource.data. Only
+    // allowed while the link is on, with the current invite code, taking
+    // exactly the link's role, and adding nothing but self.
+    function isSelfJoin() {
+      let uid = request.auth.uid;
+      let before = resource.data;
+      let after = request.resource.data;
+      return signedIn()
+        && !(uid in before.members)
+        && !(uid in before.memberIds)
+        && before.linkRole != null
+        && after.joinCode == before.inviteCode
+        && after.members[uid] == before.linkRole
+        && changedKeys().hasOnly(['members', 'memberIds', 'memberNames', 'joinCode', 'updatedAt'])
+        && after.members.diff(before.members).affectedKeys().hasOnly([uid])
+        && after.memberIds.toSet() == before.memberIds.toSet().union([uid].toSet())
+        && after.memberNames.diff(before.memberNames).affectedKeys().hasOnly([uid])
+        && after.memberNames[uid] is string
+        && after.memberNames[uid].size() <= 100;
+    }
+
+    // A non-owner member removing only themself.
+    function isSelfLeave() {
+      let uid = request.auth.uid;
+      let before = resource.data;
+      let after = request.resource.data;
+      return signedIn()
+        && uid != before.ownerId
+        && uid in before.memberIds
+        && changedKeys().hasOnly(['members', 'memberIds', 'memberNames', 'updatedAt'])
+        && after.members.keys().toSet() == before.members.keys().toSet().difference([uid].toSet())
+        && after.members.diff(before.members).affectedKeys().hasOnly([uid])
+        && after.memberIds.toSet() == before.memberIds.toSet().difference([uid].toSet())
+        && !(uid in after.memberNames)
+        && after.memberNames.diff(before.memberNames).affectedKeys().hasOnly([uid]);
+    }
+
+    match /sharedBoards/{boardId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.memberIds;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.members.size() == 1
+        && request.resource.data.members[request.auth.uid] == 'owner'
+        && request.resource.data.memberIds == [request.auth.uid]
+        && validBoard(request.resource.data);
+
+      allow update: if validBoard(request.resource.data) && (
+        (isBoardOwner()
+          && request.resource.data.ownerId == resource.data.ownerId)
+        || (isBoardEditor() && changedKeys().hasOnly(['sections', 'updatedAt']))
+        || isSelfJoin()
+        || isSelfLeave()
+      );
+
+      allow delete: if isBoardOwner();
+
+      // Place copies (Place.toJson with the owner's private fields stripped
+      // unless includeOwnerNotes). Readable by members; written by the owner
+      // and editors. Keys are allow-listed and the bulky fields capped —
+      // rules can't measure a doc's byte size directly.
+      function boardData() {
+        return get(/databases/$(database)/documents/sharedBoards/$(boardId)).data;
+      }
+
+      function isMemberOf(board) {
+        return signedIn() && request.auth.uid in board.memberIds;
+      }
+
+      function canEditPlaces(board) {
+        return isMemberOf(board)
+          && board.members[request.auth.uid] in ['owner', 'editor'];
+      }
+
+      function validPlace(p) {
+        return p.keys().hasOnly([
+            'id', 'name', 'areaLabel', 'region', 'category', 'location',
+            'descriptionEn', 'originalCaption', 'address', 'hours',
+            'sourceHandle', 'sourcePlatform', 'award', 'matchConfident',
+            'rating', 'reviewCount', 'priceRange', 'photoUrls', 'isFavorite',
+            'myScore', 'myNotes', 'myPhotoAt', 'restaurantType',
+            'countryCode', 'updatedAt'])
+          && p.name is string && p.name.size() <= 500
+          && p.get('originalCaption', '').size() <= 10000
+          && p.get('descriptionEn', '').size() <= 5000
+          && p.get('address', '').size() <= 1000
+          && p.get('hours', '').size() <= 2000
+          && p.get('myNotes', '').size() <= 5000
+          && p.get('photoUrls', []).size() <= 20;
+      }
+
+      match /places/{placeId} {
+        allow read: if isMemberOf(boardData());
+        allow create, update: if canEditPlaces(boardData())
+          && validPlace(request.resource.data);
+        allow delete: if canEditPlaces(boardData());
+      }
+    }
+
     // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;

@@ -12,16 +12,24 @@ import '../theme/app_theme.dart';
 /// write (see [BoardStore.updateBoardPlaces]) rather than one repository
 /// write per toggled place — this list can hold ~1,700 saved places.
 class AddPlacesSheet extends StatefulWidget {
-  const AddPlacesSheet({super.key, required this.board});
+  const AddPlacesSheet({super.key, required this.board, this.onApply});
 
   final Board board;
 
-  static Future<void> show(BuildContext context, Board board) {
+  /// Writes the diff; defaults to [BoardStore.updateBoardPlaces]. Shared
+  /// boards pass SharedBoardStore's equivalent.
+  final Future<void> Function(Set<String> add, Set<String> remove)? onApply;
+
+  static Future<void> show(
+    BuildContext context,
+    Board board, {
+    Future<void> Function(Set<String> add, Set<String> remove)? onApply,
+  }) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => AddPlacesSheet(board: board),
+      builder: (_) => AddPlacesSheet(board: board, onApply: onApply),
     );
   }
 
@@ -56,11 +64,16 @@ class _AddPlacesSheetState extends State<AddPlacesSheet> {
     final removed = _baseline.difference(_selected);
     if (added.isEmpty && removed.isEmpty) return;
     setState(() => _busy = true);
-    await BoardStore.instance.updateBoardPlaces(
-      boardId: widget.board.id,
-      add: added,
-      remove: removed,
-    );
+    final onApply = widget.onApply;
+    if (onApply != null) {
+      await onApply(added, removed);
+    } else {
+      await BoardStore.instance.updateBoardPlaces(
+        boardId: widget.board.id,
+        add: added,
+        remove: removed,
+      );
+    }
     if (!mounted) return;
     setState(() {
       _baseline = Set.of(_selected);

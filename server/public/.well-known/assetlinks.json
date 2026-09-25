@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.cheaptripchip.cheaptripchip",
+      "sha256_cert_fingerprints": [
+        "18:49:5A:47:F6:CC:CE:52:8F:33:FA:06:F2:70:E5:D0:C0:3E:D1:CA:36:02:90:3C:54:F9:9E:C2:8E:DE:10:F7"
+      ]
+    }
+  }
+]
