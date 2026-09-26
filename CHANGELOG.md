@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Map: the pin preview card shows which boards the place is on
+  ("📋 Tokyo trip · Food list", personal and shared boards), or "Not on a
+  board" when it's only in "New finds".
+- Map drawer "Boards" section: tick one or more boards (incl. the auto
+  "New finds") to show only their places — ORed across boards, ANDed with
+  the category / food-type / area filters and the search. Toggling keeps
+  the drawer open; the camera fits the result when it closes. Each picked
+  board gets its own ✕ chip under the search bar. Membership comes from a
+  `BoardIndex` (place → boards, built once per places/boards snapshot and
+  memoized in `MapFilterCache`), so neither the filter nor the card scans
+  boards per pin.
+- Boards tab "Show on map" (🗺 icon on every card, also in the ⋮ menu):
+  switches to the map, replaces the other filters and the search with just
+  that board, and flies the camera to fit its places (one place → a close
+  zoom; none on the map → a SnackBar). Wired through a small
+  `MapFocusController` owned by the home shell.
 - 30 restaurant sub-types in grouped order (udon & soba, tempura, tonkatsu,
   French, Italian, dim sum, bakery, …) with EN/JP/zh keyword detection; a
   one-time re-scan upgrades auto-detected types (never manual picks), also
@@ -234,6 +250,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on messy share text, and `fetchPostMetadata` against a mocked client
   (200-with-tags / 200-without / 404 / timeout).
 ### Changed
+- Map drawer Areas are grouped country → city → district, every level
+  A–Z ("Unknown country" and "Unknown area" last) and collapsible, with
+  counts; the whole Areas section collapses too. With one country it
+  starts open, with several each country starts collapsed (except the one
+  holding the picked city). Country names come from a small built-in
+  table (`countryName`, falls back to the ISO code). Tapping a country
+  only expands it — pick a city or district to filter. `kNewFindsBoardId`
+  moved to `models/board.dart` (re-exported from boards_screen).
 - Boards ⋮ "Share" is now "Send a copy" (the snapshot export sheet,
   unchanged otherwise).
 - `sectionsWithChanges` (lib/models/board.dart) holds the add/remove

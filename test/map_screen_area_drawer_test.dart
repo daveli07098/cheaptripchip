@@ -65,21 +65,41 @@ Future<void> _pumpMap(WidgetTester tester) async {
 void main() {
   final total = _places.length;
 
-  testWidgets('Areas section lists cities by count, filters by district', (
-    tester,
-  ) async {
+  testWidgets('Areas: countries A–Z (unknown last), collapsible levels, '
+      'filters by district', (tester) async {
     await _pumpMap(tester);
     expect(find.text('$total of $total places'), findsOneWidget);
 
     await _openDrawerAt(tester, find.text('Unknown area'));
     expect(_inDrawer(find.text('Areas')), findsOneWidget);
 
-    // Tokyo (6) sorts above Hong Kong (2); the flag shows for HK.
-    final tokyoY = tester.getTopLeft(_inDrawer(find.text('Tokyo'))).dy;
+    // Two countries → both start collapsed; Hong Kong sorts above the
+    // unresolved "Unknown country" (mock Tokyo places have no code), and
+    // "Unknown area" (no city) comes last.
     final hkY = tester.getTopLeft(_inDrawer(find.text('Hong Kong'))).dy;
-    expect(tokyoY, lessThan(hkY));
+    final unknownCountryY = tester
+        .getTopLeft(_inDrawer(find.text('Unknown country')))
+        .dy;
+    final unknownAreaY = tester
+        .getTopLeft(_inDrawer(find.text('Unknown area')))
+        .dy;
+    expect(hkY, lessThan(unknownCountryY));
+    expect(unknownCountryY, lessThan(unknownAreaY));
     expect(_inDrawer(find.text('🇭🇰')), findsOneWidget);
+    expect(_inDrawer(find.text('Tokyo')), findsNothing);
+    expect(
+      tester.getSemantics(_inDrawer(find.text('Hong Kong'))),
+      isSemantics(hasExpandedState: true, isExpanded: false),
+    );
 
+    // Country → city → district.
+    await tester.tap(_inDrawer(find.text('Hong Kong')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(_inDrawer(find.text('Hong Kong')).first),
+      isSemantics(hasExpandedState: true, isExpanded: true),
+    );
+    expect(_inDrawer(find.text('Hong Kong')), findsNWidgets(2));
     await tester.tap(find.byTooltip('Show Hong Kong districts'));
     await tester.pumpAndSettle();
     await tester.tap(_inDrawer(find.text('Mong Kok')));
@@ -87,6 +107,38 @@ void main() {
 
     expect(find.text('Mong Kok, Hong Kong · 2'), findsOneWidget);
     expect(find.text('2 of $total places'), findsOneWidget);
+
+    // Reopening keeps the picked city's country open.
+    await _openDrawerAt(tester, find.text('Mong Kok'));
+    expect(_inDrawer(find.text('Mong Kok')), findsOneWidget);
+  });
+
+  testWidgets('the whole Areas section collapses', (tester) async {
+    await _pumpMap(tester);
+    await _openDrawerAt(tester, find.text('All areas'));
+    await tester.tap(_inDrawer(find.text('Areas')));
+    await tester.pumpAndSettle();
+    expect(_inDrawer(find.text('All areas')), findsNothing);
+    expect(_inDrawer(find.text('Hong Kong')), findsNothing);
+    expect(
+      tester.getSemantics(_inDrawer(find.text('Areas'))),
+      isSemantics(hasExpandedState: true, isExpanded: false),
+    );
+    await tester.tap(_inDrawer(find.text('Areas')));
+    await tester.pumpAndSettle();
+    expect(_inDrawer(find.text('All areas')), findsOneWidget);
+  });
+
+  testWidgets('a single country starts expanded', (tester) async {
+    PlaceStore.instance.places.value = [
+      for (final p in _places)
+        if (p.countryCode == 'HK') p,
+    ];
+    await tester.pumpWidget(MaterialApp(home: MapScreen(onAddFind: () {})));
+    await tester.pump();
+    await _openDrawerAt(tester, find.text('All areas'));
+    // Country row + its city row, without tapping anything.
+    expect(_inDrawer(find.text('Hong Kong')), findsNWidgets(2));
   });
 
   testWidgets('area AND category; each chip clears only its own filter', (
@@ -101,8 +153,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('3 of $total places'), findsOneWidget);
 
-    // Area: the whole city of Tokyo.
-    await _openDrawerAt(tester, find.text('Tokyo'));
+    // Area: the whole city of Tokyo (under the collapsed unknown country).
+    await _openDrawerAt(tester, find.text('Unknown country'));
+    await tester.tap(_inDrawer(find.text('Unknown country')));
+    await tester.pumpAndSettle();
     await tester.tap(_inDrawer(find.text('Tokyo')));
     await tester.pumpAndSettle();
     expect(find.text('Restaurant · 3'), findsOneWidget);

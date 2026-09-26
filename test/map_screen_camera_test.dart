@@ -55,7 +55,11 @@ void main() {
       scrollable: _inDrawer(find.byType(Scrollable)).first,
     );
     await tester.pumpAndSettle();
+    // Two countries (HK + unknown), so the Hong Kong country row starts
+    // collapsed: open it, then pick the city of the same name inside.
     await tester.tap(_inDrawer(find.text('Hong Kong')));
+    await tester.pumpAndSettle();
+    await tester.tap(_inDrawer(find.text('Hong Kong')).last);
     await tester.pumpAndSettle();
 
     final center = _camera(tester).center;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import '../data/board_store.dart';
+import '../data/map_filter.dart';
 import '../data/place_store.dart';
 import '../data/shared_board_store.dart';
 import '../models/board.dart';
@@ -18,9 +19,15 @@ import '../widgets/sharing_sheet.dart';
 import 'account_sheet.dart';
 import 'place_detail_sheet.dart';
 
+export '../models/board.dart' show kNewFindsBoardId;
+
 /// Boards (ANALYSIS.md §5): Board → Section → Item hierarchy, expandable.
 class BoardsScreen extends StatelessWidget {
-  const BoardsScreen({super.key});
+  const BoardsScreen({super.key, this.onShowOnMap});
+
+  /// "Show on map" on a board card, with the board's [BoardRef.key]. The
+  /// action is hidden when null.
+  final ValueChanged<String>? onShowOnMap;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +57,7 @@ class BoardsScreen extends StatelessWidget {
               board: autoBoard,
               placesById: placesById,
               permissions: BoardPermissions.auto,
+              onShowOnMap: onShowOnMap,
             ),
           for (final board in sharedBoards)
             _BoardCard(
@@ -58,6 +66,7 @@ class BoardsScreen extends StatelessWidget {
               placesById: shared.placesOf(board.id),
               shared: board,
               permissions: BoardPermissions.forRole(board.roleOf(shared.uid)),
+              onShowOnMap: onShowOnMap,
             ),
           for (final board in storeBoards)
             _BoardCard(
@@ -65,6 +74,7 @@ class BoardsScreen extends StatelessWidget {
               board: board,
               placesById: placesById,
               permissions: BoardPermissions.personal,
+              onShowOnMap: onShowOnMap,
             ),
         ];
         if (cards.isEmpty) return const _EmptyBoardsState();
@@ -139,10 +149,10 @@ class _EmptyBoardsState extends StatelessWidget {
   }
 }
 
-/// Id of the auto-generated "New finds" board (see [newFindsBoard]). It is
-/// never backed by [BoardStore] (no repository row), so boards_screen never
-/// offers rename/delete/remove-place on it — only share.
-const String kNewFindsBoardId = 'new-finds';
+// [kNewFindsBoardId] (in models/board.dart) is the auto-generated "New
+// finds" board's id (see [newFindsBoard]). It is never backed by
+// [BoardStore] (no repository row), so boards_screen never offers
+// rename/delete/remove-place on it — only share and show on map.
 
 /// Auto-generated board (title 'New finds', emoji 📌) for [places] not
 /// referenced by any section in [boards], grouped one section per category.
@@ -181,6 +191,7 @@ class _BoardCard extends StatefulWidget {
     required this.placesById,
     required this.permissions,
     this.shared,
+    this.onShowOnMap,
   });
 
   final Board board;
@@ -195,11 +206,15 @@ class _BoardCard extends StatefulWidget {
   /// Set for collaborative boards (see SharedBoardStore).
   final SharedBoard? shared;
 
+  /// See [BoardsScreen.onShowOnMap].
+  final ValueChanged<String>? onShowOnMap;
+
   @override
   State<_BoardCard> createState() => _BoardCardState();
 }
 
 enum _BoardMenuAction {
+  showOnMap,
   sendCopy,
   shareBoard,
   sharing,
@@ -217,6 +232,12 @@ class _BoardCardState extends State<_BoardCard> {
   bool get _isAuto => widget.board.id == kNewFindsBoardId;
 
   SharedBoard? get _shared => widget.shared;
+
+  /// This board's key in the map's board filter (see [BoardRef.keyFor]).
+  String get _mapKey =>
+      BoardRef.keyFor(widget.board.id, shared: widget.shared != null);
+
+  void _showOnMap() => widget.onShowOnMap?.call(_mapKey);
   BoardPermissions get _can => widget.permissions;
 
   /// "Shared · 3 people" for the owner; "Shared by Ann · View only" for
@@ -306,10 +327,17 @@ class _BoardCardState extends State<_BoardCard> {
           // A custom trailing replaces ExpansionTile's chevron. Share (and,
           // for stored boards, Rename/Delete) live in a single ⋮ menu rather
           // than separate icon buttons — three+ icons plus the emoji leading
-          // and bold title would overflow a 360dp-wide phone.
+          // and bold title would overflow a 360dp-wide phone. "Show on map"
+          // is the one extra icon (also in the ⋮ menu); the title ellipsizes.
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (widget.onShowOnMap != null)
+                IconButton(
+                  tooltip: 'Show on map',
+                  icon: const Icon(Icons.map_outlined, size: 20),
+                  onPressed: _showOnMap,
+                ),
               PopupMenuButton<_BoardMenuAction>(
                 tooltip: 'Board options',
                 icon: const Icon(Icons.more_vert, size: 20),
@@ -348,6 +376,8 @@ class _BoardCardState extends State<_BoardCard> {
     _BoardMenuAction action,
   ) async {
     switch (action) {
+      case _BoardMenuAction.showOnMap:
+        _showOnMap();
       case _BoardMenuAction.sendCopy:
         ExportSheet.show(context, _bundle());
       case _BoardMenuAction.shareBoard:
@@ -402,6 +432,8 @@ class _BoardCardState extends State<_BoardCard> {
 
     final shared = _shared;
     return [
+      if (widget.onShowOnMap != null)
+        item(_BoardMenuAction.showOnMap, Icons.map_outlined, 'Show on map'),
       if (shared != null)
         item(
           _BoardMenuAction.sharing,

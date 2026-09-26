@@ -2,6 +2,11 @@
 ///
 /// A [Board] is a top-level trip/theme container. Each [BoardSection] groups
 /// saved places (referenced by [Place.id]) under a category within the board.
+/// Id of the auto-generated "New finds" board (see `newFindsBoard` in
+/// boards_screen.dart): the places no board references. It is never backed
+/// by [BoardStore] (no repository row).
+const String kNewFindsBoardId = 'new-finds';
+
 class Board {
   const Board({
     required this.id,

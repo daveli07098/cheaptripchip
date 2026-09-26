@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:cheaptripchip/data/map_filter.dart';
 import 'package:cheaptripchip/data/memory_photo_repository.dart';
 import 'package:cheaptripchip/data/photo_store.dart';
 import 'package:cheaptripchip/models/place.dart';
@@ -25,10 +26,18 @@ const _place = Place(
   myScore: 8,
 );
 
-Widget _host(Place place, VoidCallback onOpenDetails) => MaterialApp(
+Widget _host(
+  Place place,
+  VoidCallback onOpenDetails, {
+  List<BoardRef>? boards,
+}) => MaterialApp(
   home: Scaffold(
     body: Center(
-      child: PlacePreviewCard(place: place, onOpenDetails: onOpenDetails),
+      child: PlacePreviewCard(
+        place: place,
+        onOpenDetails: onOpenDetails,
+        boards: boards,
+      ),
     ),
   ),
 );
@@ -77,5 +86,47 @@ void main() {
 
     expect(find.text('Change photo'), findsOneWidget);
     expect(find.text('Add photo'), findsNothing);
+  });
+
+  group('boards line', () {
+    const trip = BoardRef(key: 'b1', id: 'b1', name: 'Tokyo trip', emoji: '🗼');
+    const food = BoardRef(
+      key: 'shared/b2',
+      id: 'b2',
+      name: 'Food list',
+      emoji: '🍜',
+      shared: true,
+    );
+    const auto = BoardRef(
+      key: 'new-finds',
+      id: 'new-finds',
+      name: 'New finds',
+      emoji: '📌',
+    );
+
+    testWidgets('lists every board the place is on', (tester) async {
+      await tester.pumpWidget(_host(_place, () {}, boards: [trip, food]));
+      await tester.pump();
+      expect(find.text('Tokyo trip · Food list'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Semantics && w.properties.label == 'Boards',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('"Not on a board" for New finds only', (tester) async {
+      await tester.pumpWidget(_host(_place, () {}, boards: [auto]));
+      await tester.pump();
+      expect(find.text('Not on a board'), findsOneWidget);
+      expect(find.text('New finds'), findsNothing);
+    });
+
+    testWidgets('no line without board data', (tester) async {
+      await tester.pumpWidget(_host(_place, () {}));
+      await tester.pump();
+      expect(find.text('📋'), findsNothing);
+    });
   });
 }

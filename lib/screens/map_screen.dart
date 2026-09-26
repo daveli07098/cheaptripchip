@@ -5,10 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/board_store.dart';
 import '../data/map_filter.dart';
+import '../data/map_focus.dart';
 import '../data/mock_data.dart';
 import '../data/place_search.dart';
 import '../data/place_store.dart';
+import '../data/shared_board_store.dart';
 import '../models/place.dart';
 import '../services/area_resolver.dart';
 import '../theme/app_theme.dart';
@@ -29,12 +32,18 @@ import 'place_detail_sheet.dart';
 /// [PlacePreviewCard] just above the sheet (Google Maps style — the card or
 /// its Details action opens the full detail sheet); tapping empty map
 /// dismisses it. Tapping a list row selects + pans without a card.
+/// The drawer also filters by board (multi-select, see [MapFilter.boards]);
+/// [focus] lets the Boards tab show one board here ([MapFocusController]).
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, required this.onAddFind});
+  const MapScreen({super.key, required this.onAddFind, this.focus});
 
   /// Forwarded straight through to [PlaceListSheet] — see its doc comment
   /// for what triggers this (the "+" affordance for adding a new find).
   final VoidCallback onAddFind;
+
+  /// "Show this board on the map" requests: each one replaces every filter
+  /// with just that board and flies the camera to fit its places.
+  final ValueListenable<MapBoardFocus?>? focus;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -74,6 +83,15 @@ class _MapScreenState extends State<MapScreen>
   /// null = the whole [_selectedCity]. Otherwise only places whose
   /// [Place.district] equals it (always set together with its city).
   String? _selectedArea;
+
+  /// [BoardRef.key]s picked in the drawer's Boards section; empty = every
+  /// place. A place shows when it's on ANY of them (ANDed with the rest).
+  Set<String> _selectedBoards = const {};
+
+  /// Drawer section open/closed state, kept here so it survives the drawer
+  /// being closed and reopened.
+  bool _boardsExpanded = true;
+  bool _areasExpanded = true;
 
   /// The place currently highlighted on both the map (max z-order + scale)
   /// and the list (scrolled into view + tinted row). A notifier rather than
@@ -133,10 +151,21 @@ class _MapScreenState extends State<MapScreen>
     city: _selectedCity,
     district: _selectedArea,
     query: _searchController.text,
+    boards: _selectedBoards,
   );
 
-  List<Place> _visibleNow() =>
-      _filterCache.visibleFor(PlaceStore.instance.places.value, _filter);
+  /// Place ↔ board membership for the current snapshot (memoized).
+  BoardIndex _boardIndexNow() => _filterCache.boardsFor(
+    PlaceStore.instance.places.value,
+    BoardStore.instance.boards.value,
+    SharedBoardStore.instance.boards.value,
+  );
+
+  List<Place> _visibleNow() => _filterCache.visibleFor(
+    PlaceStore.instance.places.value,
+    _filter,
+    boards: _boardIndexNow(),
+  );
 
   /// How many logical pixels of screen height the list sheet currently
   /// covers, used to keep map moves from landing a pin underneath it.
@@ -241,6 +270,64 @@ class _MapScreenState extends State<MapScreen>
     setState(change);
     _pendingFilterFit = always;
     Navigator.of(context).pop();
+  }
+
+  /// Board rows are multi-select, so a toggle keeps the drawer open; the
+  /// camera fits the new results once it closes (see [_onDrawerChanged]).
+  void _toggleBoard(String key) {
+    setState(() {
+      _selectedBoards = _selectedBoards.contains(key)
+          ? ({..._selectedBoards}..remove(key))
+          : {..._selectedBoards, key};
+    });
+    _pendingFilterFit = true;
+  }
+
+  void _clearBoards() {
+    if (_selectedBoards.isEmpty) return;
+    setState(() => _selectedBoards = const {});
+    _pendingFilterFit = true;
+  }
+
+  /// A [MapFocusController] request from the Boards tab: show only that
+  /// board — the other filters and the search are cleared so none of its
+  /// places stay hidden — then fly to fit its places after the frame.
+  void _onFocusRequest() {
+    final request = widget.focus?.value;
+    if (request == null || !mounted) return;
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+    _selectedPlaceId.value = null;
+    _previewVisible.value = false;
+    _pendingFilterFit = null;
+    setState(() {
+      _selected = null;
+      _selectedType = null;
+      _selectedCity = null;
+      _selectedArea = null;
+      _selectedBoards = {request.boardKey};
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(widget.focus?.value, request)) return;
+      final visible = _visibleNow();
+      if (visible.isEmpty) {
+        final name = _boardIndexNow().byKey(request.boardKey)?.name;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              name == null
+                  ? 'None of this board’s places are on your map'
+                  : 'None of “$name”’s places are on your map',
+            ),
+          ),
+        );
+        return;
+      }
+      // One place gets a small box around it, several their bounds; both
+      // skip non-finite points and a NaN result (see _fitFor/_flyToFit).
+      final fit = _fitFor(context, visible);
+      if (fit != null) _flyToFit(fit);
+    });
   }
 
   void _onDrawerChanged(bool open) {
@@ -405,10 +492,21 @@ class _MapScreenState extends State<MapScreen>
     super.initState();
     _cameraAnimation = AnimationController(vsync: this)
       ..addListener(_onCameraTick);
+    widget.focus?.addListener(_onFocusRequest);
+  }
+
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focus != widget.focus) {
+      oldWidget.focus?.removeListener(_onFocusRequest);
+      widget.focus?.addListener(_onFocusRequest);
+    }
   }
 
   @override
   void dispose() {
+    widget.focus?.removeListener(_onFocusRequest);
     _cameraAnimation.dispose();
     _sheetExtentController.dispose();
     _searchController.dispose();
@@ -420,14 +518,29 @@ class _MapScreenState extends State<MapScreen>
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, loaded, _) {
-        // Memoized: unchanged places + filter → the same instances, no
-        // per-place work (see MapFilterCache).
+    final sharedBoards = SharedBoardStore.instance.boards;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        PlaceStore.instance.places,
+        BoardStore.instance.boards,
+        sharedBoards,
+      ]),
+      builder: (context, _) {
+        final loaded = PlaceStore.instance.places.value;
+        // Memoized: unchanged places + boards + filter → the same
+        // instances, no per-place work (see MapFilterCache).
         final index = _filterCache.indexFor(loaded);
         final all = index.all;
-        final visible = _filterCache.visibleFor(loaded, _filter);
+        final boardIndex = _filterCache.boardsFor(
+          loaded,
+          BoardStore.instance.boards.value,
+          sharedBoards.value,
+        );
+        final visible = _filterCache.visibleFor(
+          loaded,
+          _filter,
+          boards: boardIndex,
+        );
         // Only needed until the first fit (and for the one-time options).
         final initialFit = !_fittedToPlaces || _mapOptions == null
             ? _fitFor(context, all)
@@ -455,6 +568,22 @@ class _MapScreenState extends State<MapScreen>
         // notifiers here would rebuild listeners during build. Re-checks
         // `_selectedPlaceId` still equals the id that dropped out before
         // clearing, in case more changes landed before the frame runs.
+        // A picked board that no longer exists (deleted, left, or "New
+        // finds" emptied) would hide every pin with no chip to clear it —
+        // drop it after the frame, same deferral as the selection below.
+        final selectedBoards = _selectedBoards;
+        if (selectedBoards.any((key) => boardIndex.byKey(key) == null)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !identical(_selectedBoards, selectedBoards)) return;
+            setState(() {
+              _selectedBoards = {
+                for (final key in selectedBoards)
+                  if (_boardIndexNow().byKey(key) != null) key,
+              };
+            });
+          });
+        }
+
         final selectedId = _selectedPlaceId.value;
         if (selectedId != null && !visible.any((p) => p.id == selectedId)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -498,6 +627,16 @@ class _MapScreenState extends State<MapScreen>
               _selectedCity = city;
               _selectedArea = district;
             }, always: city != null),
+            areasExpanded: _areasExpanded,
+            onToggleAreas: () =>
+                setState(() => _areasExpanded = !_areasExpanded),
+            boardIndex: boardIndex,
+            selectedBoards: _selectedBoards,
+            onToggleBoard: _toggleBoard,
+            onClearBoards: _clearBoards,
+            boardsExpanded: _boardsExpanded,
+            onToggleBoards: () =>
+                setState(() => _boardsExpanded = !_boardsExpanded),
           ),
           body: Stack(
             children: [
@@ -541,7 +680,9 @@ class _MapScreenState extends State<MapScreen>
                         setState(() {});
                       },
                     ),
-                    if (_selected != null || _selectedCity != null)
+                    if (_selected != null ||
+                        _selectedCity != null ||
+                        _selectedBoards.isNotEmpty)
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Padding(
@@ -583,6 +724,16 @@ class _MapScreenState extends State<MapScreen>
                                     _selectedArea = null;
                                   }),
                                 ),
+                              for (final key in _selectedBoards)
+                                if (boardIndex.byKey(key) case final board?)
+                                  _BoardChip(
+                                    board: board,
+                                    count: boardIndex.countOf(key),
+                                    onClear: () => setState(() {
+                                      _selectedBoards = {..._selectedBoards}
+                                        ..remove(key);
+                                    }),
+                                  ),
                             ],
                           ),
                         ),
@@ -603,6 +754,7 @@ class _MapScreenState extends State<MapScreen>
               _PreviewCardLayer(
                 sheetExtentController: _sheetExtentController,
                 places: visible,
+                boardIndex: boardIndex,
                 selectedId: _selectedPlaceId,
                 previewVisible: _previewVisible,
                 onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
@@ -978,6 +1130,72 @@ class _AreaChip extends StatelessWidget {
   }
 }
 
+/// Board counterpart to [_CategoryChip], one per picked board: its emoji +
+/// "Tokyo trip · 12" (places on the map) with a ✕ that drops just that
+/// board from the filter.
+class _BoardChip extends StatelessWidget {
+  const _BoardChip({
+    required this.board,
+    required this.count,
+    required this.onClear,
+  });
+
+  final BoardRef board;
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surface,
+      elevation: 1,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              label: 'Board',
+              child: ExcludeSemantics(
+                child: Text(board.emoji, style: const TextStyle(fontSize: 14)),
+              ),
+            ),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 200),
+              child: Text(
+                '${board.name} · $count',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Semantics(
+              button: true,
+              label: 'Clear board filter ${board.name}',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onClear,
+                child: const Padding(
+                  padding: EdgeInsets.all(3),
+                  child: Icon(Icons.close, size: 15),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A flag for [countryCode] (wrapped in [Semantics], per the emoji rule),
 /// or a pin icon when the country is unknown.
 class _AreaLeading extends StatelessWidget {
@@ -1013,7 +1231,10 @@ String _formatCount(int n) {
 /// Left drawer listing "All" plus every category present, with counts.
 /// Tapping a row applies the filter and closes the drawer. The Restaurant
 /// row is expandable — see [_RestaurantCategoryTile] — to filter by cuisine
-/// sub-type without leaving the Restaurant category.
+/// sub-type without leaving the Restaurant category. Below it, two
+/// collapsible sections: Boards (multi-select toggles that keep the drawer
+/// open) and Areas (country → city → district, each level A–Z and
+/// collapsible).
 class _CategoryDrawer extends StatelessWidget {
   const _CategoryDrawer({
     required this.counts,
@@ -1027,6 +1248,14 @@ class _CategoryDrawer extends StatelessWidget {
     required this.selectedCity,
     required this.selectedArea,
     required this.onSelectArea,
+    required this.areasExpanded,
+    required this.onToggleAreas,
+    required this.boardIndex,
+    required this.selectedBoards,
+    required this.onToggleBoard,
+    required this.onClearBoards,
+    required this.boardsExpanded,
+    required this.onToggleBoards,
   });
 
   final Map<PlaceCategory, int> counts;
@@ -1044,9 +1273,30 @@ class _CategoryDrawer extends StatelessWidget {
   /// (city, null) = a whole city, (city, district) = one district.
   final void Function(String? city, String? district) onSelectArea;
 
+  final bool areasExpanded;
+  final VoidCallback onToggleAreas;
+
+  final BoardIndex boardIndex;
+  final Set<String> selectedBoards;
+  final ValueChanged<String> onToggleBoard;
+  final VoidCallback onClearBoards;
+  final bool boardsExpanded;
+  final VoidCallback onToggleBoards;
+
   @override
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
+    // Boards with pins on the map, plus any still picked (so it can be
+    // unticked even after its places are gone).
+    final boards = [
+      for (final board in boardIndex.boards)
+        if (boardIndex.countOf(board.key) > 0 ||
+            selectedBoards.contains(board.key))
+          board,
+    ];
+    // One country: open it straight away; several: collapsed, except the
+    // one holding the picked city.
+    final expandCountries = areas.countries.length == 1;
     return Drawer(
       child: SafeArea(
         child: ListView(
@@ -1094,42 +1344,68 @@ class _CategoryDrawer extends StatelessWidget {
                   selected: selected == entry.key,
                   onTap: () => onSelect(entry.key),
                 ),
-            const Divider(height: 24),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: Text(
-                'Areas',
-                style: Theme.of(context).textTheme.titleLarge,
+            if (boards.isNotEmpty) ...[
+              const Divider(height: 24),
+              _SectionHeader(
+                title: 'Boards',
+                expanded: boardsExpanded,
+                onToggle: onToggleBoards,
               ),
+              if (boardsExpanded) ...[
+                _CategoryTile(
+                  leading: const Icon(Icons.dashboard_outlined),
+                  label: 'All boards',
+                  count: total,
+                  color: AppTheme.coral,
+                  selected: selectedBoards.isEmpty,
+                  onTap: onClearBoards,
+                ),
+                for (final board in boards)
+                  _BoardFilterTile(
+                    board: board,
+                    count: boardIndex.countOf(board.key),
+                    selected: selectedBoards.contains(board.key),
+                    onToggle: () => onToggleBoard(board.key),
+                  ),
+              ],
+            ],
+            const Divider(height: 24),
+            _SectionHeader(
+              title: 'Areas',
+              expanded: areasExpanded,
+              onToggle: onToggleAreas,
             ),
             const _AreaProgressLine(),
-            _CategoryTile(
-              leading: const Icon(Icons.public),
-              label: 'All areas',
-              count: total,
-              color: AppTheme.coral,
-              selected: selectedCity == null,
-              onTap: () => onSelectArea(null, null),
-            ),
-            for (final group in areas.cities)
-              _CityTile(
-                group: group,
-                selected: selectedCity == group.city,
-                selectedDistrict: selectedCity == group.city
-                    ? selectedArea
-                    : null,
-                onSelectCity: () => onSelectArea(group.city, null),
-                onSelectDistrict: (d) => onSelectArea(group.city, d),
-              ),
-            if (areas.unknownCount > 0)
+            if (areasExpanded) ...[
               _CategoryTile(
-                leading: const Icon(Icons.help_outline),
-                label: 'Unknown area',
-                count: areas.unknownCount,
+                leading: const Icon(Icons.public),
+                label: 'All areas',
+                count: total,
                 color: AppTheme.coral,
-                selected: selectedCity == '',
-                onTap: () => onSelectArea('', null),
+                selected: selectedCity == null,
+                onTap: () => onSelectArea(null, null),
               ),
+              for (final country in areas.countries)
+                _CountryTile(
+                  key: ValueKey('country:${country.code}'),
+                  country: country,
+                  initiallyExpanded:
+                      expandCountries ||
+                      country.cities.any((c) => c.city == selectedCity),
+                  selectedCity: selectedCity,
+                  selectedArea: selectedArea,
+                  onSelectArea: onSelectArea,
+                ),
+              if (areas.unknownCount > 0)
+                _CategoryTile(
+                  leading: const Icon(Icons.help_outline),
+                  label: 'Unknown area',
+                  count: areas.unknownCount,
+                  color: AppTheme.coral,
+                  selected: selectedCity == '',
+                  onTap: () => onSelectArea('', null),
+                ),
+            ],
             const Divider(height: 24),
             // Manual trigger for the rescan that also runs automatically
             // after a detection-keyword update (restaurant_type_rescan.dart).
@@ -1162,6 +1438,220 @@ class _CategoryDrawer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Collapsible drawer section title ("Boards", "Areas"): the whole row
+/// toggles, with a chevron and the expanded state exposed to screen readers.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.title,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String title;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      expanded: expanded,
+      label: title,
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onToggle,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 20, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                Icon(expanded ? Icons.expand_less : Icons.expand_more),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A board in the drawer's Boards section: emoji + name + places on the
+/// map, with a checkbox — tapping toggles it in the (multi-select) filter.
+class _BoardFilterTile extends StatelessWidget {
+  const _BoardFilterTile({
+    required this.board,
+    required this.count,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  final BoardRef board;
+  final int count;
+  final bool selected;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: MergeSemantics(
+        child: Semantics(
+          checked: selected,
+          child: ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+            ),
+            selected: selected,
+            selectedTileColor: AppTheme.coral.withValues(alpha: 0.16),
+            selectedColor: scheme.onSurface,
+            leading: SizedBox(
+              width: 28,
+              child: Center(
+                child: Semantics(
+                  label: board.shared ? 'Shared board' : 'Board',
+                  child: ExcludeSemantics(
+                    child: Text(
+                      board.emoji,
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            title: Text(
+              board.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+            subtitle: board.shared ? const Text('Shared') : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$count'),
+                const SizedBox(width: 8),
+                ExcludeSemantics(
+                  child: Icon(
+                    selected ? Icons.check_box : Icons.check_box_outline_blank,
+                    color: selected ? AppTheme.coral : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            onTap: onToggle,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Country row in the drawer's Areas section: flag + name + count; the
+/// whole row expands/collapses its cities (A–Z, each a [_CityTile]). There
+/// is no country-wide filter — pick a city or district inside. Re-expands
+/// when a city inside becomes the picked area.
+class _CountryTile extends StatefulWidget {
+  const _CountryTile({
+    super.key,
+    required this.country,
+    required this.initiallyExpanded,
+    required this.selectedCity,
+    required this.selectedArea,
+    required this.onSelectArea,
+  });
+
+  final CountryGroup country;
+  final bool initiallyExpanded;
+  final String? selectedCity;
+  final String? selectedArea;
+  final void Function(String? city, String? district) onSelectArea;
+
+  @override
+  State<_CountryTile> createState() => _CountryTileState();
+}
+
+class _CountryTileState extends State<_CountryTile> {
+  late bool _expanded = widget.initiallyExpanded;
+
+  @override
+  void didUpdateWidget(covariant _CountryTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final city = widget.selectedCity;
+    if (city != null &&
+        city != oldWidget.selectedCity &&
+        widget.country.cities.any((c) => c.city == city)) {
+      _expanded = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final country = widget.country;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: Semantics(
+            expanded: _expanded,
+            child: ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(28),
+              ),
+              leading: SizedBox(
+                width: 28,
+                child: Center(
+                  child: _AreaLeading(countryCode: country.code, size: 20),
+                ),
+              ),
+              title: Text(
+                country.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${country.count}'),
+                  const SizedBox(width: 8),
+                  ExcludeSemantics(
+                    child: Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                  ),
+                ],
+              ),
+              onTap: () => setState(() => _expanded = !_expanded),
+            ),
+          ),
+        ),
+        if (_expanded)
+          for (final group in country.cities)
+            Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: _CityTile(
+                group: group,
+                selected: widget.selectedCity == group.city,
+                selectedDistrict: widget.selectedCity == group.city
+                    ? widget.selectedArea
+                    : null,
+                onSelectCity: () => widget.onSelectArea(group.city, null),
+                onSelectDistrict: (d) => widget.onSelectArea(group.city, d),
+              ),
+            ),
+      ],
     );
   }
 }
@@ -1384,8 +1874,9 @@ class _AreaProgressLine extends StatelessWidget {
   }
 }
 
-/// City row in the drawer's Areas section: flag + city + count, expandable
-/// (same pattern as [_RestaurantCategoryTile]) to its districts by count.
+/// City row in the drawer's Areas section (under its [_CountryTile]): city
+/// + count, expandable (same pattern as [_RestaurantCategoryTile]) to its
+/// districts A–Z.
 /// Tapping the row filters to the city; a district row to that district.
 class _CityTile extends StatefulWidget {
   const _CityTile({
@@ -1434,14 +1925,10 @@ class _CityTileState extends State<_CityTile> {
             selected: widget.selected && widget.selectedDistrict == null,
             selectedTileColor: color.withValues(alpha: 0.16),
             selectedColor: onSurface,
-            leading: SizedBox(
+            // The country row above already shows the flag.
+            leading: const SizedBox(
               width: 28,
-              child: Center(
-                child: _AreaLeading(
-                  countryCode: widget.group.countryCode,
-                  size: 20,
-                ),
-              ),
+              child: Center(child: Icon(Icons.location_city_outlined)),
             ),
             title: Text(
               widget.group.city,
@@ -1454,14 +1941,17 @@ class _CityTileState extends State<_CityTile> {
               children: [
                 Text('${widget.group.count}'),
                 if (districts.isNotEmpty)
-                  IconButton(
-                    icon: Icon(
-                      _expanded ? Icons.expand_less : Icons.expand_more,
+                  Semantics(
+                    expanded: _expanded,
+                    child: IconButton(
+                      icon: Icon(
+                        _expanded ? Icons.expand_less : Icons.expand_more,
+                      ),
+                      tooltip: _expanded
+                          ? 'Hide ${widget.group.city} districts'
+                          : 'Show ${widget.group.city} districts',
+                      onPressed: () => setState(() => _expanded = !_expanded),
                     ),
-                    tooltip: _expanded
-                        ? 'Hide ${widget.group.city} districts'
-                        : 'Show ${widget.group.city} districts',
-                    onPressed: () => setState(() => _expanded = !_expanded),
                   ),
               ],
             ),
@@ -1512,12 +2002,16 @@ class _PreviewCardLayer extends StatelessWidget {
   const _PreviewCardLayer({
     required this.sheetExtentController,
     required this.places,
+    required this.boardIndex,
     required this.selectedId,
     required this.previewVisible,
     required this.onOpenDetail,
   });
 
   final DraggableScrollableController sheetExtentController;
+
+  /// Resolves the card's "which boards" line in O(1).
+  final BoardIndex boardIndex;
 
   /// The currently visible places; the card shows the selected one's
   /// latest data, and hides if it's filtered out.
@@ -1584,6 +2078,7 @@ class _PreviewCardLayer extends StatelessWidget {
                 : PlacePreviewCard(
                     key: ValueKey(place.id),
                     place: place,
+                    boards: boardIndex.boardsOf(place.id),
                     onOpenDetails: () => onOpenDetail(place),
                   ),
           );

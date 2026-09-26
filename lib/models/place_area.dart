@@ -44,3 +44,68 @@ class PlaceArea {
   @override
   String toString() => 'PlaceArea($city, $district, $countryCode)';
 }
+
+/// English name for an ISO 3166-1 alpha-2 [countryCode] ("JP" → "Japan"),
+/// for the common travel destinations; any other code is returned as-is
+/// (upper-cased), and an empty code reads "Unknown country".
+String countryName(String countryCode) {
+  final code = countryCode.trim().toUpperCase();
+  if (code.isEmpty) return 'Unknown country';
+  return _countryNames[code] ?? code;
+}
+
+const Map<String, String> _countryNames = {
+  'AE': 'United Arab Emirates',
+  'AR': 'Argentina',
+  'AT': 'Austria',
+  'AU': 'Australia',
+  'BE': 'Belgium',
+  'BR': 'Brazil',
+  'CA': 'Canada',
+  'CH': 'Switzerland',
+  'CN': 'China',
+  'CZ': 'Czechia',
+  'DE': 'Germany',
+  'DK': 'Denmark',
+  'EG': 'Egypt',
+  'ES': 'Spain',
+  'FI': 'Finland',
+  'FR': 'France',
+  'GB': 'United Kingdom',
+  'GR': 'Greece',
+  'HK': 'Hong Kong',
+  'HR': 'Croatia',
+  'HU': 'Hungary',
+  'ID': 'Indonesia',
+  'IE': 'Ireland',
+  'IL': 'Israel',
+  'IN': 'India',
+  'IS': 'Iceland',
+  'IT': 'Italy',
+  'JP': 'Japan',
+  'KH': 'Cambodia',
+  'KR': 'South Korea',
+  'LA': 'Laos',
+  'LK': 'Sri Lanka',
+  'MA': 'Morocco',
+  'MO': 'Macau',
+  'MV': 'Maldives',
+  'MX': 'Mexico',
+  'MY': 'Malaysia',
+  'NL': 'Netherlands',
+  'NO': 'Norway',
+  'NP': 'Nepal',
+  'NZ': 'New Zealand',
+  'PE': 'Peru',
+  'PH': 'Philippines',
+  'PL': 'Poland',
+  'PT': 'Portugal',
+  'SE': 'Sweden',
+  'SG': 'Singapore',
+  'TH': 'Thailand',
+  'TR': 'Türkiye',
+  'TW': 'Taiwan',
+  'US': 'United States',
+  'VN': 'Vietnam',
+  'ZA': 'South Africa',
+};

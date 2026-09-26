@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../data/map_filter.dart';
 import '../data/photo_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
@@ -13,20 +14,27 @@ import 'score_stars.dart';
 /// Roughly how tall [PlacePreviewCard] renders at the default text scale —
 /// used to lift other floating map chrome (the attribution button) clear of
 /// it. Not a layout constraint: the card still sizes to its content.
-const double kPlacePreviewCardApproxHeight = 136;
+const double kPlacePreviewCardApproxHeight = 154;
 
 /// Google-Maps-style floating card for a tapped map pin: thumbnail, name,
-/// category + area, the user's score, and Details / Maps / photo actions.
-/// Tapping the card body opens the details too.
+/// category + area, the user's score, which boards it's on (when [boards]
+/// is given), and Details / Maps / photo actions. Tapping the card body
+/// opens the details too.
 class PlacePreviewCard extends StatelessWidget {
   const PlacePreviewCard({
     super.key,
     required this.place,
     required this.onOpenDetails,
+    this.boards,
   });
 
   final Place place;
   final VoidCallback onOpenDetails;
+
+  /// The boards [place] is on (personal and shared), from the map's
+  /// [BoardIndex]. null hides the line; empty or only the auto "New finds"
+  /// board reads "Not on a board".
+  final List<BoardRef>? boards;
 
   static const double _thumbSize = 72;
 
@@ -109,6 +117,10 @@ class PlacePreviewCard extends StatelessWidget {
                             ],
                           ],
                         ),
+                        if (boards case final boards?) ...[
+                          const SizedBox(height: 4),
+                          _BoardsLine(boards: boards),
+                        ],
                       ],
                     ),
                   ),
@@ -157,6 +169,48 @@ class PlacePreviewCard extends StatelessWidget {
         const SnackBar(content: Text('Could not open Google Maps')),
       );
     }
+  }
+}
+
+/// "📋 Tokyo trip · Food list" — the boards a place is on, or "Not on a
+/// board" when it's only in the auto "New finds" board.
+class _BoardsLine extends StatelessWidget {
+  const _BoardsLine({required this.boards});
+
+  final List<BoardRef> boards;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final names = [
+      for (final board in boards)
+        if (!board.isAuto) board.name,
+    ];
+    final onNone = names.isEmpty;
+    return Row(
+      children: [
+        Semantics(
+          label: 'Boards',
+          child: const ExcludeSemantics(
+            child: Text('📋', style: TextStyle(fontSize: 13)),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            onNone ? 'Not on a board' : names.join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontStyle: onNone ? FontStyle.italic : FontStyle.normal,
+              fontWeight: onNone ? FontWeight.w400 : FontWeight.w600,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

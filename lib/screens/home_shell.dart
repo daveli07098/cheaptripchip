@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
+import '../data/map_focus.dart';
 import '../data/place_store.dart';
 import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
@@ -50,6 +51,9 @@ class _HomeShellState extends State<HomeShell> {
   /// Same duplicate-delivery guard for shared-board invite links.
   String? _lastInviteKey;
   DateTime? _lastInviteAt;
+
+  /// Boards tab → "Show on map" → the map applies that board's filter.
+  final _mapFocus = MapFocusController();
 
   static const _titles = ['Explore', 'Saved', 'Boards'];
 
@@ -278,6 +282,7 @@ class _HomeShellState extends State<HomeShell> {
   void dispose() {
     _shareSub?.cancel();
     _linkSub?.cancel();
+    _mapFocus.dispose();
     super.dispose();
   }
 
@@ -332,9 +337,9 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          MapScreen(onAddFind: _openAddFind),
+          MapScreen(onAddFind: _openAddFind, focus: _mapFocus),
           const FeedScreen(),
-          const BoardsScreen(),
+          BoardsScreen(onShowOnMap: _showBoardOnMap),
         ],
       ),
       // The map tab surfaces its own "Add a find" button in the sheet
@@ -380,6 +385,12 @@ class _HomeShellState extends State<HomeShell> {
         ],
       ),
     );
+  }
+
+  /// Switches to the map tab, then asks it to show board [boardKey].
+  void _showBoardOnMap(String boardKey) {
+    setState(() => _index = 0);
+    _mapFocus.showBoard(boardKey);
   }
 
   /// Zero-arg wrapper so [MapScreen]'s `VoidCallback onAddFind` can call
