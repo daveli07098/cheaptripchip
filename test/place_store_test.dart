@@ -1,6 +1,7 @@
 import 'package:cheaptripchip/data/local_repositories.dart';
 import 'package:cheaptripchip/data/mock_data.dart';
 import 'package:cheaptripchip/data/place_store.dart';
+import 'package:cheaptripchip/data/repositories.dart';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -105,6 +106,97 @@ void main() {
       expect(store.byId(target.id).restaurantType, isNull);
     });
 
+    test(
+      'setRestaurantType marks a pick manual, unless told otherwise',
+      () async {
+        final store = PlaceStore.instance;
+        final target = MockData.places.first;
+
+        await store.setRestaurantType(target.id, RestaurantType.udonSoba);
+        await Future<void>.delayed(Duration.zero);
+        expect(store.byId(target.id).restaurantTypeManual, isTrue);
+
+        await store.setRestaurantType(
+          target.id,
+          RestaurantType.ramen,
+          manual: false,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(store.byId(target.id).restaurantTypeManual, isFalse);
+
+        await store.setRestaurantType(target.id, RestaurantType.sushi);
+        await Future<void>.delayed(Duration.zero);
+        await store.setRestaurantType(target.id, null);
+        await Future<void>.delayed(Duration.zero);
+        expect(store.byId(target.id).restaurantTypeManual, isFalse);
+      },
+    );
+
+    test('rescanRestaurantTypes refines automatic types only', () async {
+      final store = PlaceStore.instance;
+      Place restaurant(
+        String id,
+        String name,
+        RestaurantType? type, {
+        bool manual = false,
+      }) => _testPlace.copyWith(
+        id: id,
+        name: name,
+        descriptionEn: '',
+        originalCaption: '',
+        address: '',
+        category: PlaceCategory.restaurant,
+        restaurantType: type,
+        restaurantTypeManual: manual,
+      );
+      final repository = _RecordingRepository([
+        restaurant('auto', 'Udon Shin', RestaurantType.japanese),
+        restaurant('other', 'Pizzeria Mario', RestaurantType.other),
+        restaurant(
+          'manual',
+          'Soba Ichi',
+          RestaurantType.japanese,
+          manual: true,
+        ),
+        restaurant('unset', 'Tempura Kondo', null),
+        restaurant('gemini', 'Udon Taira', RestaurantType.ramen),
+        // Enough extra "Other" udon shops to need a second write chunk.
+        for (var i = 0; i < PlaceStore.areaWriteChunk; i++)
+          restaurant('bulk$i', 'Udon $i', RestaurantType.other),
+      ]);
+      store.bindRepository(repository);
+      await store.loaded;
+
+      expect(
+        await store.rescanRestaurantTypes(),
+        2 + PlaceStore.areaWriteChunk,
+      );
+      expect(repository.updateAllSizes, [PlaceStore.areaWriteChunk, 2]);
+      expect(store.byId('auto').restaurantType, RestaurantType.udonSoba);
+      expect(store.byId('auto').restaurantTypeManual, isFalse);
+      expect(store.byId('other').restaurantType, RestaurantType.italian);
+      expect(store.byId('manual').restaurantType, RestaurantType.japanese);
+      expect(store.byId('unset').restaurantType, isNull);
+      expect(
+        store.byId('unset').effectiveRestaurantType,
+        RestaurantType.tempura,
+      );
+      expect(store.byId('gemini').restaurantType, RestaurantType.ramen);
+      expect(store.byId('bulk0').restaurantType, RestaurantType.udonSoba);
+      // Feed order is kept.
+      expect(store.places.value.take(5).map((p) => p.id), [
+        'auto',
+        'other',
+        'manual',
+        'unset',
+        'gemini',
+      ]);
+
+      // A second pass has nothing left to do.
+      expect(await store.rescanRestaurantTypes(), 0);
+      expect(repository.updateAllSizes, hasLength(2));
+    });
+
     test('setRestaurantType does nothing for an unknown id', () async {
       final store = PlaceStore.instance;
       final beforeCount = store.places.value.length;
@@ -160,4 +252,29 @@ void main() {
       expect(store.places.value.first.id, _testPlace.id);
     });
   });
+}
+
+/// Minimal [PlaceRepository] that replays a fixed list and records the size
+/// of each [updateAll] batch.
+class _RecordingRepository implements PlaceRepository {
+  _RecordingRepository(this._places);
+
+  final List<Place> _places;
+  final List<int> updateAllSizes = [];
+
+  @override
+  Stream<List<Place>> watch() => Stream.value(_places);
+
+  @override
+  Future<void> updateAll(List<Place> places) async =>
+      updateAllSizes.add(places.length);
+
+  @override
+  Future<void> upsert(Place place) async {}
+
+  @override
+  Future<void> upsertAll(List<Place> places) async {}
+
+  @override
+  Future<void> delete(String id) async {}
 }

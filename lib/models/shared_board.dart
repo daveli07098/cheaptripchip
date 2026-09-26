@@ -261,5 +261,9 @@ Place sharedCopyOf(Place place, {bool includeOwnerNotes = false}) {
     isFavorite: false,
     clearMyScore: !includeOwnerNotes,
     myNotes: includeOwnerNotes ? place.myNotes : '',
+    // extraNotes are the owner's private dated log, never shown or shared
+    // on a board even with includeOwnerNotes on — and firestore.rules'
+    // validPlace() only allows the key when empty, so this must stay [].
+    extraNotes: const [],
   );
 }

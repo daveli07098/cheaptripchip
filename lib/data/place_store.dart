@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/place_note.dart';
+import '../models/restaurant_type_detect.dart';
 import '../services/auth_service.dart';
 import 'firestore_repositories.dart';
 import 'guest_storage.dart';
@@ -28,6 +30,13 @@ class PlaceStore {
 
   PlaceRepository _repository = LocalPlaceRepository();
   StreamSubscription<List<Place>>? _subscription;
+  Completer<void> _loaded = Completer<void>();
+
+  /// Completes once the currently bound repository has delivered its first
+  /// snapshot — i.e. [places] holds the user's real data, not the
+  /// [MockData] seed or the previous account's places. Replaced on every
+  /// [bindRepository], so await it right after binding.
+  Future<void> get loaded => _loaded.future;
 
   /// The persisted guest repository, created on the first guest [bind] and
   /// reused afterwards so a sign-out → guest round trip never races its own
@@ -55,8 +64,10 @@ class PlaceStore {
   void bindRepository(PlaceRepository repository) {
     _subscription?.cancel();
     _repository = repository;
+    final loaded = _loaded = Completer<void>();
     _subscription = repository.watch().listen((value) {
       places.value = value;
+      if (!loaded.isCompleted) loaded.complete();
     });
   }
 
@@ -87,8 +98,8 @@ class PlaceStore {
     await _repository.upsertAll(newPlaces);
   }
 
-  /// Firestore chunk size for [updateAreas] — a flush is a few small
-  /// batched writes rather than one huge one.
+  /// Firestore chunk size for [updateAreas] and [rescanRestaurantTypes] — a
+  /// flush is a few small batched writes rather than one huge one.
   static const areaWriteChunk = 50;
 
   /// Sets [Place.region]/[Place.areaLabel]/[Place.countryCode] for many
@@ -181,19 +192,56 @@ class PlaceStore {
 
   /// Sets (or clears back to the default, when [type] is null)
   /// [Place.restaurantType] for the place with the given [id]. Optimistic,
-  /// like [toggleFavorite]/[setPhotoMarker].
-  Future<void> setRestaurantType(String id, RestaurantType? type) async {
+  /// like [toggleFavorite]/[setPhotoMarker]. [manual] (default: this is the
+  /// detail sheet's picker) marks the pick as the user's own
+  /// ([Place.restaurantTypeManual]) so [rescanRestaurantTypes] never
+  /// overrides it; clearing always resets the flag.
+  Future<void> setRestaurantType(
+    String id,
+    RestaurantType? type, {
+    bool manual = true,
+  }) async {
     final current = byIdOrNull(id);
     if (current == null) return;
     final updated = current.copyWith(
       restaurantType: type,
       clearRestaurantType: type == null,
+      restaurantTypeManual: type != null && manual,
     );
     places.value = [
       for (final place in places.value)
         if (place.id == id) updated else place,
     ];
     await _repository.upsert(updated);
+  }
+
+  /// Re-runs keyword detection over every saved place and stores the
+  /// refinements [refinedRestaurantType] finds — automatic types that were
+  /// "Other" or a generic bucket a newer, more specific type was split out
+  /// of. Manual picks and unset types are never written. One [places]
+  /// update, then [PlaceRepository.updateAll] in chunks of [areaWriteChunk]
+  /// (like [updateAreas]). Returns how many places changed.
+  Future<int> rescanRestaurantTypes() async {
+    final changed = <Place>[];
+    final next = <Place>[];
+    for (final place in places.value) {
+      final refined = refinedRestaurantType(place);
+      if (refined == null) {
+        next.add(place);
+        continue;
+      }
+      final updated = place.copyWith(restaurantType: refined);
+      changed.add(updated);
+      next.add(updated);
+    }
+    if (changed.isEmpty) return 0;
+    places.value = next;
+    for (var start = 0; start < changed.length; start += areaWriteChunk) {
+      await _repository.updateAll(
+        changed.skip(start).take(areaWriteChunk).toList(),
+      );
+    }
+    return changed.length;
   }
 
   /// Changes [Place.category] for the place with the given [id] — the
@@ -206,6 +254,104 @@ class PlaceStore {
     final current = byIdOrNull(id);
     if (current == null || current.category == category) return;
     final updated = current.copyWith(category: category);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
+
+  /// Counter folded into the current microsecond timestamp — same pattern as
+  /// TripShare._newId — so note ids stay unique even when several are added
+  /// within the same microsecond (e.g. tests).
+  static int _noteIdCounter = 0;
+
+  static String _newNoteId() {
+    _noteIdCounter++;
+    return 'note-${DateTime.now().microsecondsSinceEpoch}-$_noteIdCounter';
+  }
+
+  /// Appends a new dated [PlaceNote] to [Place.extraNotes] for the place
+  /// with the given [id] — the detail sheet's "Add another note". No-ops on
+  /// blank [text] or an unknown id. Optimistic, like [toggleFavorite].
+  Future<void> addNote(String id, String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    final note = PlaceNote(
+      id: _newNoteId(),
+      text: trimmed,
+      createdAt: DateTime.now(),
+    );
+    final updated = current.copyWith(extraNotes: [...current.extraNotes, note]);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
+
+  /// Replaces the text of the [Place.extraNotes] entry [noteId] (keeping its
+  /// original [PlaceNote.createdAt]) for the place with the given [id].
+  /// No-ops on blank [text] or an unknown place/note id.
+  Future<void> editNote(String id, String noteId, String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    final notes = <PlaceNote>[];
+    var found = false;
+    for (final note in current.extraNotes) {
+      if (note.id == noteId) {
+        found = true;
+        notes.add(note.copyWith(text: trimmed));
+      } else {
+        notes.add(note);
+      }
+    }
+    if (!found) return;
+    final updated = current.copyWith(extraNotes: notes);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
+
+  /// Removes the [Place.extraNotes] entry [noteId] for the place with the
+  /// given [id]. Returns the removed [PlaceNote] (for an Undo snackbar via
+  /// [restoreNote]), or `null` if the place/note wasn't found.
+  Future<PlaceNote?> deleteNote(String id, String noteId) async {
+    final current = byIdOrNull(id);
+    if (current == null) return null;
+    final notes = <PlaceNote>[];
+    PlaceNote? removed;
+    for (final note in current.extraNotes) {
+      if (note.id == noteId) {
+        removed = note;
+      } else {
+        notes.add(note);
+      }
+    }
+    if (removed == null) return null;
+    final updated = current.copyWith(extraNotes: notes);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+    return removed;
+  }
+
+  /// Undo for [deleteNote]: re-inserts [note] (same id/createdAt) for the
+  /// place with the given [id], unless a note with that id is already
+  /// present (e.g. UNDO tapped twice).
+  Future<void> restoreNote(String id, PlaceNote note) async {
+    final current = byIdOrNull(id);
+    if (current == null) return;
+    if (current.extraNotes.any((n) => n.id == note.id)) return;
+    final updated = current.copyWith(extraNotes: [...current.extraNotes, note]);
     places.value = [
       for (final place in places.value)
         if (place.id == id) updated else place,

@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- 30 restaurant sub-types in grouped order (udon & soba, tempura, tonkatsu,
+  French, Italian, dim sum, bakery, …) with EN/JP/zh keyword detection; a
+  one-time re-scan upgrades auto-detected types (never manual picks), also
+  available as "Re-scan food types" in the map drawer.
+- Extra dated notes under "My review" on your own places (add, edit, swipe
+  to delete with undo); never copied into shared boards.
 - Move a place between personal boards: the row ⋮ menu on a personal
   board ("Move to board…" / "Remove from board"), a long-press on the row,
   or "Move to another board" on the place page opened from that board. The
@@ -273,6 +279,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   owner's place id, so the personal widgets' usual `PlaceStore`/`PhotoStore`
   lookups by id would leak the owner's own photo, score, and notes.
 ### Fixed
+- Smoother pin tap and place page: header photo pre-warmed and faded in,
+  one colour filter for dark-mode tiles, preview card slides without an
+  opacity layer, lower page sections build a frame later, and the page no
+  longer rebuilds on every background area update.
 - Boards tab: board cards no longer collapse (and their sections no longer
   reset) when the list shifts — e.g. the "New finds" card appearing after
   a place is removed from its last board, or a board delete/undo. The

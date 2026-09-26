@@ -68,7 +68,12 @@ void main() {
         const cases = {
           'sushi': RestaurantType.sushi,
           'sashimi': RestaurantType.sushi,
-          'yakitori': RestaurantType.izakaya,
+          'yakitori': RestaurantType.yakitori,
+          'udon': RestaurantType.udonSoba,
+          'soba': RestaurantType.udonSoba,
+          'pizza': RestaurantType.italian,
+          'French': RestaurantType.french,
+          'unagi': RestaurantType.donburi,
           'dim sum': RestaurantType.dimsum,
           'cantonese': RestaurantType.dimsum,
           'bbq': RestaurantType.yakiniku,

@@ -60,4 +60,30 @@ void main() {
       expect(find.text('1 of $total places'), findsOneWidget);
     },
   );
+
+  testWidgets('"Re-scan food types" reports when nothing needs changing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MaterialApp(home: MapScreen(onAddFind: () {})));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Categories'));
+    await tester.pumpAndSettle();
+    final rescan = find.text('Re-scan food types');
+    await tester.scrollUntilVisible(
+      rescan,
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(Drawer),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.tap(rescan);
+    await tester.pump();
+
+    // Mock data's only restaurant has no stored type — nothing to refine.
+    expect(find.text('Food types are up to date'), findsOneWidget);
+  });
 }

@@ -79,6 +79,9 @@ Future<void> _pump(WidgetTester tester, Place place) async {
       ),
     ),
   );
+  // The ratings section builds one frame after the sheet (see
+  // _AfterFirstFrame); one more pump delivers its ratings stream.
+  await tester.pump();
   await tester.pump();
 }
 

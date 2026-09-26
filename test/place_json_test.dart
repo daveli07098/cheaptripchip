@@ -286,6 +286,44 @@ void main() {
         isNull,
       );
     });
+
+    test('restaurantTypeManual round-trips and defaults to false', () {
+      const base = Place(
+        id: 'p',
+        name: 'n',
+        areaLabel: '',
+        region: '',
+        category: PlaceCategory.restaurant,
+        location: LatLng(1, 1),
+        descriptionEn: '',
+        originalCaption: '',
+        address: '',
+        hours: '',
+        sourceHandle: '',
+        sourcePlatform: SourcePlatform.instagram,
+      );
+      final manual = base.copyWith(
+        restaurantType: RestaurantType.udonSoba,
+        restaurantTypeManual: true,
+      );
+
+      expect(manual.toJson()['restaurantTypeManual'], isTrue);
+      final decoded = Place.fromJson(manual.toJson());
+      expect(decoded.restaurantType, RestaurantType.udonSoba);
+      expect(decoded.restaurantTypeManual, isTrue);
+
+      // Older docs have no flag; garbage reads as false too.
+      final json = base.toJson()..remove('restaurantTypeManual');
+      expect(Place.fromJson(json).restaurantTypeManual, isFalse);
+      expect(
+        Place.fromJson({
+          ...json,
+          'restaurantTypeManual': 'yes',
+        }).restaurantTypeManual,
+        isFalse,
+      );
+      expect(manual.copyWith(myNotes: 'x').restaurantTypeManual, isTrue);
+    });
   });
 
   group('Place.effectiveRestaurantType', () {

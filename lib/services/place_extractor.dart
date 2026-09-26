@@ -120,8 +120,10 @@ Return ONLY a JSON object, no prose, with these keys:
 - region: "City, Country" (e.g. "Tokyo, Japan")
 - category: one of restaurant, cafe, food, sightseeing, shopping, stay, nightlife
 - restaurantType: only when category is "restaurant" — cuisine/style, one of:
-  ramen, sushi, izakaya, yakiniku, hotpot, dimsum, chaChaanTeng, japanese,
-  korean, western, fineDining, other. Else null.
+  sushi, ramen, udonSoba, tempura, tonkatsu, donburi, curry, okonomiyaki,
+  yakitori, izakaya, yakiniku, japanese, hotpot, dimsum, chaChaanTeng,
+  chinese, korean, thai, vietnamese, indian, western, italian, french,
+  burger, seafood, fineDining, bakery, dessert, bar, other. Else null.
 - latitude: number or null if unknown
 - longitude: number or null if unknown
 - descriptionEn: a 1-2 sentence English summary
@@ -213,15 +215,36 @@ AUTHOR: ${meta.author ?? '(unknown)'}
       if (type.name.toLowerCase() == v) return type;
     }
     const synonyms = <String, RestaurantType>{
-      'sushi': RestaurantType.sushi,
       'sashimi': RestaurantType.sushi,
-      'yakitori': RestaurantType.izakaya,
-      'dim sum': RestaurantType.dimsum,
-      'cantonese': RestaurantType.dimsum,
+      'omakase': RestaurantType.fineDining,
+      'udon': RestaurantType.udonSoba,
+      'soba': RestaurantType.udonSoba,
+      'udon/soba': RestaurantType.udonSoba,
+      'unagi': RestaurantType.donburi,
+      'takoyaki': RestaurantType.okonomiyaki,
+      'kushikatsu': RestaurantType.yakitori,
       'bbq': RestaurantType.yakiniku,
       'barbecue': RestaurantType.yakiniku,
+      'washoku': RestaurantType.japanese,
+      'kaiseki': RestaurantType.fineDining,
+      'fine dining': RestaurantType.fineDining,
+      'hot pot': RestaurantType.hotpot,
+      'shabu-shabu': RestaurantType.hotpot,
+      'sukiyaki': RestaurantType.hotpot,
+      'dim sum': RestaurantType.dimsum,
+      'cantonese': RestaurantType.dimsum,
       'cha chaan teng': RestaurantType.chaChaanTeng,
       '茶餐廳': RestaurantType.chaChaanTeng,
+      'taiwanese': RestaurantType.chinese,
+      'sichuan': RestaurantType.chinese,
+      'steak': RestaurantType.western,
+      'steakhouse': RestaurantType.western,
+      'pizza': RestaurantType.italian,
+      'pasta': RestaurantType.italian,
+      'hamburger': RestaurantType.burger,
+      'sweets': RestaurantType.dessert,
+      'desserts': RestaurantType.dessert,
+      'pub': RestaurantType.bar,
     };
     return synonyms[v];
   }

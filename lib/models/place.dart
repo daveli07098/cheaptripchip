@@ -1,5 +1,6 @@
 import 'package:latlong2/latlong.dart';
 
+import 'place_note.dart';
 import 'restaurant_type_detect.dart';
 
 /// A saved travel find — extracted from a shared IG/TikTok post.
@@ -31,7 +32,9 @@ class Place {
     this.myNotes = '',
     this.myPhotoAt,
     this.restaurantType,
+    this.restaurantTypeManual = false,
     this.countryCode = '',
+    this.extraNotes = const [],
   });
 
   final String id;
@@ -109,17 +112,31 @@ class Place {
   final DateTime? myPhotoAt;
 
   /// The restaurant's cuisine/style sub-type — only meaningful when
-  /// [category] is [PlaceCategory.restaurant]. Null means "not set by the
-  /// user yet" (every place — including ones extracted from a shared post —
-  /// starts here; there is no automatic classification). See
-  /// [effectiveRestaurantType] for the display-time default, and
-  /// [copyWith]'s `clearRestaurantType` for how to reset it.
+  /// [category] is [PlaceCategory.restaurant]. Null means "not set yet": set
+  /// by the user via the detail-sheet picker (see [restaurantTypeManual]),
+  /// by Gemini extraction, or by the one-off refinement rescan
+  /// ([PlaceStore.rescanRestaurantTypes]). See [effectiveRestaurantType] for
+  /// the display-time default (keyword detection), and [copyWith]'s
+  /// `clearRestaurantType` for how to reset it.
   final RestaurantType? restaurantType;
+
+  /// Whether [restaurantType] was picked by the user in the detail sheet
+  /// (true) rather than set automatically — Gemini extraction, the rescan,
+  /// or data saved before this flag existed (false). The rescan never
+  /// touches a manual pick.
+  final bool restaurantTypeManual;
 
   /// ISO 3166-1 alpha-2 country code, upper-case ("JP", "HK", "TW"), used
   /// for the flag and grouping in the map drawer's Areas section. Empty when
   /// unknown (e.g. not reverse-geocoded yet).
   final String countryCode;
+
+  /// Extra dated notes the user keeps adding under [myNotes] (e.g. "2nd
+  /// visit: …") — see the "My review" section of the detail sheet. Empty
+  /// list means none yet. Never populated for a shared-board copy (see
+  /// `sharedCopyOf`) — these are private, unlike the single remark box some
+  /// shared-board flows expose.
+  final List<PlaceNote> extraNotes;
 
   /// The city part of [region] ("Tokyo, Japan" → "Tokyo"); empty when
   /// [region] is empty or the extractor's "Unknown" placeholder.
@@ -148,8 +165,10 @@ class Place {
   /// [restaurantType] when the user (or Gemini extraction) has set one —
   /// that stored value always wins — else a best-effort guess from
   /// [detectRestaurantType], else [RestaurantType.other]; `null` for every
-  /// non-restaurant category. Computed at read time (never written back —
-  /// there's nothing to migrate if the keyword list changes later). Prefer
+  /// non-restaurant category. The guess is computed at read time (never
+  /// written back), so unset places pick up keyword-list changes for free;
+  /// only stored automatic types need the refinement rescan
+  /// ([refinedRestaurantType]). Prefer
   /// this over the raw field wherever the UI needs to show, count, or filter
   /// by "the" type, so an unset type still reads as its best guess (or
   /// "Other") rather than as a special missing case.
@@ -215,7 +234,9 @@ class Place {
 
     /// Same as `clearMyScore`, for [Place.restaurantType].
     bool clearRestaurantType = false,
+    bool? restaurantTypeManual,
     String? countryCode,
+    List<PlaceNote>? extraNotes,
   }) {
     return Place(
       id: id ?? this.id,
@@ -243,7 +264,9 @@ class Place {
       restaurantType: clearRestaurantType
           ? null
           : (restaurantType ?? this.restaurantType),
+      restaurantTypeManual: restaurantTypeManual ?? this.restaurantTypeManual,
       countryCode: countryCode ?? this.countryCode,
+      extraNotes: extraNotes ?? this.extraNotes,
     );
   }
 
@@ -277,7 +300,11 @@ class Place {
       // leaks into the model.
       'myPhotoAt': myPhotoAt?.toUtc().toIso8601String(),
       'restaurantType': restaurantType?.name,
+      'restaurantTypeManual': restaurantTypeManual,
       'countryCode': countryCode,
+      // Always emitted (even empty) so a merge write can clear a deleted
+      // note — see the `savedAt`/merge note on FirestorePlaceRepository.upsert.
+      'extraNotes': extraNotes.map((n) => n.toJson()).toList(),
     };
   }
 
@@ -323,10 +350,20 @@ class Place {
       myNotes: json['myNotes'] is String ? json['myNotes'] as String : '',
       myPhotoAt: _parseMyPhotoAt(json['myPhotoAt']),
       restaurantType: _parseRestaurantType(json['restaurantType']),
+      restaurantTypeManual: json['restaurantTypeManual'] == true,
       countryCode: json['countryCode'] is String
           ? (json['countryCode'] as String).toUpperCase()
           : '',
+      extraNotes: _parseExtraNotes(json['extraNotes']),
     );
+  }
+
+  /// Lenient parse for [extraNotes]: skips malformed entries (see
+  /// [PlaceNote.fromJson]) rather than throwing; missing/non-list falls back
+  /// to an empty list.
+  static List<PlaceNote> _parseExtraNotes(dynamic raw) {
+    if (raw is! List) return const [];
+    return [for (final entry in raw) ?PlaceNote.fromJson(entry)];
   }
 
   /// Lenient parse for [restaurantType]: an [RestaurantType.name] string
@@ -379,22 +416,52 @@ enum PlaceCategory {
 }
 
 /// Cuisine/style sub-type for [PlaceCategory.restaurant] places — see
-/// [Place.restaurantType]/[Place.effectiveRestaurantType]. Every place starts
-/// at [other] (no field set); the user picks a more specific type from the
-/// detail sheet. Declaration order is display order in the map drawer and
-/// the type picker.
+/// [Place.restaurantType]/[Place.effectiveRestaurantType]. Unset places read
+/// as their keyword-detected guess (restaurant_type_detect.dart), else
+/// [other]; the user can pick a more specific type from the detail sheet.
+///
+/// Declaration order is display order in the map drawer and the type picker,
+/// grouped Japanese → other Asian → Western → bakery/sweets/drinks → other.
+/// Stored (JSON/Firestore) by [Enum.name], so existing names must never be
+/// renamed or removed — reordering and adding are safe.
 enum RestaurantType {
-  ramen('Ramen', '拉麵', '🍜'),
+  // Japanese
   sushi('Sushi & sashimi', '壽司', '🍣'),
+  ramen('Ramen', '拉麵', '🍜'),
+  udonSoba('Udon & soba', '烏冬 / 蕎麥麵', '🥢'),
+  tempura('Tempura', '天婦羅', '🍤'),
+  tonkatsu('Tonkatsu', '吉列豬扒', '🐷'),
+  donburi('Donburi & unagi', '丼飯 / 鰻魚飯', '🍚'),
+  curry('Curry', '咖喱', '🍛'),
+  okonomiyaki('Okonomiyaki & takoyaki', '大阪燒 / 章魚燒', '🐙'),
+  yakitori('Yakitori & kushikatsu', '串燒', '🍢'),
   izakaya('Izakaya', '居酒屋', '🏮'),
   yakiniku('Yakiniku & BBQ', '燒肉', '🥩'),
-  hotpot('Hot pot', '火鍋', '🍲'),
+  japanese('Japanese (washoku)', '日本料理', '🍱'),
+
+  // Other Asian
+  hotpot('Hot pot & shabu-shabu', '火鍋 / 涮涮鍋', '🍲'),
   dimsum('Dim sum & Cantonese', '點心 / 粵菜', '🥟'),
   chaChaanTeng('Cha chaan teng', '茶餐廳', '🍳'),
-  japanese('Japanese (other)', '日本料理', '🍛'),
+  chinese('Chinese & Taiwanese', '中菜 / 台菜', '🥡'),
   korean('Korean', '韓國菜', '🥘'),
-  western('Western', '西餐', '🍝'),
+  thai('Thai', '泰國菜', '🌶️'),
+  vietnamese('Vietnamese', '越南菜', '🌿'),
+  indian('Indian', '印度菜', '🫓'),
+
+  // Western
+  western('Western & steak', '西餐 / 扒房', '🍖'),
+  italian('Italian & pizza', '意大利菜', '🍝'),
+  french('French', '法國菜', '🍷'),
+  burger('Burger', '漢堡', '🍔'),
+  seafood('Seafood', '海鮮', '🦞'),
   fineDining('Fine dining', '高級餐廳', '✨'),
+
+  // Bakery, sweets, drinks
+  bakery('Bakery', '麵包店', '🥐'),
+  dessert('Dessert & sweets', '甜品', '🍰'),
+  bar('Bar & pub', '酒吧', '🍺'),
+
   other('Other', '其他', '🍽️');
 
   const RestaurantType(this.labelEn, this.labelZh, this.emoji);

@@ -168,14 +168,19 @@ service cloud.firestore {
             'sourceHandle', 'sourcePlatform', 'award', 'matchConfident',
             'rating', 'reviewCount', 'priceRange', 'photoUrls', 'isFavorite',
             'myScore', 'myNotes', 'myPhotoAt', 'restaurantType',
-            'countryCode', 'updatedAt'])
+            'restaurantTypeManual', 'countryCode', 'extraNotes', 'updatedAt'])
           && p.name is string && p.name.size() <= 500
           && p.get('originalCaption', '').size() <= 10000
           && p.get('descriptionEn', '').size() <= 5000
           && p.get('address', '').size() <= 1000
           && p.get('hours', '').size() <= 2000
           && p.get('myNotes', '').size() <= 5000
-          && p.get('photoUrls', []).size() <= 20;
+          && p.get('photoUrls', []).size() <= 20
+          // extraNotes (Place.extraNotes) is the owner's private dated log —
+          // sharedCopyOf always strips it to [] before writing here, so this
+          // just guards the shape rather than allowing real content through.
+          && p.get('extraNotes', []) is list
+          && p.get('extraNotes', []).size() == 0;
       }
 
       match /places/{placeId} {

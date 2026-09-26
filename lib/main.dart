@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
@@ -9,6 +11,7 @@ import 'firebase_options.dart';
 import 'screens/home_shell.dart';
 import 'services/area_resolver.dart';
 import 'services/auth_service.dart';
+import 'services/restaurant_type_rescan.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 
@@ -34,10 +37,12 @@ Future<void> main() async {
 /// Rebinds [PlaceStore], [BoardStore] and [PhotoStore] to the current user
 /// (or to local, guest-mode repos when signed out / unconfigured) whenever
 /// auth state changes. [SharedBoardStore] is signed-in only (empty for
-/// guests).
+/// guests). Once the places arrive, refines stored restaurant types after a
+/// detection-keyword update (see [rescanRestaurantTypesIfNeeded]).
 void _bindStores() {
   final user = AuthService.instance.user.value;
   PlaceStore.instance.bind(user);
+  unawaited(rescanRestaurantTypesIfNeeded(user?.uid ?? 'guest'));
   BoardStore.instance.bind(user);
   PhotoStore.instance.bind(user);
   SharedBoardStore.instance.bind(user);

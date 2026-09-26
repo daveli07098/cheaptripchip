@@ -105,7 +105,7 @@ class _MapScreenState extends State<MapScreen>
 
   /// Cached per brightness so screen rebuilds hand FlutterMap the identical
   /// widget (no tile-layer update, no throwaway [NetworkTileProvider]).
-  TileLayer? _tileLayer;
+  Widget? _tileLayer;
   Brightness? _tileLayerBrightness;
 
   /// A drawer pick waiting for the drawer to close before the camera flies
@@ -155,14 +155,27 @@ class _MapScreenState extends State<MapScreen>
   void _selectFromPin(Place place) {
     _selectedPlaceId.value = place.id;
     _previewVisible.value = true;
-    _listSheetController.scrollToPlace(place.id);
-    if (_sheetExtentController.isAttached &&
-        _sheetExtentController.size > kSheetHalf + 0.01) {
+    // Warm the detail sheet's header photo while the card is up, so opening
+    // Details doesn't show the photo popping in mid-slide.
+    PlaceDetailSheet.precacheHeader(context, place);
+    final extent = _sheetExtentController.isAttached
+        ? _sheetExtentController.size
+        : kSheetPeek;
+    final collapsing = extent > kSheetHalf + 0.01;
+    if (collapsing) {
       _sheetExtentController.animateTo(
         kSheetPeek,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
       );
+    }
+    // Only scroll the list when its rows are actually on screen: at (or
+    // collapsing to) peek the row would land below the fold anyway, and the
+    // jump + ensureVisible + row builds would compete with the card, sheet
+    // and pin animations this tap already starts. The row is still tinted
+    // via [_selectedPlaceId].
+    if (!collapsing && extent > kSheetPeek + 0.01) {
+      _listSheetController.scrollToPlace(place.id);
     }
   }
 
@@ -365,19 +378,26 @@ class _MapScreenState extends State<MapScreen>
     onPointerDown: _stopFlight,
   );
 
-  TileLayer _tileLayerFor(Brightness brightness) {
+  Widget _tileLayerFor(Brightness brightness) {
     final cached = _tileLayer;
     if (cached != null && _tileLayerBrightness == brightness) return cached;
     _tileLayerBrightness = brightness;
-    return _tileLayer = TileLayer(
+    final tiles = TileLayer(
       // OSM raster tiles — see AppTheme.mapTileUrl doc comment
       // re: usage-policy limits and swapping in a keyed provider.
       urlTemplate: AppTheme.mapTileUrl,
       userAgentPackageName: 'com.cheaptripchip.app',
-      // OSM has no dark-tile variant, so dark mode is simulated
-      // by inverting/hue-rotating the same tiles.
-      tileBuilder: brightness == Brightness.dark ? darkModeTileBuilder : null,
     );
+    // OSM has no dark-tile variant, so dark mode is simulated by
+    // inverting/hue-rotating the same tiles — with ONE colour filter over
+    // the whole layer (flutter_map's darkModeTilesContainerBuilder), not
+    // one per tile (darkModeTileBuilder), which cost a filter pass per
+    // visible tile every frame of a pan or animation.
+    return _tileLayer = brightness == Brightness.dark
+        ? Builder(
+            builder: (context) => darkModeTilesContainerBuilder(context, tiles),
+          )
+        : tiles;
   }
 
   @override
@@ -1111,6 +1131,27 @@ class _CategoryDrawer extends StatelessWidget {
                 onTap: () => onSelectArea('', null),
               ),
             const Divider(height: 24),
+            // Manual trigger for the rescan that also runs automatically
+            // after a detection-keyword update (restaurant_type_rescan.dart).
+            ListTile(
+              leading: const Icon(Icons.manage_search),
+              title: const Text('Re-scan food types'),
+              onTap: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final changed = await PlaceStore.instance
+                    .rescanRestaurantTypes();
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      changed == 0
+                          ? 'Food types are up to date'
+                          : 'Updated the food type of $changed '
+                                '${changed == 1 ? 'place' : 'places'}',
+                    ),
+                  ),
+                );
+              },
+            ),
             // Moved here from the map's floating row (commit ec3b355) so the
             // search pill can stay a single, uninterrupted control.
             const ListTile(
@@ -1463,9 +1504,9 @@ class _CityTileState extends State<_CityTile> {
 
 /// Floats [PlacePreviewCard] for the selected place (when [previewVisible])
 /// just above the list sheet's current top edge, tracking the sheet
-/// continuously like [_AttributionBar]. Full width minus 12dp margins. Fades
-/// + slides in, and cross-fades when another pin is tapped (keyed by place
-/// id). Listens to the selection itself, so a pin tap rebuilds just this
+/// continuously like [_AttributionBar]. Full width minus 12dp margins.
+/// Slides up out of the sheet edge, and swaps (old down, new up) when
+/// another pin is tapped (keyed by place id). Listens to the selection itself, so a pin tap rebuilds just this
 /// card rather than the map screen.
 class _PreviewCardLayer extends StatelessWidget {
   const _PreviewCardLayer({
@@ -1518,11 +1559,15 @@ class _PreviewCardLayer extends StatelessWidget {
             duration: const Duration(milliseconds: 180),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
+            // Rises out of the sheet's top edge (clipped just below the
+            // card's 12dp gap) rather than fading: no opacity layer over
+            // the card's elevation shadow, which had to be re-composited
+            // every frame alongside the sheet and pin animations.
+            transitionBuilder: (child, animation) => ClipRect(
+              clipper: const _AboveBottomEdgeClipper(12),
               child: SlideTransition(
                 position: Tween<Offset>(
-                  begin: const Offset(0, 0.15),
+                  begin: const Offset(0, 1.15),
                   end: Offset.zero,
                 ).animate(animation),
                 child: child,
@@ -1546,6 +1591,26 @@ class _PreviewCardLayer extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Clips only below [bottomOverflow] past the child's bottom edge — the
+/// sides and top stay unclipped so the card's shadow isn't cut off.
+class _AboveBottomEdgeClipper extends CustomClipper<Rect> {
+  const _AboveBottomEdgeClipper(this.bottomOverflow);
+
+  final double bottomOverflow;
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTRB(
+    -size.width,
+    -size.height,
+    size.width * 2,
+    size.height + bottomOverflow,
+  );
+
+  @override
+  bool shouldReclip(_AboveBottomEdgeClipper oldClipper) =>
+      oldClipper.bottomOverflow != bottomOverflow;
 }
 
 class _AttributionBar extends StatelessWidget {

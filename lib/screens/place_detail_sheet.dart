@@ -11,6 +11,7 @@ import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/place_note.dart';
 import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 import '../theme/app_theme.dart';
@@ -78,6 +79,9 @@ class PlaceDetailSheet extends StatelessWidget {
     Place place, {
     PlaceDetailSource source = PlaceDetailSource.mine,
   }) {
+    // Start decoding the header photo now, so it's (ideally) cached by the
+    // time the sheet's first frame builds instead of popping in mid-slide.
+    precacheHeader(context, place, source: source);
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -86,8 +90,27 @@ class PlaceDetailSheet extends StatelessWidget {
     );
   }
 
-  Color _categoryColor(BuildContext context, PlaceCategory category) =>
-      AppTheme.categoryColor(category, Theme.of(context).brightness);
+  /// Warms the [ImageCache] with exactly the provider (same decode width)
+  /// the sheet's photo header will ask for. Callers that know a sheet is
+  /// likely next (a pin's preview card) can call it earlier than [show].
+  static Future<void> precacheHeader(
+    BuildContext context,
+    Place place, {
+    PlaceDetailSource source = PlaceDetailSource.mine,
+  }) {
+    final cacheWidth = PlacePhoto.headerCacheWidth(context);
+    if (source.isSharedBoard) {
+      // Mirrors _PhotoHeader: shared copies never read PhotoStore.
+      if (place.photoUrls.isEmpty) return Future.value();
+      return PlacePhoto.precacheUrl(
+        context,
+        place.photoUrls.first,
+        cacheWidth: cacheWidth,
+      );
+    }
+    final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+    return PlacePhoto.precache(context, current, cacheWidth: cacheWidth);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -111,37 +134,19 @@ class PlaceDetailSheet extends StatelessWidget {
             resizeToAvoidBottomInset: false,
             // The accent (header gradient, area badge) follows the place's
             // current category, so a category-chip change recolours it
-            // live. Shared-board copies never read PlaceStore (their id is
-            // the owner's own place id — see PlaceDetailSource).
-            body: source.isSharedBoard
-                ? _sheetBody(
-                    context,
-                    controller,
-                    _categoryColor(context, place.category),
-                  )
-                : ValueListenableBuilder<List<Place>>(
-                    valueListenable: PlaceStore.instance.places,
-                    builder: (context, _, _) => _sheetBody(
-                      context,
-                      controller,
-                      _categoryColor(
-                        context,
-                        (PlaceStore.instance.byIdOrNull(place.id) ?? place)
-                            .category,
-                      ),
-                    ),
-                  ),
+            // live — but only those two widgets listen to PlaceStore for
+            // it (each re-reads the current place itself), so an unrelated
+            // store flush (e.g. the area backfill) doesn't rebuild the
+            // whole sheet. Shared-board copies never read PlaceStore (their
+            // id is the owner's own place id — see PlaceDetailSource).
+            body: _sheetBody(context, controller),
           ),
         );
       },
     );
   }
 
-  Widget _sheetBody(
-    BuildContext context,
-    ScrollController controller,
-    Color color,
-  ) {
+  Widget _sheetBody(BuildContext context, ScrollController controller) {
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
@@ -151,17 +156,13 @@ class PlaceDetailSheet extends StatelessWidget {
         controller: controller,
         padding: EdgeInsets.zero,
         children: [
-          _PhotoHeader(place: place, color: color, source: source),
+          _PhotoHeader(place: place, source: source),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _AreaBadge(
-                  place: place,
-                  color: color,
-                  editable: !source.isSharedBoard,
-                ),
+                _AreaBadge(place: place, editable: !source.isSharedBoard),
                 const SizedBox(height: 12),
                 Text(
                   place.name,
@@ -190,43 +191,57 @@ class PlaceDetailSheet extends StatelessWidget {
                   place.descriptionEn,
                   style: const TextStyle(fontSize: 15, height: 1.5),
                 ),
-                const SizedBox(height: 18),
-                if (source.isSharedBoard)
-                  _SharedRatingsSection(place: place, board: source.board!)
-                else
-                  _MyReviewSection(place: place),
-                const SizedBox(height: 18),
-                _SectionLabel('Original caption / 原文'),
-                const SizedBox(height: 6),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Text(
-                    place.originalCaption,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.6,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
-                    ),
+                // Everything from here down sits at or below the fold at
+                // the sheet's initial size — built one frame later so the
+                // opening frame (mid slide-in) only lays out what's seen.
+                _AfterFirstFrame(
+                  builder: (context) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 18),
+                      if (source.isSharedBoard)
+                        _SharedRatingsSection(
+                          place: place,
+                          board: source.board!,
+                        )
+                      else
+                        _MyReviewSection(place: place),
+                      const SizedBox(height: 18),
+                      _SectionLabel('Original caption / 原文'),
+                      const SizedBox(height: 6),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          place.originalCaption,
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.6,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.85),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      _InfoRow(icon: Icons.location_on, text: place.address),
+                      _InfoRow(icon: Icons.schedule, text: place.hours),
+                      _InfoRow(
+                        icon: Icons.person_outline,
+                        text:
+                            'By ${place.sourceHandle} '
+                            'on ${place.sourcePlatform.label}',
+                      ),
+                      const SizedBox(height: 22),
+                      _OpenInMapsButton(place: place),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 18),
-                _InfoRow(icon: Icons.location_on, text: place.address),
-                _InfoRow(icon: Icons.schedule, text: place.hours),
-                _InfoRow(
-                  icon: Icons.person_outline,
-                  text:
-                      'By ${place.sourceHandle} '
-                      'on ${place.sourcePlatform.label}',
-                ),
-                const SizedBox(height: 22),
-                _OpenInMapsButton(place: place),
               ],
             ),
           ),
@@ -236,15 +251,38 @@ class PlaceDetailSheet extends StatelessWidget {
   }
 }
 
+/// Builds [builder]'s subtree one frame after it's first inserted (an empty
+/// box until then), so an opening sheet's first frame skips below-the-fold
+/// content. Rebuilds normally afterwards.
+class _AfterFirstFrame extends StatefulWidget {
+  const _AfterFirstFrame({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  State<_AfterFirstFrame> createState() => _AfterFirstFrameState();
+}
+
+class _AfterFirstFrameState extends State<_AfterFirstFrame> {
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _ready ? widget.builder(context) : const SizedBox.shrink();
+}
+
 class _PhotoHeader extends StatelessWidget {
-  const _PhotoHeader({
-    required this.place,
-    required this.color,
-    required this.source,
-  });
+  const _PhotoHeader({required this.place, required this.source});
 
   final Place place;
-  final Color color;
   final PlaceDetailSource source;
 
   @override
@@ -268,6 +306,13 @@ class _PhotoHeader extends StatelessWidget {
   Widget _buildHeader(BuildContext context, Place current) {
     // Preference: the user's own photo, then the first source photo, then
     // the category-colour gradient with the emoji.
+    final color = AppTheme.categoryColor(
+      current.category,
+      Theme.of(context).brightness,
+    );
+    // Same decode width as PlaceDetailSheet.precacheHeader, so a warmed
+    // photo is a cache hit and paints in the sheet's first frame.
+    final cacheWidth = PlacePhoto.headerCacheWidth(context);
     final gradient = Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -293,12 +338,16 @@ class _PhotoHeader extends StatelessWidget {
     final photo = source.isSharedBoard
         ? (current.photoUrls.isEmpty
               ? gradient
-              : Image.network(
+              : PlacePhoto.network(
                   current.photoUrls.first,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => gradient,
+                  fallback: gradient,
+                  cacheWidth: cacheWidth,
                 ))
-        : PlacePhoto(place: current, fallback: gradient);
+        : PlacePhoto(
+            place: current,
+            fallback: gradient,
+            cacheWidth: cacheWidth,
+          );
     return Stack(
       children: [
         ClipRRect(
@@ -388,14 +437,9 @@ class _PhotoButtons extends StatelessWidget {
 /// background area backfill or a manual edit shows up immediately. Tap to
 /// correct the city/district by hand via [_AreaDialog].
 class _AreaBadge extends StatelessWidget {
-  const _AreaBadge({
-    required this.place,
-    required this.color,
-    this.editable = true,
-  });
+  const _AreaBadge({required this.place, this.editable = true});
 
   final Place place;
-  final Color color;
 
   /// False for a shared-board place: no edit affordance, and the label
   /// comes straight from the passed [place] rather than re-reading
@@ -432,6 +476,11 @@ class _AreaBadge extends StatelessWidget {
   }
 
   Widget _badge(BuildContext context, Place current, {bool icon = false}) {
+    // Follows the current category, like the header gradient.
+    final color = AppTheme.categoryColor(
+      current.category,
+      Theme.of(context).brightness,
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
@@ -1388,6 +1437,7 @@ class _MyReviewSection extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             _MyNotes(place: current),
+            _ExtraNotes(place: current),
           ],
         );
       },
@@ -1409,6 +1459,264 @@ class _MyNotes extends StatelessWidget {
         score: place.myScore,
         notes: notes,
       ),
+    );
+  }
+}
+
+/// Extra dated notes under [_MyNotes]'s single remark box — a running log
+/// the user can keep adding to (e.g. "2nd visit: …"), newest first. Only
+/// ever built by [_MyReviewSection], which itself is never built in
+/// shared-board mode (see `_sheetBody`) — so this needs no `editable` flag
+/// of its own.
+class _ExtraNotes extends StatelessWidget {
+  const _ExtraNotes({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    final notes = [...place.extraNotes]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final note in notes) ...[
+          const SizedBox(height: 8),
+          _ExtraNoteTile(place: place, note: note),
+        ],
+        const SizedBox(height: 8),
+        Semantics(
+          button: true,
+          label: 'Add another note',
+          child: TextButton.icon(
+            onPressed: () => _add(context),
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 32),
+              alignment: Alignment.centerLeft,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add another note / 再加備註'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _add(BuildContext context) async {
+    final result = await showDialog<_ExtraNoteResult>(
+      context: context,
+      builder: (_) => const _ExtraNoteDialog(),
+    );
+    // The dialog already popped itself — no BuildContext use after this.
+    final text = result?.text;
+    if (text == null) return;
+    await PlaceStore.instance.addNote(place.id, text);
+  }
+}
+
+/// One entry in [_ExtraNotes]: date + text, tap to edit (or delete, via
+/// [_ExtraNoteDialog]'s Delete action), swipe to delete directly — both
+/// paths raise an UNDO snackbar on this sheet's own messenger.
+class _ExtraNoteTile extends StatelessWidget {
+  const _ExtraNoteTile({required this.place, required this.note});
+
+  final Place place;
+  final PlaceNote note;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Dismissible(
+      key: ValueKey(note.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: scheme.errorContainer,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
+      ),
+      onDismissed: (_) => _delete(context),
+      child: Semantics(
+        button: true,
+        label:
+            'Note from ${_formatDate(note.createdAt)}: ${note.text}. '
+            'Tap to edit.',
+        child: InkWell(
+          onTap: () => _edit(context),
+          borderRadius: BorderRadius.circular(14),
+          child: ExcludeSemantics(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: scheme.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _formatDate(note.createdAt),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    note.text,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _edit(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await showDialog<_ExtraNoteResult>(
+      context: context,
+      builder: (_) => _ExtraNoteDialog(initialText: note.text, isEditing: true),
+    );
+    // The dialog already popped itself — no BuildContext use after this,
+    // only the messenger grabbed before the await (same as _ActionRow._move).
+    if (result == null) return;
+    if (result.delete) {
+      await PlaceStore.instance.deleteNote(place.id, note.id);
+      _showUndo(messenger);
+      return;
+    }
+    final text = result.text;
+    if (text == null) return;
+    await PlaceStore.instance.editNote(place.id, note.id, text);
+  }
+
+  void _delete(BuildContext context) {
+    final messenger = ScaffoldMessenger.of(context);
+    PlaceStore.instance.deleteNote(place.id, note.id);
+    _showUndo(messenger);
+  }
+
+  void _showUndo(ScaffoldMessengerState messenger) {
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Text('Note deleted'),
+        action: SnackBarAction(
+          label: 'UNDO',
+          onPressed: () => PlaceStore.instance.restoreNote(place.id, note),
+        ),
+      ),
+    );
+  }
+
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  static String _formatDate(DateTime createdAt) {
+    final local = createdAt.toLocal();
+    return '${local.day} ${_months[local.month - 1]} ${local.year}';
+  }
+}
+
+/// Pop value for [_ExtraNoteDialog]: `null` on Cancel/dismiss, [text] set on
+/// Save (possibly empty — callers decide whether that's a no-op), [delete]
+/// true when the Delete action was tapped (only offered when editing).
+class _ExtraNoteResult {
+  const _ExtraNoteResult.save(this.text) : delete = false;
+  const _ExtraNoteResult.delete() : text = null, delete = true;
+
+  final String? text;
+  final bool delete;
+}
+
+/// Add/edit dialog for one [_ExtraNotes] entry — same controller-ownership
+/// contract as [_NotesDialog] (owns and disposes its own [TextEditingController],
+/// never disposed manually right after `await showDialog` returns).
+class _ExtraNoteDialog extends StatefulWidget {
+  const _ExtraNoteDialog({this.initialText = '', this.isEditing = false});
+
+  final String initialText;
+  final bool isEditing;
+
+  @override
+  State<_ExtraNoteDialog> createState() => _ExtraNoteDialogState();
+}
+
+class _ExtraNoteDialogState extends State<_ExtraNoteDialog> {
+  late final controller = TextEditingController(text: widget.initialText);
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        widget.isEditing ? 'Edit note / 編輯備註' : 'Add another note / 再加備註',
+      ),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        minLines: 3,
+        maxLines: 6,
+        maxLength: 1000,
+        decoration: const InputDecoration(
+          hintText: 'e.g. "2nd visit: tried the…"',
+        ),
+      ),
+      actions: [
+        if (widget.isEditing)
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context, const _ExtraNoteResult.delete()),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            _ExtraNoteResult.save(controller.text.trim()),
+          ),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }
