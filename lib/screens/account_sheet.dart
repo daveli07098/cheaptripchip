@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_version_label.dart';
 
 /// Modal bottom sheet with the three [AuthService] states: Firebase not
 /// configured, signed out, and signed in. See [_AccountSheetBody].
@@ -61,13 +62,22 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-        child: ValueListenableBuilder<AppUser?>(
-          valueListenable: AuthService.instance.user,
-          builder: (context, user, _) {
-            if (!AuthService.instance.isConfigured) return _unconfigured();
-            if (user == null) return _signedOut(context);
-            return _signedIn(context, user);
-          },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ValueListenableBuilder<AppUser?>(
+              valueListenable: AuthService.instance.user,
+              builder: (context, user, _) {
+                if (!AuthService.instance.isConfigured) return _unconfigured();
+                if (user == null) return _signedOut(context);
+                return _signedIn(context, user);
+              },
+            ),
+            const SizedBox(height: 16),
+            // Which build is installed — for checking a device has the latest.
+            const AppVersionLabel(),
+          ],
         ),
       ),
     );
