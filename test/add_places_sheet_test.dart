@@ -134,11 +134,66 @@ void main() {
       );
       expect(BoardStore.instance.containsPlace(board.id, places[1].id), isTrue);
       expect(BoardStore.instance.containsPlace(board.id, places[2].id), isTrue);
-      expect(find.text('Added 2 places to “Trip”'), findsOneWidget);
+      expect(
+        find.text('Added 2 places and removed 1 from “Trip”'),
+        findsOneWidget,
+      );
 
       // Let the SnackBar's timer finish so no pending-timer failure at
       // teardown.
       await tester.pump(const Duration(seconds: 5));
     },
   );
+
+  testWidgets('SnackBar wording for adds only / removals only, on the '
+      "sheet's own messenger", (tester) async {
+    final places = [_place(1), _place(2)];
+    await PlaceStore.instance.addAll(places);
+    var board = await BoardStore.instance.createBoard('Trip');
+    await BoardStore.instance.addPlaceToBoard(
+      boardId: board.id,
+      placeId: places[0].id,
+    );
+    board = BoardStore.instance.byIdOrNull(board.id)!;
+
+    await _open(tester, board);
+    Finder inSheet(String text) => find.descendant(
+      of: find.byType(AddPlacesSheet),
+      matching: find.text(text),
+    );
+
+    // One addition: singular.
+    await tester.tap(find.widgetWithText(CheckboxListTile, places[1].name));
+    await tester.pump();
+    await tester.tap(find.text('Add 1 place'));
+    await tester.pump();
+    await tester.pump();
+    expect(inSheet('Added 1 place to “Trip”'), findsOneWidget);
+
+    // Two removals: never "Added 0 places".
+    await tester.tap(find.widgetWithText(CheckboxListTile, places[0].name));
+    await tester.tap(find.widgetWithText(CheckboxListTile, places[1].name));
+    await tester.pump();
+    await tester.tap(find.text('Save changes'));
+    await tester.pump();
+    await tester.pump();
+    expect(inSheet('Removed 2 places from “Trip”'), findsOneWidget);
+    expect(find.textContaining('Added 0'), findsNothing);
+    expect(BoardStore.instance.containsPlace(board.id, places[0].id), isFalse);
+
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  test('appliedMessage covers adds, removals and both, singular/plural', () {
+    expect(AddPlacesSheet.appliedMessage(1, 0, 'T'), 'Added 1 place to “T”');
+    expect(AddPlacesSheet.appliedMessage(3, 0, 'T'), 'Added 3 places to “T”');
+    expect(
+      AddPlacesSheet.appliedMessage(0, 1, 'T'),
+      'Removed 1 place from “T”',
+    );
+    expect(
+      AddPlacesSheet.appliedMessage(1, 2, 'T'),
+      'Added 1 place and removed 2 from “T”',
+    );
+  });
 }

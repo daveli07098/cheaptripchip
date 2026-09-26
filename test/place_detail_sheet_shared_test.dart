@@ -116,7 +116,7 @@ void main() {
     expect(find.text('Add to board'), findsNothing);
 
     // Same id as the user's own Saved place -> already saved.
-    expect(find.text('✓ In your places'), findsOneWidget);
+    expect(find.text('In your places'), findsOneWidget);
     expect(find.text('Save to my places'), findsNothing);
   });
 
@@ -182,7 +182,7 @@ void main() {
 
     expect(find.text('Your rating'), findsOneWidget);
     expect(find.text('Tap to rate'), findsOneWidget);
-    expect(find.text('Rate first to add a remark / 先評分再加備註'), findsOneWidget);
+    expect(find.text('Rate first / 先評分'), findsOneWidget);
     // Alice rated for real, so her baked copy isn't duplicated.
     expect(find.text('Alice'), findsOneWidget);
     expect(find.text('Owner'), findsOneWidget);
@@ -251,7 +251,7 @@ void main() {
     expect(added, hasLength(1));
     expect(added.single.id, isNot('sbtest-3'));
     expect(added.single.id, startsWith('shared-'));
-    expect(find.text('✓ In your places'), findsOneWidget);
+    expect(find.text('In your places'), findsOneWidget);
   });
 
   testWidgets('restaurant sub-type chip is read-only and accessible', (

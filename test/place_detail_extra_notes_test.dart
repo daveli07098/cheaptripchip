@@ -1,5 +1,5 @@
 // Widget test for the personal place page's "My review" extra notes log:
-// add another note via the dialog, PlaceStore reflects it and it renders in
+// add a visit note via the dialog, PlaceStore reflects it and it renders in
 // the list. Shared-board mode never shows the section at all.
 import 'package:cheaptripchip/data/local_repositories.dart';
 import 'package:cheaptripchip/data/place_store.dart';
@@ -46,20 +46,20 @@ void main() {
     PlaceStore.instance.bindRepository(LocalPlaceRepository());
   });
 
-  testWidgets('Add another note opens a dialog and saves to the store', (
+  testWidgets('Add a visit note opens a dialog and saves to the store', (
     tester,
   ) async {
     await PlaceStore.instance.add(_place);
     await _pump(tester);
 
-    expect(find.text('Add another note / 再加備註'), findsOneWidget);
+    expect(find.text('Add a visit note / 加到訪筆記'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Add another note / 再加備註'));
+    await tester.ensureVisible(find.text('Add a visit note / 加到訪筆記'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add another note / 再加備註'));
+    await tester.tap(find.text('Add a visit note / 加到訪筆記'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add another note / 再加備註'), findsWidgets);
+    expect(find.text('Add a visit note / 加到訪筆記'), findsWidgets);
     await tester.enterText(find.byType(TextField), '2nd visit: even better');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
@@ -80,7 +80,7 @@ void main() {
     await tester.tap(find.text('original text'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit note / 編輯備註'), findsOneWidget);
+    expect(find.text('Edit visit note / 編輯到訪筆記'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'updated text');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
@@ -127,6 +127,6 @@ void main() {
       source: PlaceDetailSource.sharedBoard(board, BoardRole.viewer),
     );
 
-    expect(find.text('Add another note / 再加備註'), findsNothing);
+    expect(find.text('Add a visit note / 加到訪筆記'), findsNothing);
   });
 }

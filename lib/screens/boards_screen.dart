@@ -8,26 +8,38 @@ import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../models/shared_board.dart';
-import '../services/auth_service.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
+import '../utils/plural.dart';
 import '../widgets/add_places_sheet.dart';
 import '../widgets/board_picker_sheet.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/new_board_dialog.dart';
 import '../widgets/sharing_sheet.dart';
-import 'account_sheet.dart';
+import '../widgets/sign_in_gate.dart';
 import 'place_detail_sheet.dart';
 
 export '../models/board.dart' show kNewFindsBoardId;
 
 /// Boards (ANALYSIS.md §5): Board → Section → Item hierarchy, expandable.
 class BoardsScreen extends StatelessWidget {
-  const BoardsScreen({super.key, this.onShowOnMap});
+  const BoardsScreen({
+    super.key,
+    this.onShowOnMap,
+    this.onImportTripLink,
+    this.onImportMyMaps,
+  });
 
   /// "Show on map" on a board card, with the board's [BoardRef.key]. The
   /// action is hidden when null.
   final ValueChanged<String>? onShowOnMap;
+
+  /// The empty state's "Import a trip" entries — the same imports as the
+  /// app bar's Import menu (owned by the shell). The button is hidden when
+  /// both are null.
+  final VoidCallback? onImportTripLink;
+  final VoidCallback? onImportMyMaps;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +62,13 @@ class BoardsScreen extends StatelessWidget {
           ...storeBoards,
           for (final board in sharedBoards) board.board,
         ]);
+        // A lone board starts expanded — nothing else to scan past; with
+        // several, all start collapsed so the list reads as an overview.
+        final cardCount =
+            (autoBoard == null ? 0 : 1) +
+            sharedBoards.length +
+            storeBoards.length;
+        final expandLone = cardCount == 1;
         final cards = <Widget>[
           if (autoBoard != null)
             _BoardCard(
@@ -57,6 +76,7 @@ class BoardsScreen extends StatelessWidget {
               board: autoBoard,
               placesById: placesById,
               permissions: BoardPermissions.auto,
+              initiallyExpanded: expandLone,
               onShowOnMap: onShowOnMap,
             ),
           for (final board in sharedBoards)
@@ -66,6 +86,7 @@ class BoardsScreen extends StatelessWidget {
               placesById: shared.placesOf(board.id),
               shared: board,
               permissions: BoardPermissions.forRole(board.roleOf(shared.uid)),
+              initiallyExpanded: expandLone,
               onShowOnMap: onShowOnMap,
             ),
           for (final board in storeBoards)
@@ -74,10 +95,16 @@ class BoardsScreen extends StatelessWidget {
               board: board,
               placesById: placesById,
               permissions: BoardPermissions.personal,
+              initiallyExpanded: expandLone,
               onShowOnMap: onShowOnMap,
             ),
         ];
-        if (cards.isEmpty) return const _EmptyBoardsState();
+        if (cards.isEmpty) {
+          return _EmptyBoardsState(
+            onImportTripLink: onImportTripLink,
+            onImportMyMaps: onImportMyMaps,
+          );
+        }
         return ListView.separated(
           // Bottom padding keeps the last board clear of the floating
           // "Add a find" button.
@@ -103,7 +130,11 @@ class BoardsScreen extends StatelessWidget {
 /// Shown when there are no boards (auto or user-created) and no places to
 /// auto-group — i.e. nothing at all to show yet.
 class _EmptyBoardsState extends StatelessWidget {
-  const _EmptyBoardsState();
+  const _EmptyBoardsState({this.onImportTripLink, this.onImportMyMaps});
+
+  /// See [BoardsScreen.onImportTripLink] / [BoardsScreen.onImportMyMaps].
+  final VoidCallback? onImportTripLink;
+  final VoidCallback? onImportMyMaps;
 
   @override
   Widget build(BuildContext context) {
@@ -133,17 +164,57 @@ class _EmptyBoardsState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: () => NewBoardDialog.showAndContinue(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Create your first board'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.coral,
-                foregroundColor: Theme.of(context).colorScheme.onPrimary,
-              ),
+            // Wraps onto two lines on a narrow phone.
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: () => NewBoardDialog.showAndContinue(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Create your first board'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.coral,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+                if (onImportTripLink != null || onImportMyMaps != null)
+                  _importButton(),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// "Import a trip": straight to the one source when only one is wired,
+  /// else a menu of both (same entries as the app bar's Import menu).
+  Widget _importButton() {
+    final sources = [
+      if (onImportTripLink case final onTap?)
+        (Icons.link, 'From a shared trip link', onTap),
+      if (onImportMyMaps case final onTap?)
+        (Icons.map_outlined, 'From Google My Maps', onTap),
+    ];
+    Widget button(VoidCallback onPressed) => OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: const Icon(Icons.download_outlined),
+      label: const Text('Import a trip'),
+    );
+    if (sources.length == 1) return button(sources.single.$3);
+    return MenuAnchor(
+      menuChildren: [
+        for (final (icon, label, onTap) in sources)
+          MenuItemButton(
+            leadingIcon: Icon(icon),
+            onPressed: onTap,
+            child: Text(label),
+          ),
+      ],
+      builder: (context, controller, _) => button(
+        () => controller.isOpen ? controller.close() : controller.open(),
       ),
     );
   }
@@ -191,10 +262,14 @@ class _BoardCard extends StatefulWidget {
     required this.placesById,
     required this.permissions,
     this.shared,
+    this.initiallyExpanded = false,
     this.onShowOnMap,
   });
 
   final Board board;
+
+  /// Open on first build (see [BoardsScreen]: a lone board starts open).
+  final bool initiallyExpanded;
 
   /// Resolves the board's place ids: the user's Saved places for personal
   /// boards, the board's own place copies for shared ones.
@@ -225,7 +300,7 @@ enum _BoardMenuAction {
 }
 
 class _BoardCardState extends State<_BoardCard> {
-  late bool _expanded = widget.board.id == 'b1';
+  late bool _expanded = widget.initiallyExpanded;
 
   /// The auto-generated "New finds" board (see [kNewFindsBoardId]) isn't a
   /// stored [Board] — it never offers rename/delete/remove-place.
@@ -248,7 +323,7 @@ class _BoardCardState extends State<_BoardCard> {
     final role = shared.roleOf(SharedBoardStore.instance.uid);
     if (role == BoardRole.owner) {
       final n = shared.memberCount;
-      return 'Shared · $n ${n == 1 ? 'person' : 'people'}';
+      return 'Shared · ${plural(n, 'person', 'people')}';
     }
     return 'Shared by ${shared.ownerName} · ${role?.label ?? ''}';
   }
@@ -289,7 +364,8 @@ class _BoardCardState extends State<_BoardCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${board.sections.length} ${board.sections.length == 1 ? 'section' : 'sections'} · ${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}',
+                '${plural(board.sections.length, 'section')} · '
+                '${plural(board.itemCount, 'place')}',
                 style: TextStyle(
                   color: Theme.of(
                     context,
@@ -410,14 +486,21 @@ class _BoardCardState extends State<_BoardCard> {
     }
   }
 
-  /// ⋮ entries by role: personal boards get Share board…, shared boards
-  /// Sharing settings…/info; edit entries only where [_can] allows.
+  /// ⋮ entries by role, in three groups split by dividers:
+  /// - View: Show on map, Add places…
+  /// - Share: the live board (Share board… for a personal board, Sharing
+  ///   settings…/info once shared) and Send a copy (a one-time snapshot).
+  ///   Subtitles spell out the difference.
+  /// - Manage: Rename, Delete / Leave board.
+  /// Edit entries only appear where [_can] allows; empty groups (and their
+  /// divider) are dropped.
   List<PopupMenuEntry<_BoardMenuAction>> _menuItems(BuildContext context) {
     final error = Theme.of(context).colorScheme.error;
     PopupMenuItem<_BoardMenuAction> item(
       _BoardMenuAction value,
       IconData icon,
       String label, {
+      String? subtitle,
       Color? color,
     }) {
       return PopupMenuItem(
@@ -426,89 +509,93 @@ class _BoardCardState extends State<_BoardCard> {
           contentPadding: EdgeInsets.zero,
           leading: Icon(icon, color: color),
           title: Text(label, style: TextStyle(color: color)),
+          subtitle: subtitle == null ? null : Text(subtitle),
         ),
       );
     }
 
     final shared = _shared;
-    return [
-      if (widget.onShowOnMap != null)
-        item(_BoardMenuAction.showOnMap, Icons.map_outlined, 'Show on map'),
-      if (shared != null)
+    final groups = <List<PopupMenuEntry<_BoardMenuAction>>>[
+      [
+        if (widget.onShowOnMap != null)
+          item(_BoardMenuAction.showOnMap, Icons.map_outlined, 'Show on map'),
+        if (!_isAuto && _can.canEditPlaces)
+          item(_BoardMenuAction.addPlaces, Icons.playlist_add, 'Add places…'),
+      ],
+      [
+        if (shared != null)
+          item(
+            _BoardMenuAction.sharing,
+            Icons.group_outlined,
+            _can.canManage ? 'Sharing settings…' : 'Sharing info',
+            subtitle: _can.canManage
+                ? 'Invite link, people & roles'
+                : 'Who is on this board',
+          )
+        else if (!_isAuto)
+          item(
+            _BoardMenuAction.shareBoard,
+            Icons.person_add_alt,
+            'Share board…',
+            subtitle: 'Plan together — stays in sync',
+          ),
         item(
-          _BoardMenuAction.sharing,
-          Icons.group_outlined,
-          _can.canManage ? 'Sharing settings…' : 'Sharing info',
-        )
-      else if (!_isAuto)
-        item(_BoardMenuAction.shareBoard, Icons.person_add_alt, 'Share board…'),
-      item(_BoardMenuAction.sendCopy, Icons.ios_share, 'Send a copy'),
-      if (!_isAuto && _can.canEditPlaces)
-        item(_BoardMenuAction.addPlaces, Icons.playlist_add, 'Add places…'),
-      if (!_isAuto && _can.canManage) ...[
-        item(_BoardMenuAction.rename, Icons.edit_outlined, 'Rename'),
-        item(
-          _BoardMenuAction.delete,
-          Icons.delete_outline,
-          'Delete',
-          color: error,
+          _BoardMenuAction.sendCopy,
+          Icons.ios_share,
+          'Send a copy',
+          subtitle: 'One-time snapshot — link or file',
         ),
       ],
-      if (_can.canLeave)
-        item(_BoardMenuAction.leave, Icons.logout, 'Leave board', color: error),
+      [
+        if (!_isAuto && _can.canManage) ...[
+          item(_BoardMenuAction.rename, Icons.edit_outlined, 'Rename'),
+          item(
+            _BoardMenuAction.delete,
+            Icons.delete_outline,
+            'Delete',
+            color: error,
+          ),
+        ],
+        if (_can.canLeave)
+          item(
+            _BoardMenuAction.leave,
+            Icons.logout,
+            'Leave board',
+            color: error,
+          ),
+      ],
     ];
+    final entries = <PopupMenuEntry<_BoardMenuAction>>[];
+    for (final group in groups) {
+      if (group.isEmpty) continue;
+      if (entries.isNotEmpty) entries.add(const PopupMenuDivider());
+      entries.addAll(group);
+    }
+    return entries;
   }
 
   /// Personal → shared: guests are asked to sign in first; otherwise the
   /// board moves to a shared board and the sharing sheet opens.
   Future<void> _shareBoard(BuildContext context) async {
     final board = widget.board;
-    if (AuthService.instance.user.value == null ||
-        SharedBoardStore.instance.uid == null) {
-      final signIn = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Sign in to share'),
-          content: const Text(
-            'Shared boards live in your account, so friends can view or '
-            'edit them with you.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Not now'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Sign in'),
-            ),
-          ],
-        ),
-      );
-      if (signIn == true && context.mounted) await showAccountSheet(context);
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Share “${board.name}”?'),
-        content: const Text(
+    final signedIn = await ensureSignedInForSharing(
+      context,
+      title: 'Sign in to share',
+      message:
+          'Shared boards live in your account, so friends can view or '
+          'edit them with you.',
+    );
+    if (!signedIn || !context.mounted) return;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Share “${board.name}”?',
+      body:
           'It becomes a shared board you can invite people to. Your scores '
           '& notes stay private unless you choose to include them.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Share'),
-          ),
-        ],
-      ),
+      action: 'Share',
+      destructive: false,
     );
-    if (confirmed != true || !context.mounted) return;
+    if (!confirmed || !context.mounted) return;
     // This card is replaced by the shared one once the move lands — keep
     // handles that outlive it.
     final navigatorContext = Navigator.of(context).context;
@@ -528,29 +615,13 @@ class _BoardCardState extends State<_BoardCard> {
   /// Owner deleting a shared board: gone for everyone, no undo.
   Future<void> _deleteSharedBoard(BuildContext context) async {
     final board = widget.board;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Delete “${board.name}” for everyone?'),
-        content: const Text(
-          'Everyone loses access. Your own places stay in your Saved list.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(dialogContext).colorScheme.error,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete “${board.name}” for everyone?',
+      body: 'Everyone loses access. Your own places stay in your Saved list.',
+      action: 'Delete',
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     await SharedBoardStore.instance.delete(board.id);
   }
 
@@ -569,28 +640,13 @@ class _BoardCardState extends State<_BoardCard> {
 
   Future<void> _deleteBoard(BuildContext context) async {
     final board = widget.board;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Delete “${board.name}”?'),
-        content: const Text('Places stay in your Saved list.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(dialogContext).colorScheme.error,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete “${board.name}”?',
+      body: 'Places stay in your Saved list.',
+      action: 'Delete',
     );
-    if (confirmed != true) return;
-    if (!context.mounted) return;
+    if (!confirmed || !context.mounted) return;
     // Grabbed before the optimistic delete rebuilds BoardsScreen without
     // this card — `context` would no longer resolve to a mounted ancestor
     // once that happens.
@@ -609,7 +665,7 @@ class _BoardCardState extends State<_BoardCard> {
   }
 }
 
-enum _RowAction { move, remove }
+enum _RowAction { move, saveCopy, remove }
 
 class _SectionBlock extends StatefulWidget {
   const _SectionBlock({
@@ -664,8 +720,8 @@ class _SectionBlockState extends State<_SectionBlock> {
   final Set<String> _leaving = {};
   static const _leaveDuration = Duration(milliseconds: 220);
 
-  /// Personal-board rows (not the auto board, not shared) get the ⋮ menu,
-  /// long-press move and open the place page with a Move action.
+  /// Personal-board rows (not the auto board, not shared) get Move in the
+  /// ⋮ menu, long-press move and open the place page with a Move action.
   bool get _isPersonal => widget.canRemove && widget.sharedBoard == null;
 
   String get boardId => widget.boardId;
@@ -685,7 +741,7 @@ class _SectionBlockState extends State<_SectionBlock> {
         Semantics(
           button: true,
           expanded: _expanded,
-          label: '${section.title}, ${ids.length} places',
+          label: '${section.title}, ${plural(ids.length, 'place')}',
           child: InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
@@ -781,42 +837,16 @@ class _SectionBlockState extends State<_SectionBlock> {
           ).colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
         ),
       ),
-      trailing: widget.canSaveCopies
+      // Editable rows (personal boards, shared-board owners and editors)
+      // get a ⋮ menu so removal isn't swipe-only; view-only shared rows
+      // keep the one-tap "Save to my places".
+      trailing: widget.canRemove
+          ? _rowMenu(context, place)
+          : widget.canSaveCopies
           ? IconButton(
               tooltip: 'Save to my places',
               icon: const Icon(Icons.bookmark_add_outlined, size: 20),
               onPressed: () => _saveToMyPlaces(context, place),
-            )
-          : _isPersonal
-          ? PopupMenuButton<_RowAction>(
-              tooltip: 'Place options',
-              icon: const Icon(Icons.more_vert, size: 20),
-              onSelected: (action) => switch (action) {
-                _RowAction.move => _movePlace(context, place),
-                _RowAction.remove => _removePlace(
-                  context,
-                  place,
-                  animate: true,
-                ),
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: _RowAction.move,
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.drive_file_move_outline),
-                    title: Text('Move to board…'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: _RowAction.remove,
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.remove_circle_outline),
-                    title: Text('Remove from board'),
-                  ),
-                ),
-              ],
             )
           : const Icon(Icons.chevron_right, size: 20),
       onLongPress: _isPersonal ? () => _movePlace(context, place) : null,
@@ -873,6 +903,54 @@ class _SectionBlockState extends State<_SectionBlock> {
         },
         child: tile,
       ),
+    );
+  }
+
+  /// ⋮ on an editable row: Move (personal boards), Save to my places
+  /// (shared-board editors) and Remove from board.
+  Widget _rowMenu(BuildContext context, Place place) {
+    PopupMenuItem<_RowAction> item(
+      _RowAction value,
+      IconData icon,
+      String label,
+    ) {
+      return PopupMenuItem(
+        value: value,
+        child: ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(icon),
+          title: Text(label),
+        ),
+      );
+    }
+
+    return PopupMenuButton<_RowAction>(
+      tooltip: 'Place options',
+      icon: const Icon(Icons.more_vert, size: 20),
+      onSelected: (action) => switch (action) {
+        _RowAction.move => _movePlace(context, place),
+        _RowAction.saveCopy => _saveToMyPlaces(context, place),
+        _RowAction.remove => _removePlace(context, place, animate: true),
+      },
+      itemBuilder: (context) => [
+        if (_isPersonal)
+          item(
+            _RowAction.move,
+            Icons.drive_file_move_outline,
+            'Move to board…',
+          ),
+        if (widget.canSaveCopies)
+          item(
+            _RowAction.saveCopy,
+            Icons.bookmark_add_outlined,
+            'Save to my places',
+          ),
+        item(
+          _RowAction.remove,
+          Icons.remove_circle_outline,
+          'Remove from board',
+        ),
+      ],
     );
   }
 
@@ -944,12 +1022,14 @@ class _SectionBlockState extends State<_SectionBlock> {
     // ancestors without it.
     final messenger = ScaffoldMessenger.of(context);
     if (widget.sharedBoard != null) {
-      final removed = await SharedBoardStore.instance.removePlace(
-        boardId,
-        place.id,
-      );
+      Future<(Place, List<String>)?> remove() =>
+          SharedBoardStore.instance.removePlace(boardId, place.id);
+      final removed = animate
+          ? await _collapseThen(place.id, remove)
+          : await remove();
       if (removed == null) return;
       final (copy, titles) = removed;
+      messenger.removeCurrentSnackBar();
       messenger.showSnackBar(
         SnackBar(
           content: Text('Removed from $boardName'),
@@ -967,26 +1047,11 @@ class _SectionBlockState extends State<_SectionBlock> {
       );
       return;
     }
-    // Snapshot first: UNDO writes it back in one update, so the place
-    // returns to its old section and position (re-adding would append it).
-    final before = BoardStore.instance.byIdOrNull(boardId);
-    Future<List<String>> remove() => BoardStore.instance.removePlaceFromBoard(
+    await removeFromBoardWithUndo(
+      messenger,
       boardId: boardId,
       placeId: place.id,
-    );
-    final removedFrom = animate
-        ? await _collapseThen(place.id, remove)
-        : await remove();
-    if (removedFrom.isEmpty || before == null) return;
-    messenger.removeCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text('Removed from $boardName'),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => BoardStore.instance.restoreBoards([before]),
-        ),
-      ),
+      run: animate ? (remove) => _collapseThen(place.id, remove) : null,
     );
   }
 }
@@ -1049,6 +1114,13 @@ class _RenameBoardDialog extends StatefulWidget {
 class _RenameBoardDialogState extends State<_RenameBoardDialog> {
   late final _controller = TextEditingController(text: widget.initialName);
 
+  /// Same rule as [NewBoardDialog]: a name is required (trimmed).
+  String get _name => _controller.text.trim();
+
+  void _save() {
+    if (_name.isNotEmpty) Navigator.pop(context, _name);
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -1062,8 +1134,12 @@ class _RenameBoardDialogState extends State<_RenameBoardDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
+        // Same cap as NewBoardDialog.
+        maxLength: 40,
         textCapitalization: TextCapitalization.words,
-        onSubmitted: (value) => Navigator.pop(context, value),
+        decoration: const InputDecoration(hintText: 'Board name'),
+        onChanged: (_) => setState(() {}),
+        onSubmitted: (_) => _save(),
       ),
       actions: [
         TextButton(
@@ -1071,7 +1147,7 @@ class _RenameBoardDialogState extends State<_RenameBoardDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _controller.text),
+          onPressed: _name.isEmpty ? null : _save,
           child: const Text('Save'),
         ),
       ],

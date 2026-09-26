@@ -4,6 +4,7 @@ import 'package:cheaptripchip/data/place_store.dart';
 import 'package:cheaptripchip/models/board.dart';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:cheaptripchip/widgets/board_picker_sheet.dart';
+import 'package:cheaptripchip/widgets/new_board_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -37,15 +38,17 @@ Future<void> _open(WidgetTester tester, Place place) async {
     ),
   );
   await tester.tap(find.text('open'));
-  // Bounded rather than the default 10-minute pumpAndSettle timeout, so a
-  // genuine hang fails fast with a readable error instead of burning the
-  // whole suite's time budget.
-  await tester.pumpAndSettle(
-    const Duration(milliseconds: 100),
-    EnginePhase.sendSemanticsUpdate,
-    const Duration(seconds: 5),
-  );
+  await _settle(tester);
 }
+
+// Bounded rather than the default 10-minute pumpAndSettle timeout, so a
+// genuine hang fails fast with a readable error instead of burning the
+// whole suite's time budget.
+Future<void> _settle(WidgetTester tester) => tester.pumpAndSettle(
+  const Duration(milliseconds: 100),
+  EnginePhase.sendSemanticsUpdate,
+  const Duration(seconds: 5),
+);
 
 void main() {
   setUp(() async {
@@ -122,29 +125,72 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
-  testWidgets('"New board…" creates a board with the place already added '
-      'and checked', (tester) async {
+  testWidgets('"New board…" opens the shared name + emoji dialog and '
+      'creates the board with the place already added and checked', (
+    tester,
+  ) async {
     final place = _place(4);
     await _open(tester, place);
 
     await tester.tap(find.text('New board…'));
-    await tester.pump();
+    await _settle(tester);
+    expect(find.byType(NewBoardDialog), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'Osaka trip');
+    await tester.tap(find.bySemanticsLabel('Sushi'));
+    await tester.pump();
     await tester.tap(find.text('Create'));
-    await tester.pump();
-    await tester.pump();
+    await _settle(tester);
 
+    expect(find.byType(NewBoardDialog), findsNothing);
     final board = BoardStore.instance.boards.value.firstWhere(
       (b) => b.name == 'Osaka trip',
     );
+    expect(board.emoji, '🍣');
     expect(BoardStore.instance.containsPlace(board.id, place.id), isTrue);
     final tile = tester.widget<CheckboxListTile>(
       find.widgetWithText(CheckboxListTile, board.name),
     );
     expect(tile.value, isTrue);
     expect(find.text('Add to board'), findsOneWidget); // sheet still open
+    expect(find.text('Added to Osaka trip'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('"New board…" in move mode creates an empty board and returns '
+      'it as the target', (tester) async {
+    final place = _place(5);
+    Board? picked;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async =>
+                  picked = await BoardPickerSheet.pickMoveTarget(
+                    context,
+                    place,
+                    fromBoardId: 'somewhere',
+                  ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await _settle(tester);
+
+    await tester.tap(find.text('New board…'));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField), 'Nara');
+    await tester.pump();
+    await tester.tap(find.text('Create'));
+    await _settle(tester);
+
+    expect(find.byType(BoardPickerSheet), findsNothing);
+    expect(picked?.name, 'Nara');
+    expect(BoardStore.instance.containsPlace(picked!.id, place.id), isFalse);
   });
 
   test('addToBoardLabel: none / one / many', () {

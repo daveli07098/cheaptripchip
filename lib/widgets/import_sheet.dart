@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/import_service.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
+import '../utils/plural.dart';
 
 /// Preview of an incoming shared [TripBundle] with Import / Cancel. Confirming
 /// runs [ImportService.importBundle]; [show] resolves to its result, or null
@@ -64,8 +65,7 @@ class _ImportSheetState extends State<ImportSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Import “${bundle.title}” — $count '
-                '${count == 1 ? 'place' : 'places'}',
+                'Import “${bundle.title}” — ${plural(count, 'place')}',
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,

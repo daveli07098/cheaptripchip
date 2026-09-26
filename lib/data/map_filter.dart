@@ -22,6 +22,24 @@ RestaurantType? restaurantTypeOf(Place place) {
 
 final Expando<RestaurantType> _restaurantTypes = Expando('restaurantType');
 
+/// The emoji that marks [place] everywhere it is shown (map pin, list row,
+/// preview card, feed card): a restaurant's sub-type (🍜 Ramen, 🍣 Sushi…)
+/// when known, otherwise the category emoji. "Other" restaurants keep the
+/// generic 🍽️. Uses the memoized [restaurantTypeOf] — pins rebuild on
+/// camera moves, and the raw getter re-runs keyword detection every call.
+String placeMarkerEmoji(Place place) {
+  final type = restaurantTypeOf(place);
+  if (type != null && type != RestaurantType.other) return type.emoji;
+  return place.category.emoji;
+}
+
+/// Accessible name matching [placeMarkerEmoji] (WCAG 1.4.1).
+String placeMarkerLabel(Place place) {
+  final type = restaurantTypeOf(place);
+  if (type != null && type != RestaurantType.other) return type.labelEn;
+  return place.category.labelEn;
+}
+
 /// The map screen's active filters. Value-equal, so [MapFilterCache] can
 /// tell "nothing changed" from "the user picked something".
 @immutable
@@ -33,6 +51,7 @@ class MapFilter {
     this.district,
     this.query = '',
     this.boards = const {},
+    this.favoritesOnly = false,
   });
 
   /// null = "All".
@@ -55,9 +74,23 @@ class MapFilter {
   /// ANY of them (resolved through a [BoardIndex]); ANDed with the rest.
   final Set<String> boards;
 
+  /// Only places marked [Place.isFavorite].
+  final bool favoritesOnly;
+
+  /// How many chip-style filters are on (search [query] not counted) —
+  /// the chip row offers "Clear all" from two up.
+  int get activeCount =>
+      (favoritesOnly ? 1 : 0) +
+      (category != null ? 1 : 0) +
+      (city != null ? 1 : 0) +
+      boards.length;
+
+  bool get hasActiveFilters => activeCount > 0;
+
   /// Whether [p] passes every filter. [boardIndex] resolves [boards]; a
   /// board filter with no index matches nothing.
   bool matches(Place p, {BoardIndex? boardIndex}) {
+    if (favoritesOnly && !p.isFavorite) return false;
     if (category != null && p.category != category) return false;
     if (category == PlaceCategory.restaurant &&
         restaurantType != null &&
@@ -75,15 +108,6 @@ class MapFilter {
     return placeMatches(p, query);
   }
 
-  MapFilter copyWith({Set<String>? boards}) => MapFilter(
-    category: category,
-    restaurantType: restaurantType,
-    city: city,
-    district: district,
-    query: query,
-    boards: boards ?? this.boards,
-  );
-
   @override
   bool operator ==(Object other) =>
       other is MapFilter &&
@@ -92,6 +116,7 @@ class MapFilter {
       other.city == city &&
       other.district == district &&
       other.query == query &&
+      other.favoritesOnly == favoritesOnly &&
       setEquals(other.boards, boards);
 
   @override
@@ -101,6 +126,7 @@ class MapFilter {
     city,
     district,
     query,
+    favoritesOnly,
     Object.hashAllUnordered(boards),
   );
 }
@@ -335,6 +361,7 @@ class MapPlaceIndex {
     required this.counts,
     required this.restaurantTypeCounts,
     required this.areas,
+    required this.favoriteCount,
   });
 
   factory MapPlaceIndex.from(List<Place> loaded) {
@@ -346,7 +373,9 @@ class MapPlaceIndex {
     final typeCounts = <RestaurantType, int>{};
     final byCity = <String, CityGroup>{};
     var unknown = 0;
+    var favorites = 0;
     for (final p in all) {
+      if (p.isFavorite) favorites++;
       counts[p.category] = (counts[p.category] ?? 0) + 1;
 
       final type = restaurantTypeOf(p);
@@ -389,6 +418,7 @@ class MapPlaceIndex {
         countries: countries,
         unknownCount: unknown,
       ),
+      favoriteCount: favorites,
     );
   }
 
@@ -406,6 +436,9 @@ class MapPlaceIndex {
   /// Country → city → district counts over ALL places, each level A–Z;
   /// places without a city are in [AreaIndex.unknownCount].
   final AreaIndex areas;
+
+  /// Favourite places over ALL places (same choice as [counts]).
+  final int favoriteCount;
 }
 
 bool isFinitePlace(Place p) =>

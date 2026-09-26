@@ -19,6 +19,7 @@ import '../widgets/board_picker_sheet.dart';
 import '../widgets/place_photo.dart';
 import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
+import '../widgets/user_avatar.dart';
 
 /// Where a [PlaceDetailSheet] was opened from. [mine] (the default) is the
 /// user's own Saved place (or the auto "New finds" board) — every personal
@@ -134,10 +135,10 @@ class PlaceDetailSheet extends StatelessWidget {
             resizeToAvoidBottomInset: false,
             // The accent (header gradient, area badge) follows the place's
             // current category, so a category-chip change recolours it
-            // live — but only those two widgets listen to PlaceStore for
-            // it (each re-reads the current place itself), so an unrelated
-            // store flush (e.g. the area backfill) doesn't rebuild the
-            // whole sheet. Shared-board copies never read PlaceStore (their
+            // live — but only the widgets that show store-backed fields
+            // listen to PlaceStore (each via _LivePlace, re-reading the
+            // current place itself), so an unrelated store flush (e.g. the
+            // area backfill) doesn't rebuild the whole sheet. Shared-board copies never read PlaceStore (their
             // id is the owner's own place id — see PlaceDetailSource).
             body: _sheetBody(context, controller),
           ),
@@ -171,19 +172,22 @@ class PlaceDetailSheet extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                if (place.award != null) ...[
+                if (place.award case final award?) ...[
                   const SizedBox(height: 8),
-                  _AwardChip(label: place.award!),
+                  _Pill(
+                    color: AppTheme.scoreGold,
+                    icon: Icons.emoji_events,
+                    label: award,
+                  ),
                 ],
                 const SizedBox(height: 8),
                 _CategoryChips(place: place, editable: !source.isSharedBoard),
                 const SizedBox(height: 18),
-                source.isSharedBoard
-                    ? _SharedActionRow(place: place)
-                    : _ActionRow(
-                        place: place,
-                        fromBoardId: source.personalBoardId,
-                      ),
+                _ActionRow(
+                  place: place,
+                  shared: source.isSharedBoard,
+                  fromBoardId: source.personalBoardId,
+                ),
                 const SizedBox(height: 20),
                 _SectionLabel('About / 簡介'),
                 const SizedBox(height: 6),
@@ -294,13 +298,7 @@ class _PhotoHeader extends StatelessWidget {
     if (source.isSharedBoard) return _buildHeader(context, place);
     // Re-read the current copy so PhotoStore sees an up-to-date
     // `myPhotoAt` marker (it gates the Firestore read on it).
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, _, _) {
-        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
-        return _buildHeader(context, current);
-      },
-    );
+    return _LivePlace(place: place, builder: _buildHeader);
   }
 
   Widget _buildHeader(BuildContext context, Place current) {
@@ -377,54 +375,36 @@ class _PhotoHeader extends StatelessWidget {
           Positioned(
             right: 12,
             bottom: 12,
-            child: _PhotoButtons(place: current),
+            child: _PhotoButton(place: current),
           ),
       ],
     );
   }
 }
 
-/// Add / Change / Remove for the user's own photo, over the header's
-/// bottom-right corner.
-class _PhotoButtons extends StatelessWidget {
-  const _PhotoButtons({required this.place});
+/// "Add photo" / "Change photo" over the header's bottom-right corner. Add,
+/// change and remove all live in the one [showPlacePhotoActions] sheet it
+/// opens — there's deliberately no separate trash button here.
+class _PhotoButton extends StatelessWidget {
+  const _PhotoButton({required this.place});
 
   final Place place;
 
   @override
   Widget build(BuildContext context) {
-    final style = FilledButton.styleFrom(
-      backgroundColor: Colors.black.withValues(alpha: 0.55),
-      foregroundColor: Colors.white,
-      minimumSize: const Size(0, 40),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-    );
     return ValueListenableBuilder<Uint8List?>(
       valueListenable: PhotoStore.instance.photoFor(place.id),
       builder: (context, bytes, _) {
-        final hasPhoto = bytes != null;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FilledButton.icon(
-              style: style,
-              onPressed: () => showPlacePhotoActions(context, place),
-              icon: const Icon(Icons.add_a_photo_outlined, size: 18),
-              label: Text(hasPhoto ? 'Change photo' : 'Add photo'),
-            ),
-            if (hasPhoto) ...[
-              const SizedBox(width: 8),
-              IconButton.filled(
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.black.withValues(alpha: 0.55),
-                  foregroundColor: Colors.white,
-                ),
-                tooltip: 'Remove photo',
-                onPressed: () => confirmRemovePlacePhoto(context, place),
-                icon: const Icon(Icons.delete_outline, size: 20),
-              ),
-            ],
-          ],
+        return FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.black.withValues(alpha: 0.55),
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+          ),
+          onPressed: () => showPlacePhotoActions(context, place),
+          icon: const Icon(Icons.add_a_photo_outlined, size: 18),
+          label: Text(bytes != null ? 'Change photo' : 'Add photo'),
         );
       },
     );
@@ -432,10 +412,9 @@ class _PhotoButtons extends StatelessWidget {
 }
 
 /// "Shibuya, Tokyo" location badge (district, city — whichever are known;
-/// the raw area label for older places that only have that). Live like
-/// [_RestaurantTypeChip]: re-reads the place from [PlaceStore] so the
-/// background area backfill or a manual edit shows up immediately. Tap to
-/// correct the city/district by hand via [_AreaDialog].
+/// the raw area label for older places that only have that). Live via
+/// [_LivePlace] so the background area backfill or a manual edit shows up
+/// immediately. Tap to correct the city/district by hand via [_AreaDialog].
 class _AreaBadge extends StatelessWidget {
   const _AreaBadge({required this.place, this.editable = true});
 
@@ -449,22 +428,10 @@ class _AreaBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!editable) return _badge(context, place);
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, _, _) {
-        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
-        return Semantics(
-          button: true,
-          label: 'Area: ${_label(current)}. Tap to edit.',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => _edit(context, current),
-            child: ExcludeSemantics(
-              child: _badge(context, current, icon: true),
-            ),
-          ),
-        );
-      },
+    return _LivePlace(
+      place: place,
+      builder: (context, current) =>
+          _badge(context, current, onTap: () => _edit(context, current)),
     );
   }
 
@@ -475,40 +442,19 @@ class _AreaBadge extends StatelessWidget {
     return display.isEmpty ? 'Add area' : display;
   }
 
-  Widget _badge(BuildContext context, Place current, {bool icon = false}) {
-    // Follows the current category, like the header gradient.
-    final color = AppTheme.categoryColor(
-      current.category,
-      Theme.of(context).brightness,
-    );
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(20),
+  Widget _badge(BuildContext context, Place current, {VoidCallback? onTap}) {
+    final label = _label(current);
+    return _Pill(
+      // Follows the current category, like the header gradient.
+      color: AppTheme.categoryColor(
+        current.category,
+        Theme.of(context).brightness,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.place, size: 14, color: color),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              _label(current),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          if (icon) ...[
-            const SizedBox(width: 2),
-            Icon(Icons.edit_outlined, size: 13, color: color),
-          ],
-        ],
-      ),
+      icon: Icons.place,
+      label: label,
+      trailingIcon: onTap == null ? null : Icons.edit_outlined,
+      semanticsLabel: onTap == null ? null : 'Area: $label. Tap to edit.',
+      onTap: onTap,
     );
   }
 
@@ -531,7 +477,7 @@ class _AreaBadge extends StatelessWidget {
 
 /// City + District editor, opened by [_AreaBadge]. Pops with the new
 /// [PlaceArea] on Save (keeping the country code), `null` on Cancel. Owns
-/// its controllers for the same reason as [_NotesDialog].
+/// its controllers for the same reason as [_TextDialog].
 class _AreaDialog extends StatefulWidget {
   const _AreaDialog({
     required this.city,
@@ -606,44 +552,91 @@ class _AreaDialogState extends State<_AreaDialog> {
   }
 }
 
-class _AwardChip extends StatelessWidget {
-  const _AwardChip({required this.label});
+/// The rounded, category-tinted chip shared by the area badge, the award,
+/// and the category / cuisine chips: an emoji or icon, a label, and an
+/// optional trailing icon (▾ / ✎) when it's tappable.
+///
+/// With [semanticsLabel] the pill is one screen-reader node carrying that
+/// label (the raw emoji/text are excluded — emoji aren't accessible
+/// labels); with [onTap] it's also a button.
+class _Pill extends StatelessWidget {
+  const _Pill({
+    required this.color,
+    required this.label,
+    this.emoji,
+    this.icon,
+    this.trailingIcon,
+    this.semanticsLabel,
+    this.onTap,
+  });
 
+  final Color color;
   final String label;
+  final String? emoji;
+  final IconData? icon;
+  final IconData? trailingIcon;
+  final String? semanticsLabel;
+  final VoidCallback? onTap;
+
+  static const _radius = 20.0;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    Widget pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFC857).withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(10),
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(_radius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.emoji_events, size: 15, color: Color(0xFFFFC857)),
+          if (emoji case final emoji?)
+            Text(emoji, style: const TextStyle(fontSize: 14))
+          else if (icon case final icon?)
+            Icon(icon, size: 15, color: color),
           const SizedBox(width: 5),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFFFFC857),
-              fontWeight: FontWeight.w600,
-              fontSize: 12.5,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+              ),
             ),
           ),
+          if (trailingIcon case final trailing?) ...[
+            const SizedBox(width: 2),
+            Icon(trailing, size: 15, color: color),
+          ],
         ],
       ),
+    );
+    if (onTap != null) {
+      pill = InkWell(
+        borderRadius: BorderRadius.circular(_radius),
+        onTap: onTap,
+        child: pill,
+      );
+    }
+    if (semanticsLabel == null) return pill;
+    return Semantics(
+      button: onTap != null,
+      label: semanticsLabel,
+      child: ExcludeSemantics(child: pill),
     );
   }
 }
 
 /// The category chip ("🍽️ Restaurant ▾") with the restaurant sub-type chip
-/// right next to it when the place is a restaurant. Re-reads the current
-/// copy from [PlaceStore] (like [_RestaurantTypeChip]) so a category change
-/// shows or hides the sub-type chip immediately; map pins, the feed and
-/// filters follow on their own since they read [PlaceStore] too. Not
-/// [editable] on a shared-board place: plain chips, no store lookups (see
+/// right next to it when the place is a restaurant. Live via [_LivePlace]
+/// so a category change shows or hides the sub-type chip immediately — the
+/// one store subscription for both chips; map pins, the feed and filters
+/// follow on their own since they read [PlaceStore] too. Not [editable] on
+/// a shared-board place: plain chips, no store lookups (see
 /// [_AreaBadge.editable]).
 class _CategoryChips extends StatelessWidget {
   const _CategoryChips({required this.place, this.editable = true});
@@ -654,11 +647,7 @@ class _CategoryChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!editable) return _chips(context, place);
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, _, _) =>
-          _chips(context, PlaceStore.instance.byIdOrNull(place.id) ?? place),
-    );
+    return _LivePlace(place: place, builder: _chips);
   }
 
   Widget _chips(BuildContext context, Place current) {
@@ -674,9 +663,9 @@ class _CategoryChips extends StatelessWidget {
   }
 }
 
-/// "☕ Cafe ▾" chip for [Place.category]. Tapping opens [_CategoryPicker] and
-/// saves via [PlaceStore.updateCategory]; read-only (no ▾, no tap) when not
-/// [editable].
+/// "☕ Cafe ▾" chip for [Place.category]. Tapping opens an
+/// [_EmojiListPicker] and saves via [PlaceStore.updateCategory]; read-only
+/// (no ▾, no tap) when not [editable].
 class _CategoryChip extends StatelessWidget {
   const _CategoryChip({required this.place, required this.editable});
 
@@ -686,218 +675,139 @@ class _CategoryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final category = place.category;
-    final color = AppTheme.categoryColor(
-      category,
-      Theme.of(context).brightness,
-    );
-    final chip = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(category.emoji, style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 6),
-          Text(
-            category.labelEn,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 12.5,
-            ),
-          ),
-          if (editable) Icon(Icons.expand_more, size: 16, color: color),
-        ],
-      ),
-    );
     // The emoji alone isn't an accessible label — the Semantics carries the
     // category name instead (same as the cuisine chip).
-    if (!editable) {
-      return Semantics(
-        label: 'Category: ${category.labelEn}',
-        child: ExcludeSemantics(child: chip),
-      );
-    }
-    return Semantics(
-      button: true,
-      label: 'Category: ${category.labelEn}. Tap to change.',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: () => _pickCategory(context),
-        child: ExcludeSemantics(child: chip),
-      ),
+    return _Pill(
+      color: AppTheme.categoryColor(category, Theme.of(context).brightness),
+      emoji: category.emoji,
+      label: category.labelEn,
+      trailingIcon: editable ? Icons.expand_more : null,
+      semanticsLabel: editable
+          ? 'Category: ${category.labelEn}. Tap to change.'
+          : 'Category: ${category.labelEn}',
+      onTap: editable ? () => _pickCategory(context) : null,
     );
   }
 
   Future<void> _pickCategory(BuildContext context) async {
-    final picked = await showModalBottomSheet<PlaceCategory>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _CategoryPicker(selected: place.category),
+    final messenger = ScaffoldMessenger.of(context);
+    final picked = await _pickFromList<PlaceCategory>(
+      context,
+      title: 'Category / 類別',
+      values: PlaceCategory.values,
+      selected: place.category,
+      emojiOf: (c) => c.emoji,
+      labelEnOf: (c) => c.labelEn,
+      labelZhOf: (c) => c.labelZh,
     );
     if (picked == null) return;
-    await PlaceStore.instance.updateCategory(place.id, picked);
-  }
-}
-
-/// Bottom sheet list of every [PlaceCategory], opened by [_CategoryChip] —
-/// same shape (and same no-controller reasoning) as [_RestaurantTypePicker].
-class _CategoryPicker extends StatelessWidget {
-  const _CategoryPicker({required this.selected});
-
-  final PlaceCategory selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(
-                'Category / 類別',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-            ),
-            for (final category in PlaceCategory.values)
-              ListTile(
-                leading: ExcludeSemantics(
-                  child: Text(
-                    category.emoji,
-                    style: const TextStyle(fontSize: 20),
-                  ),
-                ),
-                title: Text(category.labelEn),
-                subtitle: Text(category.labelZh),
-                trailing: category == selected ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(context, category),
-              ),
-          ],
-        ),
-      ),
+    await _saveOrWarn(
+      messenger,
+      () => PlaceStore.instance.updateCategory(place.id, picked),
     );
   }
 }
 
-/// Tappable "🍜 Ramen ▾" chip for a restaurant's cuisine sub-type
+/// "🍜 Ramen ▾" chip for a restaurant's cuisine sub-type
 /// ([Place.effectiveRestaurantType] — the user's own pick if set, else a
-/// keyword-detected guess, else "Other"). Tapping opens [_RestaurantTypePicker]
-/// and saves the choice via [PlaceStore.setRestaurantType]. Re-reads the
-/// current copy from the store, same as [_MyReviewSection]/[_ActionRow]'s
-/// favourite toggle, so it reflects a save immediately.
+/// keyword-detected guess, else "Other"). Tapping opens an
+/// [_EmojiListPicker] and saves the choice via [PlaceStore.setRestaurantType].
+/// Stateless over the [place] it's given: [_CategoryChips] already rebuilds
+/// it with the current copy after every store change.
 class _RestaurantTypeChip extends StatelessWidget {
   const _RestaurantTypeChip({required this.place, this.editable = true});
 
   final Place place;
 
-  /// False for a shared-board place: no picker, no re-reading PlaceStore
-  /// (see [_AreaBadge.editable]).
+  /// False for a shared-board place: no picker (see [_AreaBadge.editable]).
   final bool editable;
 
   @override
   Widget build(BuildContext context) {
-    if (!editable) {
-      final color = AppTheme.categoryColor(
+    final type = place.effectiveRestaurantType ?? RestaurantType.other;
+    // The chip's emoji isn't an accessible label (WCAG 1.4.1) — the
+    // Semantics label names the cuisine instead.
+    return _Pill(
+      color: AppTheme.categoryColor(
         PlaceCategory.restaurant,
         Theme.of(context).brightness,
-      );
-      final type = place.effectiveRestaurantType ?? RestaurantType.other;
-      // The chip's emoji isn't an accessible label — same WCAG 1.4.1 note
-      // as the editable branch below, just without "Tap to change".
-      return Semantics(
-        label: 'Cuisine: ${type.labelEn}',
-        child: ExcludeSemantics(child: _chip(context, place, color)),
-      );
-    }
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, _, _) {
-        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
-        final color = AppTheme.categoryColor(
-          PlaceCategory.restaurant,
-          Theme.of(context).brightness,
-        );
-        final type = current.effectiveRestaurantType ?? RestaurantType.other;
-        return Semantics(
-          button: true,
-          label: 'Cuisine: ${type.labelEn}. Tap to change.',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => _pickType(context, current),
-            child: ExcludeSemantics(
-              child: _chip(context, current, color, expandIcon: true),
-            ),
-          ),
-        );
-      },
+      ),
+      emoji: type.emoji,
+      label: type.labelEn,
+      trailingIcon: editable ? Icons.expand_more : null,
+      semanticsLabel: editable
+          ? 'Cuisine: ${type.labelEn}. Tap to change.'
+          : 'Cuisine: ${type.labelEn}',
+      onTap: editable ? () => _pickType(context, type) : null,
     );
   }
 
-  Widget _chip(
-    BuildContext context,
-    Place current,
-    Color color, {
-    bool expandIcon = false,
-  }) {
-    final type = current.effectiveRestaurantType ?? RestaurantType.other;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(type.emoji, style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 6),
-          Text(
-            type.labelEn,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 12.5,
-            ),
-          ),
-          if (expandIcon) Icon(Icons.expand_more, size: 16, color: color),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickType(BuildContext context, Place current) async {
-    final picked = await showModalBottomSheet<RestaurantType>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _RestaurantTypePicker(
-        selected: current.effectiveRestaurantType ?? RestaurantType.other,
-      ),
+  Future<void> _pickType(BuildContext context, RestaurantType current) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final picked = await _pickFromList<RestaurantType>(
+      context,
+      title: 'Cuisine / type',
+      values: RestaurantType.values,
+      selected: current,
+      emojiOf: (t) => t.emoji,
+      labelEnOf: (t) => t.labelEn,
+      labelZhOf: (t) => t.labelZh,
     );
     if (picked == null) return;
-    await PlaceStore.instance.setRestaurantType(current.id, picked);
+    await _saveOrWarn(
+      messenger,
+      () => PlaceStore.instance.setRestaurantType(place.id, picked),
+    );
   }
 }
 
-/// Bottom sheet list of every [RestaurantType], opened by [_RestaurantTypeChip].
-/// Pops with the tapped type, or `null` on dismiss without a pick — a plain
-/// [StatelessWidget] since it holds no controller (see the git history of
-/// this file's `_NotesDialog` for why that distinction matters: never
-/// dispose a controller right after `await showModalBottomSheet` returns —
-/// this widget simply doesn't own one).
-class _RestaurantTypePicker extends StatelessWidget {
-  const _RestaurantTypePicker({required this.selected});
+/// Opens an [_EmojiListPicker] over [values]; resolves to the tapped value,
+/// or `null` when dismissed without a pick.
+Future<T?> _pickFromList<T>(
+  BuildContext context, {
+  required String title,
+  required List<T> values,
+  required T selected,
+  required String Function(T value) emojiOf,
+  required String Function(T value) labelEnOf,
+  required String Function(T value) labelZhOf,
+}) {
+  return showModalBottomSheet<T>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _EmojiListPicker<T>(
+      title: title,
+      values: values,
+      selected: selected,
+      emojiOf: emojiOf,
+      labelEnOf: labelEnOf,
+      labelZhOf: labelZhOf,
+    ),
+  );
+}
 
-  final RestaurantType selected;
+/// Bottom sheet list of emoji-tagged choices (every [PlaceCategory] or
+/// [RestaurantType]) with English + Chinese labels and a check on the
+/// current [selected] one. Pops with the tapped value — a plain
+/// [StatelessWidget] since it holds no controller (never dispose a
+/// controller right after `await showModalBottomSheet` returns — this
+/// widget simply doesn't own one; see [_TextDialog]).
+class _EmojiListPicker<T> extends StatelessWidget {
+  const _EmojiListPicker({
+    required this.title,
+    required this.values,
+    required this.selected,
+    required this.emojiOf,
+    required this.labelEnOf,
+    required this.labelZhOf,
+  });
+
+  final String title;
+  final List<T> values;
+  final T selected;
+  final String Function(T value) emojiOf;
+  final String Function(T value) labelEnOf;
+  final String Function(T value) labelZhOf;
 
   @override
   Widget build(BuildContext context) {
@@ -911,21 +821,29 @@ class _RestaurantTypePicker extends StatelessWidget {
           shrinkWrap: true,
           padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
-                'Cuisine / type',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-            for (final type in RestaurantType.values)
+            for (final value in values)
               ListTile(
+                // The title/subtitle name the choice; the emoji is decor.
                 leading: ExcludeSemantics(
-                  child: Text(type.emoji, style: const TextStyle(fontSize: 20)),
+                  child: Text(
+                    emojiOf(value),
+                    style: const TextStyle(fontSize: 20),
+                  ),
                 ),
-                title: Text(type.labelEn),
-                trailing: type == selected ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(context, type),
+                title: Text(labelEnOf(value)),
+                subtitle: Text(labelZhOf(value)),
+                trailing: value == selected ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, value),
               ),
           ],
         ),
@@ -934,10 +852,79 @@ class _RestaurantTypePicker extends StatelessWidget {
   }
 }
 
-class _ActionRow extends StatelessWidget {
-  const _ActionRow({required this.place, this.fromBoardId});
+/// Text for the share sheet: the name, "District, City" when either is
+/// known ([Place.areaDisplay] — never the extractor's "Unknown"
+/// placeholder or a raw "City, Country" region), then the Maps link.
+@visibleForTesting
+String placeShareText(Place place) {
+  final area = place.areaDisplay;
+  final title = area.isEmpty ? place.name : '${place.name} — $area';
+  return '$title\n${place.googleMapsUrl}';
+}
+
+Future<void> _sharePlace(Place place) async {
+  try {
+    await SharePlus.instance.share(ShareParams(text: placeShareText(place)));
+  } catch (e) {
+    debugPrint('Share failed: $e');
+  }
+}
+
+/// Runs a [PlaceStore] write started from this sheet. The store has
+/// already reverted its optimistic change when the write fails; this tells
+/// the user, on [messenger] (grab it before any `await`, so a dialog that
+/// has since closed doesn't matter).
+Future<void> _saveOrWarn(
+  ScaffoldMessengerState messenger,
+  Future<void> Function() write,
+) async {
+  try {
+    await write();
+  } catch (error) {
+    debugPrint('PlaceDetailSheet: not saved: $error');
+    messenger
+      ..removeCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text("Couldn't save — try again")),
+      );
+  }
+}
+
+/// Rebuilds [builder] with the current copy of [place] from [PlaceStore]
+/// after every store change (the passed [place] once it's gone) — the
+/// `place` a widget was built with goes stale the moment an edit saves.
+/// Only for the user's own places: never wrap a shared-board copy, whose id
+/// is the owner's own place id (see [PlaceDetailSource]).
+class _LivePlace extends StatelessWidget {
+  const _LivePlace({required this.place, required this.builder});
 
   final Place place;
+  final Widget Function(BuildContext context, Place current) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) =>
+          builder(context, PlaceStore.instance.byIdOrNull(place.id) ?? place),
+    );
+  }
+}
+
+/// The primary button + icon actions under the title. For the user's own
+/// place ([shared] false): "Add to board", the favourite toggle, "Move to
+/// another board" (when opened from a personal board it's still on) and
+/// Share. For a shared-board place: "Save to my places" instead — no
+/// favourite/board/move, since those act on the user's own Saved store and
+/// this place isn't necessarily theirs — which copies it in
+/// ([SharedBoardStore.saveToMyPlaces], deduped the same way as the Boards
+/// tab's row action). Share stays in both: it's just the public link.
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({required this.place, this.shared = false, this.fromBoardId})
+    : assert(!shared || fromBoardId == null);
+
+  final Place place;
+  final bool shared;
 
   /// Personal board the sheet was opened from (see
   /// [PlaceDetailSource.personalBoard]); enables "Move to another board"
@@ -948,42 +935,15 @@ class _ActionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-          child: ValueListenableBuilder<List<Board>>(
-            valueListenable: BoardStore.instance.boards,
-            builder: (context, boards, _) {
-              final containing = BoardStore.instance.boardsContaining(place.id);
-              final label = addToBoardLabel(containing);
-              return Semantics(
-                label: label,
-                child: FilledButton.icon(
-                  onPressed: () => BoardPickerSheet.show(context, place),
-                  icon: Icon(
-                    containing.isEmpty ? Icons.bookmark_add : Icons.check,
-                    size: 18,
-                  ),
-                  label: Text(label),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.coral,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
+        Expanded(child: shared ? _saveButton() : _boardButton()),
         const SizedBox(width: 10),
-        ValueListenableBuilder<List<Place>>(
-          valueListenable: PlaceStore.instance.places,
-          builder: (context, places, _) {
-            final current = places.firstWhere(
-              (p) => p.id == place.id,
-              orElse: () => place,
-            );
+        if (!shared)
+          _LivePlace(
+            place: place,
             // IconButton.isSelected only drives Semantics(selected: ...),
-            // not toggled state — wrap explicitly so screen readers announce
-            // this as a toggle button, not a selection.
-            return Semantics(
+            // not toggled state — wrap explicitly so screen readers
+            // announce this as a toggle button, not a selection.
+            builder: (context, current) => Semantics(
               toggled: current.isFavorite,
               child: _IconAction(
                 icon: current.isFavorite
@@ -993,11 +953,13 @@ class _ActionRow extends StatelessWidget {
                     ? 'Remove from favourites'
                     : 'Add to favourites',
                 isSelected: current.isFavorite,
-                onTap: () => PlaceStore.instance.toggleFavorite(place.id),
+                onTap: () => _saveOrWarn(
+                  ScaffoldMessenger.of(context),
+                  () => PlaceStore.instance.toggleFavorite(place.id),
+                ),
               ),
-            );
-          },
-        ),
+            ),
+          ),
         if (fromBoardId case final boardId?)
           ValueListenableBuilder<List<Board>>(
             valueListenable: BoardStore.instance.boards,
@@ -1010,8 +972,43 @@ class _ActionRow extends StatelessWidget {
                   )
                 : const SizedBox.shrink(),
           ),
-        _IconAction(icon: Icons.ios_share, tooltip: 'Share', onTap: _share),
+        _IconAction(
+          icon: Icons.ios_share,
+          tooltip: 'Share',
+          onTap: () => _sharePlace(place),
+        ),
       ],
+    );
+  }
+
+  Widget _boardButton() {
+    return ValueListenableBuilder<List<Board>>(
+      valueListenable: BoardStore.instance.boards,
+      builder: (context, _, _) {
+        final containing = BoardStore.instance.boardsContaining(place.id);
+        return _PrimaryAction(
+          label: addToBoardLabel(containing),
+          icon: containing.isEmpty ? Icons.bookmark_add : Icons.check,
+          onPressed: () => BoardPickerSheet.show(context, place),
+        );
+      },
+    );
+  }
+
+  Widget _saveButton() {
+    // Listens to the whole list, not a by-id lookup — isSaved dedupes by
+    // content, and a shared copy's id is the owner's (see _LivePlace).
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) {
+        final saved = SharedBoardStore.instance.isSaved(place);
+        return _PrimaryAction(
+          // The check icon already says "done" — no "✓" in the text too.
+          label: saved ? 'In your places' : 'Save to my places',
+          icon: saved ? Icons.check : Icons.bookmark_add,
+          onPressed: saved ? null : () => _save(context),
+        );
+      },
     );
   }
 
@@ -1033,64 +1030,6 @@ class _ActionRow extends StatelessWidget {
     if (move != null) showMovedSnackBar(messenger, move);
   }
 
-  Future<void> _share() async {
-    try {
-      await SharePlus.instance.share(
-        ShareParams(
-          text:
-              '${place.name} — ${place.areaLabel}, ${place.region}\n'
-              '${place.googleMapsUrl}',
-        ),
-      );
-    } catch (e) {
-      debugPrint('Share failed: $e');
-    }
-  }
-}
-
-/// [_ActionRow]'s equivalent for a shared-board place: no favourite toggle
-/// and no "Add to board" (those act on the user's own Saved store, and this
-/// place isn't necessarily theirs) — "Save to my places" instead, which
-/// copies it in ([SharedBoardStore.saveToMyPlaces], deduped the same way as
-/// the Boards tab's row action). Share stays: it's just the public link.
-class _SharedActionRow extends StatelessWidget {
-  const _SharedActionRow({required this.place});
-
-  final Place place;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: ValueListenableBuilder<List<Place>>(
-            valueListenable: PlaceStore.instance.places,
-            builder: (context, _, _) {
-              final saved = SharedBoardStore.instance.isSaved(place);
-              return Semantics(
-                label: saved ? '✓ In your places' : 'Save to my places',
-                child: FilledButton.icon(
-                  onPressed: saved ? null : () => _save(context),
-                  icon: Icon(
-                    saved ? Icons.check : Icons.bookmark_add,
-                    size: 18,
-                  ),
-                  label: Text(saved ? '✓ In your places' : 'Save to my places'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.coral,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(width: 10),
-        _IconAction(icon: Icons.ios_share, tooltip: 'Share', onTap: _share),
-      ],
-    );
-  }
-
   Future<void> _save(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     final added = await SharedBoardStore.instance.saveToMyPlaces(place);
@@ -1104,19 +1043,34 @@ class _SharedActionRow extends StatelessWidget {
       ),
     );
   }
+}
 
-  Future<void> _share() async {
-    try {
-      await SharePlus.instance.share(
-        ShareParams(
-          text:
-              '${place.name} — ${place.areaLabel}, ${place.region}\n'
-              '${place.googleMapsUrl}',
+/// The coral full-width button leading [_ActionRow].
+class _PrimaryAction extends StatelessWidget {
+  const _PrimaryAction({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: label,
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: FilledButton.styleFrom(
+          backgroundColor: AppTheme.coral,
+          padding: const EdgeInsets.symmetric(vertical: 13),
         ),
-      );
-    } catch (e) {
-      debugPrint('Share failed: $e');
-    }
+      ),
+    );
   }
 }
 
@@ -1252,25 +1206,23 @@ class _SharedRatingsSectionState extends State<_SharedRatingsSection> {
           ),
         ],
         const SizedBox(height: 10),
-        Text(
-          'Your rating',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
+        _SubLabel('Your rating'),
         const SizedBox(height: 4),
-        ScoreStars(
+        _ScoreRow(
           value: mine?.score,
           onChanged: (score) => _save(score, mine?.notes ?? ''),
         ),
         const SizedBox(height: 10),
         _RemarkBox(
           text: mine?.notes ?? '',
+          title: 'Remark / 備註',
+          placeholder: 'Add a remark… / 加備註',
+          noun: 'remark',
+          hint: 'What did you think? Tips, dishes, prices…',
           // Every rating doc needs a score (firestore.rules validRating).
           enabled: mine != null,
-          disabledHint: 'Rate first to add a remark / 先評分再加備註',
+          disabledHint: 'Rate first / 先評分',
+          disabledSemantics: 'Rate with the stars above to add a remark',
           onSave: (notes) => _save(mine?.score, notes),
         ),
         const SizedBox(height: 16),
@@ -1318,29 +1270,12 @@ class _MemberRatingTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final photoUrl = rating.photoUrl;
-    final initial = name.isEmpty ? '?' : name.characters.first.toUpperCase();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ExcludeSemantics(
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: scheme.primaryContainer,
-              foregroundImage: photoUrl == null ? null : NetworkImage(photoUrl),
-              onForegroundImageError: photoUrl == null ? null : (_, _) {},
-              child: Text(
-                initial,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: scheme.onPrimaryContainer,
-                ),
-              ),
-            ),
-          ),
+          UserAvatar(photoUrl: rating.photoUrl, name: name, radius: 16),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -1404,13 +1339,12 @@ class _MemberRatingTile extends StatelessWidget {
   }
 }
 
-/// "My review" section: a [ScoreStars] picker (saves immediately on every
-/// change) plus a notes affordance (opens [_NotesDialog] to edit).
+/// "My review" section: a [_ScoreRow] (saves immediately on every change),
+/// then two labelled note areas — "Summary", the single remark box
+/// ([_RemarkBox]), and "Visit notes", the dated log ([_VisitNotes]).
 ///
-/// Reads [PlaceStore.instance.places] the same way [_ActionRow] does for the
-/// favourite toggle — the `place` this widget is built with can go stale the
-/// moment a review is saved, so every rebuild re-looks-up the current copy
-/// by id.
+/// Live via [_LivePlace] — the `place` this widget is built with goes stale
+/// the moment a review is saved.
 class _MyReviewSection extends StatelessWidget {
   const _MyReviewSection({required this.place});
 
@@ -1418,26 +1352,44 @@ class _MyReviewSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<Place>>(
-      valueListenable: PlaceStore.instance.places,
-      builder: (context, places, _) {
-        final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
+    return _LivePlace(
+      place: place,
+      builder: (context, current) {
+        final messenger = ScaffoldMessenger.of(context);
+        Future<void> saveReview({int? score, required String notes}) =>
+            _saveOrWarn(
+              messenger,
+              () => PlaceStore.instance.updateReview(
+                current.id,
+                score: score,
+                notes: notes,
+              ),
+            );
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _SectionLabel('My review / 我的評價'),
             const SizedBox(height: 8),
-            ScoreStars(
+            _ScoreRow(
               value: current.myScore,
-              onChanged: (score) => PlaceStore.instance.updateReview(
-                current.id,
-                score: score,
-                notes: current.myNotes,
-              ),
+              onChanged: (score) =>
+                  saveReview(score: score, notes: current.myNotes),
             ),
-            const SizedBox(height: 10),
-            _MyNotes(place: current),
-            _ExtraNotes(place: current),
+            const SizedBox(height: 12),
+            _SubLabel('Summary / 總結'),
+            const SizedBox(height: 6),
+            _RemarkBox(
+              text: current.myNotes,
+              title: 'Summary / 總結',
+              placeholder: 'Add a summary… / 加總結',
+              noun: 'summary',
+              hint: 'Overall: what did you think? Tips, dishes, prices…',
+              onSave: (notes) =>
+                  saveReview(score: current.myScore, notes: notes),
+            ),
+            const SizedBox(height: 16),
+            _SubLabel('Visit notes / 到訪筆記'),
+            _VisitNotes(place: current),
           ],
         );
       },
@@ -1445,33 +1397,43 @@ class _MyReviewSection extends StatelessWidget {
   }
 }
 
-class _MyNotes extends StatelessWidget {
-  const _MyNotes({required this.place});
+/// [ScoreStars] plus, once a score is set, a small "Clear" button — tapping
+/// the current half-star also clears it, but that's not discoverable.
+class _ScoreRow extends StatelessWidget {
+  const _ScoreRow({required this.value, required this.onChanged});
 
-  final Place place;
+  final int? value;
+  final ValueChanged<int?> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return _RemarkBox(
-      text: place.myNotes,
-      onSave: (notes) => PlaceStore.instance.updateReview(
-        place.id,
-        score: place.myScore,
-        notes: notes,
-      ),
+    // A Wrap, not a Row: five 48dp stars + the "n/10" label already fill a
+    // narrow phone, so "Clear" drops below rather than overflowing.
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        ScoreStars(value: value, onChanged: onChanged),
+        if (value != null)
+          TextButton(
+            onPressed: () => onChanged(null),
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+            child: const Text('Clear', semanticsLabel: 'Clear score'),
+          ),
+      ],
     );
   }
 }
 
-/// Extra dated notes under [_MyNotes]'s single remark box — a running log
-/// the user can keep adding to (e.g. "2nd visit: …"), newest first. Only
-/// ever built by [_MyReviewSection], which itself is never built in
-/// shared-board mode (see `_sheetBody`) — so this needs no `editable` flag
-/// of its own.
-class _ExtraNotes extends StatelessWidget {
-  const _ExtraNotes({required this.place});
+/// Dated "visit notes" under the Summary box — a running log the user can
+/// keep adding to (e.g. "2nd visit: …"), newest first. Only ever built by
+/// [_MyReviewSection], which itself is never built in shared-board mode
+/// (see `_sheetBody`) — so this needs no `editable` flag of its own.
+class _VisitNotes extends StatelessWidget {
+  const _VisitNotes({required this.place});
 
   final Place place;
+
+  static const _addLabel = 'Add a visit note / 加到訪筆記';
 
   @override
   Widget build(BuildContext context) {
@@ -1482,45 +1444,46 @@ class _ExtraNotes extends StatelessWidget {
       children: [
         for (final note in notes) ...[
           const SizedBox(height: 8),
-          _ExtraNoteTile(place: place, note: note),
+          _VisitNoteTile(place: place, note: note),
         ],
-        const SizedBox(height: 8),
-        Semantics(
-          button: true,
-          label: 'Add another note',
-          child: TextButton.icon(
-            onPressed: () => _add(context),
-            style: TextButton.styleFrom(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size(0, 32),
-              alignment: Alignment.centerLeft,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Add another note / 再加備註'),
+        const SizedBox(height: 4),
+        TextButton.icon(
+          onPressed: () => _add(context),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            minimumSize: const Size(48, 48),
+            alignment: Alignment.centerLeft,
           ),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text(_addLabel),
         ),
       ],
     );
   }
 
   Future<void> _add(BuildContext context) async {
-    final result = await showDialog<_ExtraNoteResult>(
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await showDialog<_TextResult>(
       context: context,
-      builder: (_) => const _ExtraNoteDialog(),
+      builder: (_) => const _TextDialog(
+        title: _addLabel,
+        hint: 'e.g. "2nd visit: tried the…"',
+      ),
     );
     // The dialog already popped itself — no BuildContext use after this.
-    final text = result?.text;
-    if (text == null) return;
-    await PlaceStore.instance.addNote(place.id, text);
+    if (result == null) return;
+    await _saveOrWarn(
+      messenger,
+      () => PlaceStore.instance.addNote(place.id, result.text),
+    );
   }
 }
 
-/// One entry in [_ExtraNotes]: date + text, tap to edit (or delete, via
-/// [_ExtraNoteDialog]'s Delete action), swipe to delete directly — both
-/// paths raise an UNDO snackbar on this sheet's own messenger.
-class _ExtraNoteTile extends StatelessWidget {
-  const _ExtraNoteTile({required this.place, required this.note});
+/// One entry in [_VisitNotes]: date + text, tap to edit (or delete, via
+/// [_TextDialog]'s Delete action), swipe to delete directly — both paths
+/// raise an UNDO snackbar on this sheet's own messenger.
+class _VisitNoteTile extends StatelessWidget {
+  const _VisitNoteTile({required this.place, required this.note});
 
   final Place place;
   final PlaceNote note;
@@ -1540,11 +1503,11 @@ class _ExtraNoteTile extends StatelessWidget {
         ),
         child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
       ),
-      onDismissed: (_) => _delete(context),
+      onDismissed: (_) => _delete(ScaffoldMessenger.of(context)),
       child: Semantics(
         button: true,
         label:
-            'Note from ${_formatDate(note.createdAt)}: ${note.text}. '
+            'Visit note from ${_formatDate(note.createdAt)}: ${note.text}. '
             'Tap to edit.',
         child: InkWell(
           onTap: () => _edit(context),
@@ -1589,37 +1552,44 @@ class _ExtraNoteTile extends StatelessWidget {
 
   Future<void> _edit(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
-    final result = await showDialog<_ExtraNoteResult>(
+    final result = await showDialog<_TextResult>(
       context: context,
-      builder: (_) => _ExtraNoteDialog(initialText: note.text, isEditing: true),
+      builder: (_) => _TextDialog(
+        title: 'Edit visit note / 編輯到訪筆記',
+        hint: 'e.g. "2nd visit: tried the…"',
+        initialText: note.text,
+        showDelete: true,
+      ),
     );
     // The dialog already popped itself — no BuildContext use after this,
     // only the messenger grabbed before the await (same as _ActionRow._move).
     if (result == null) return;
     if (result.delete) {
-      await PlaceStore.instance.deleteNote(place.id, note.id);
-      _showUndo(messenger);
+      await _delete(messenger);
       return;
     }
-    final text = result.text;
-    if (text == null) return;
-    await PlaceStore.instance.editNote(place.id, note.id, text);
+    await _saveOrWarn(
+      messenger,
+      () => PlaceStore.instance.editNote(place.id, note.id, result.text),
+    );
   }
 
-  void _delete(BuildContext context) {
-    final messenger = ScaffoldMessenger.of(context);
-    PlaceStore.instance.deleteNote(place.id, note.id);
-    _showUndo(messenger);
-  }
-
-  void _showUndo(ScaffoldMessengerState messenger) {
+  Future<void> _delete(ScaffoldMessengerState messenger) async {
+    var deleted = false;
+    await _saveOrWarn(messenger, () async {
+      deleted = await PlaceStore.instance.deleteNote(place.id, note.id) != null;
+    });
+    if (!deleted) return;
     messenger.removeCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
         content: const Text('Note deleted'),
         action: SnackBarAction(
           label: 'UNDO',
-          onPressed: () => PlaceStore.instance.restoreNote(place.id, note),
+          onPressed: () => _saveOrWarn(
+            messenger,
+            () => PlaceStore.instance.restoreNote(place.id, note),
+          ),
         ),
       ),
     );
@@ -1646,113 +1616,58 @@ class _ExtraNoteTile extends StatelessWidget {
   }
 }
 
-/// Pop value for [_ExtraNoteDialog]: `null` on Cancel/dismiss, [text] set on
-/// Save (possibly empty — callers decide whether that's a no-op), [delete]
-/// true when the Delete action was tapped (only offered when editing).
-class _ExtraNoteResult {
-  const _ExtraNoteResult.save(this.text) : delete = false;
-  const _ExtraNoteResult.delete() : text = null, delete = true;
-
-  final String? text;
-  final bool delete;
-}
-
-/// Add/edit dialog for one [_ExtraNotes] entry — same controller-ownership
-/// contract as [_NotesDialog] (owns and disposes its own [TextEditingController],
-/// never disposed manually right after `await showDialog` returns).
-class _ExtraNoteDialog extends StatefulWidget {
-  const _ExtraNoteDialog({this.initialText = '', this.isEditing = false});
-
-  final String initialText;
-  final bool isEditing;
-
-  @override
-  State<_ExtraNoteDialog> createState() => _ExtraNoteDialogState();
-}
-
-class _ExtraNoteDialogState extends State<_ExtraNoteDialog> {
-  late final controller = TextEditingController(text: widget.initialText);
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        widget.isEditing ? 'Edit note / 編輯備註' : 'Add another note / 再加備註',
-      ),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        minLines: 3,
-        maxLines: 6,
-        maxLength: 1000,
-        decoration: const InputDecoration(
-          hintText: 'e.g. "2nd visit: tried the…"',
-        ),
-      ),
-      actions: [
-        if (widget.isEditing)
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, const _ExtraNoteResult.delete()),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('Delete'),
-          ),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(
-            context,
-            _ExtraNoteResult.save(controller.text.trim()),
-          ),
-          child: const Text('Save'),
-        ),
-      ],
-    );
-  }
-}
-
-/// The remark box under a [ScoreStars] picker — "My review"'s [_MyNotes]
-/// and a shared board's "Your rating". Tapping opens [_NotesDialog];
-/// [onSave] gets the trimmed text on Save (nothing on Cancel). When not
-/// [enabled], shows [disabledHint] and ignores taps.
+/// The note box under a score picker — "My review"'s Summary and a shared
+/// board's "Your rating" remark. Tapping opens a [_TextDialog] titled
+/// [title]; [onSave] gets the trimmed text on Save (nothing on Cancel).
+/// When not [enabled], shows [disabledHint] (pointing up at the stars) and
+/// ignores taps.
 class _RemarkBox extends StatelessWidget {
   const _RemarkBox({
     required this.text,
     required this.onSave,
+    required this.title,
+    required this.placeholder,
+    required this.noun,
+    required this.hint,
     this.enabled = true,
     this.disabledHint,
+    this.disabledSemantics,
   });
 
   final String text;
   final Future<void> Function(String notes) onSave;
+
+  /// Dialog title, e.g. "Summary / 總結".
+  final String title;
+
+  /// Shown in the box while [text] is empty.
+  final String placeholder;
+
+  /// Screen-reader noun: "Add a [noun]" / "Edit [noun]".
+  final String noun;
+
+  /// The dialog's text-field hint.
+  final String hint;
   final bool enabled;
   final String? disabledHint;
+  final String? disabledSemantics;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final empty = text.isEmpty;
+    final muted = scheme.onSurfaceVariant.withValues(alpha: 0.6);
     // Always a visible box under the stars — the old "Add notes" text button
-    // was easy to miss. Tapping opens [_NotesDialog]; the sheet itself
+    // was easy to miss. Tapping opens [_TextDialog]; the sheet itself
     // ignores keyboard insets, so an inline TextField would sit under it.
     return Semantics(
       button: enabled,
       enabled: enabled,
       label: !enabled
-          ? (disabledHint ?? 'Remark')
+          ? (disabledSemantics ?? disabledHint ?? noun)
           : empty
-          ? 'Add a remark'
-          : 'Edit remark',
+          ? 'Add a $noun'
+          : 'Edit $noun',
       child: InkWell(
         onTap: enabled ? () => _editNotes(context) : null,
         borderRadius: BorderRadius.circular(14),
@@ -1768,18 +1683,23 @@ class _RemarkBox extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (!enabled) ...[
+                // Nudge: the stars right above are what unlocks this box.
+                Icon(Icons.arrow_upward, size: 18, color: muted),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                 child: Text(
                   !enabled
                       ? (disabledHint ?? '')
                       : empty
-                      ? 'Add a remark… / 加備註'
+                      ? placeholder
                       : text,
                   style: TextStyle(
                     fontSize: 14,
                     height: 1.5,
                     color: empty || !enabled
-                        ? scheme.onSurfaceVariant.withValues(alpha: 0.6)
+                        ? muted
                         : scheme.onSurfaceVariant.withValues(alpha: 0.85),
                   ),
                 ),
@@ -1789,7 +1709,7 @@ class _RemarkBox extends StatelessWidget {
                 Icon(
                   empty ? Icons.edit_note : Icons.edit_outlined,
                   size: 18,
-                  color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  color: muted,
                 ),
               ],
             ],
@@ -1800,31 +1720,51 @@ class _RemarkBox extends StatelessWidget {
   }
 
   Future<void> _editNotes(BuildContext context) async {
-    final result = await showDialog<String>(
+    final result = await showDialog<_TextResult>(
       context: context,
-      builder: (_) => _NotesDialog(initialText: text),
+      builder: (_) => _TextDialog(title: title, hint: hint, initialText: text),
     );
     // The dialog already popped itself before returning — no BuildContext
     // use after this await, so no `mounted` check is needed here.
     if (result == null) return;
-    await onSave(result);
+    await onSave(result.text);
   }
 }
 
-/// Multiline notes editor, opened by [_RemarkBox]. Pops with the trimmed text
-/// on Save, or `null` on Cancel/dismiss — the caller decides what to persist.
-/// Owns its controller: disposing it as soon as `showDialog` returned crashed,
-/// because the exit animation still rebuilds the TextField.
-class _NotesDialog extends StatefulWidget {
-  const _NotesDialog({required this.initialText});
+/// Pop value for [_TextDialog]: [text] (trimmed) on Save, or [delete] when
+/// the Delete action was tapped. Cancel/dismiss pops `null` instead.
+class _TextResult {
+  const _TextResult.save(this.text) : delete = false;
+  const _TextResult.delete() : text = '', delete = true;
 
-  final String initialText;
-
-  @override
-  State<_NotesDialog> createState() => _NotesDialogState();
+  final String text;
+  final bool delete;
 }
 
-class _NotesDialogState extends State<_NotesDialog> {
+/// Multiline text editor dialog — the Summary / remark box and the visit
+/// notes. Pops a [_TextResult] on Save (or Delete, when [showDelete]), or
+/// `null` on Cancel/dismiss; the caller decides what to persist.
+///
+/// Owns its controller: disposing it as soon as `showDialog` returned
+/// crashed, because the exit animation still rebuilds the TextField.
+class _TextDialog extends StatefulWidget {
+  const _TextDialog({
+    required this.title,
+    required this.hint,
+    this.initialText = '',
+    this.showDelete = false,
+  });
+
+  final String title;
+  final String hint;
+  final String initialText;
+  final bool showDelete;
+
+  @override
+  State<_TextDialog> createState() => _TextDialogState();
+}
+
+class _TextDialogState extends State<_TextDialog> {
   late final controller = TextEditingController(text: widget.initialText);
 
   @override
@@ -1836,24 +1776,31 @@ class _NotesDialogState extends State<_NotesDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Remark / 備註'),
+      title: Text(widget.title),
       content: TextField(
         controller: controller,
         autofocus: true,
         minLines: 3,
         maxLines: 6,
         maxLength: 1000,
-        decoration: const InputDecoration(
-          hintText: 'What did you think? Tips, dishes, prices…',
-        ),
+        decoration: InputDecoration(hintText: widget.hint),
       ),
       actions: [
+        if (widget.showDelete)
+          TextButton(
+            onPressed: () => Navigator.pop(context, const _TextResult.delete()),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(context, controller.text.trim()),
+          onPressed: () =>
+              Navigator.pop(context, _TextResult.save(controller.text.trim())),
           child: const Text('Save'),
         ),
       ],
@@ -1910,6 +1857,26 @@ class _SectionLabel extends StatelessWidget {
         color: Theme.of(
           context,
         ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+      ),
+    );
+  }
+}
+
+/// Small heading inside a section ("Summary", "Visit notes", "Your
+/// rating") — sentence case, unlike [_SectionLabel]'s all caps.
+class _SubLabel extends StatelessWidget {
+  const _SubLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     );
   }

@@ -5,6 +5,9 @@ import 'package:share_plus/share_plus.dart';
 import '../data/shared_board_store.dart';
 import '../models/shared_board.dart';
 import '../services/board_invite_link.dart';
+import '../utils/plural.dart';
+import 'confirm_dialog.dart';
+import 'share_or_report.dart';
 
 /// Link modes in the owner's segmented control.
 enum _LinkMode { off, view, edit }
@@ -76,7 +79,7 @@ class SharingSheet extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                   child: Text(
                     isOwner
-                        ? 'Shared · ${_people(board.memberCount)}'
+                        ? 'Shared · ${plural(board.memberCount, 'person', 'people')}'
                         : 'Shared by ${board.ownerName} · '
                               '${role?.label ?? 'No access'}',
                     style: TextStyle(color: muted),
@@ -125,8 +128,6 @@ class SharingSheet extends StatelessWidget {
       },
     );
   }
-
-  static String _people(int n) => '$n ${n == 1 ? 'person' : 'people'}';
 
   /// Owner first, then everyone else by name.
   static List<String> _orderedMembers(SharedBoard board) {
@@ -211,7 +212,7 @@ class SharingSheet extends StatelessWidget {
               ),
               TextButton.icon(
                 icon: const Icon(Icons.ios_share, size: 18),
-                label: const Text('Share link'),
+                label: const Text('Invite link'),
                 onPressed: () => _shareLink(context, board, link),
               ),
               TextButton.icon(
@@ -293,24 +294,17 @@ class SharingSheet extends StatelessWidget {
     SharedBoard board,
     String link,
   ) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    try {
-      await SharePlus.instance.share(
-        ShareParams(
-          text: 'Join my board “${board.name}” on CheapTripChip:\n$link',
-          subject: board.name,
-        ),
-      );
-    } catch (e) {
-      debugPrint('Share failed: $e');
-      messenger?.showSnackBar(
-        const SnackBar(content: Text('Could not open the share sheet')),
-      );
-    }
+    await shareOrReport(
+      context,
+      ShareParams(
+        text: 'Join my board “${board.name}” on CheapTripChip:\n$link',
+        subject: board.name,
+      ),
+    );
   }
 
   Future<void> _resetLink(BuildContext context, SharedBoard board) async {
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Reset link?',
       body:
@@ -330,7 +324,7 @@ class SharingSheet extends StatelessWidget {
     // Removing a member also resets the invite link (SharedBoardStore.
     // removeMember) so their old link can't be used to rejoin — the link is
     // only worth mentioning here when it was actually on.
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Remove $name?',
       body: board.linkRole == null
@@ -345,7 +339,7 @@ class SharingSheet extends StatelessWidget {
   Future<void> _stopSharing(BuildContext context, SharedBoard board) async {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Stop sharing “${board.name}”?',
       body:
@@ -371,7 +365,7 @@ class SharingSheet extends StatelessWidget {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
     final isSheet = context.findAncestorWidgetOfExactType<SharingSheet>();
-    final confirmed = await _confirm(
+    final confirmed = await showConfirmDialog(
       context,
       title: 'Leave “${board.name}”?',
       body: 'You need a new invite link to come back.',
@@ -381,34 +375,5 @@ class SharingSheet extends StatelessWidget {
     if (isSheet != null) navigator.pop();
     await (store ?? SharedBoardStore.instance).leave(board.id);
     messenger?.showSnackBar(SnackBar(content: Text('Left “${board.name}”')));
-  }
-
-  static Future<bool> _confirm(
-    BuildContext context, {
-    required String title,
-    required String body,
-    required String action,
-  }) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(dialogContext).colorScheme.error,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(action),
-          ),
-        ],
-      ),
-    );
-    return result == true;
   }
 }

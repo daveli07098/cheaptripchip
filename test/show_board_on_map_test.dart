@@ -38,10 +38,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('0 of $total places'), findsOneWidget);
 
+    // With several boards every card starts collapsed, so this one is in
+    // view.
     await openBoards(tester);
-    // "Tokyo Trip 2026" starts expanded, pushing this card below the fold.
-    await tester.tap(find.text('Tokyo Trip 2026'));
-    await tester.pumpAndSettle();
     await tester.tap(inCard('Coffee & Quiet', find.byTooltip('Show on map')));
     await tester.pumpAndSettle();
 

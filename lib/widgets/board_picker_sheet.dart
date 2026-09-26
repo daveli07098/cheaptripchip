@@ -3,15 +3,8 @@ import 'package:flutter/material.dart';
 import '../data/board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
-import '../theme/app_theme.dart';
-
-/// "New finds" board id (see `kNewFindsBoardId` in boards_screen.dart) —
-/// duplicated as a literal rather than imported to avoid a cycle
-/// (boards_screen.dart imports place_detail_sheet.dart, which uses this
-/// file). It is never actually present in [BoardStore.instance.boards] (it's
-/// derived at display time in boards_screen.dart, never upserted through the
-/// repository) — the filter below is defensive only.
-const String _kNewFindsBoardId = 'new-finds';
+import '../utils/plural.dart';
+import 'new_board_dialog.dart';
 
 /// Label for the detail sheet's "Add to board" button, driven by which
 /// boards [placeId] is already saved to.
@@ -39,9 +32,50 @@ void showMovedSnackBar(ScaffoldMessengerState messenger, BoardMove move) {
   );
 }
 
+/// Removes [placeId] from personal board [boardId] and shows "Removed from
+/// (board name)" with an UNDO that writes the board back as it was — the
+/// place returns to its old section and position in one update (re-adding
+/// would append it).
+///
+/// [messenger] is grabbed by the caller before anything is awaited; nothing
+/// is shown if it has gone away meanwhile. [run] wraps the store call (e.g.
+/// to collapse the row out first). Resolves true if the place was removed.
+Future<bool> removeFromBoardWithUndo(
+  ScaffoldMessengerState messenger, {
+  required String boardId,
+  required String placeId,
+  Future<List<String>> Function(Future<List<String>> Function() remove)? run,
+  SnackBarBehavior? behavior,
+}) async {
+  // Snapshot first: UNDO writes it back in one update.
+  final before = BoardStore.instance.byIdOrNull(boardId);
+  Future<List<String>> remove() => BoardStore.instance.removePlaceFromBoard(
+    boardId: boardId,
+    placeId: placeId,
+  );
+  final removedFrom = run == null ? await remove() : await run(remove);
+  if (removedFrom.isEmpty || before == null) return false;
+  if (!messenger.mounted) return true;
+  // Removing several in quick succession shouldn't queue up a string of 4s
+  // SnackBars — replace whatever's showing.
+  messenger.removeCurrentSnackBar();
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text('Removed from ${before.name}'),
+      behavior: behavior,
+      action: SnackBarAction(
+        label: 'UNDO',
+        onPressed: () => BoardStore.instance.restoreBoards([before]),
+      ),
+    ),
+  );
+  return true;
+}
+
 /// "Add to board" picker: a Google-Maps-"Save to list"-style sheet listing
 /// every stored board with a checkbox toggled by [BoardStore.containsPlace],
-/// plus "New board…" at the bottom. Tapping a row toggles membership
+/// plus "New board…" at the bottom (the same [NewBoardDialog] as the Boards
+/// tab, name + emoji). Tapping a row toggles membership
 /// immediately and the sheet stays open so several boards can be picked.
 ///
 /// With [moveFromBoardId] set (see [pickMoveTarget]) it is a single-choice
@@ -134,17 +168,7 @@ class _PickerBody extends StatefulWidget {
 }
 
 class _PickerBodyState extends State<_PickerBody> {
-  final _nameController = TextEditingController();
-  bool _creatingNew = false;
-  bool _busy = false;
-
   bool get _moving => widget.moveFromBoardId != null;
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
 
   void _notify(String message, {SnackBarAction? action}) {
     final messenger = ScaffoldMessenger.of(context);
@@ -162,20 +186,11 @@ class _PickerBodyState extends State<_PickerBody> {
 
   Future<void> _toggle(Board board, bool alreadyIn) async {
     if (alreadyIn) {
-      // Snapshot first: UNDO writes it back, so the place returns to its
-      // old section and position in one update.
-      final before = BoardStore.instance.byIdOrNull(board.id);
-      final removedFrom = await BoardStore.instance.removePlaceFromBoard(
+      await removeFromBoardWithUndo(
+        ScaffoldMessenger.of(context),
         boardId: board.id,
         placeId: widget.place.id,
-      );
-      if (removedFrom.isEmpty || before == null || !mounted) return;
-      _notify(
-        'Removed from ${board.name}',
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => BoardStore.instance.restoreBoards([before]),
-        ),
+        behavior: SnackBarBehavior.floating,
       );
     } else {
       await BoardStore.instance.addPlaceToBoard(
@@ -187,39 +202,30 @@ class _PickerBodyState extends State<_PickerBody> {
     }
   }
 
-  Future<void> _createAndAdd() async {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      if (_moving) {
-        // Move mode: create an empty board and hand it back — the caller's
-        // move puts the place in it and takes it off the source together.
-        final board = await BoardStore.instance.createBoard(name);
-        if (mounted) Navigator.pop(context, board);
-        return;
-      }
-      // One upsert with the section pre-filled, rather than createBoard +
-      // addPlaceToBoard — the latter reads back `boards` in between and can
-      // race the repository's asynchronous echo (see board_store.dart).
-      final board = await BoardStore.instance.createBoard(
-        name,
-        sections: [
-          BoardSection(
-            title: widget.place.category.labelEn,
-            placeIds: [widget.place.id],
-          ),
-        ],
-      );
-      if (!mounted) return;
-      setState(() {
-        _creatingNew = false;
-        _nameController.clear();
-        _busy = false;
-      });
+  /// "New board…": the shared [NewBoardDialog] (name + emoji). In add mode
+  /// the board is created with the place already in it — one upsert, rather
+  /// than createBoard + addPlaceToBoard, which reads back `boards` in
+  /// between and can race the repository's asynchronous echo (see
+  /// board_store.dart). In move mode it is created empty and handed back —
+  /// the caller's move puts the place in it and takes it off the source
+  /// together.
+  Future<void> _createNew() async {
+    final board = await NewBoardDialog.show(
+      context,
+      sections: _moving
+          ? const []
+          : [
+              BoardSection(
+                title: widget.place.category.labelEn,
+                placeIds: [widget.place.id],
+              ),
+            ],
+    );
+    if (board == null || !mounted) return;
+    if (_moving) {
+      Navigator.pop(context, board);
+    } else {
       _notify('Added to ${board.name}');
-    } catch (_) {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -230,10 +236,9 @@ class _PickerBodyState extends State<_PickerBody> {
     final alreadyThere =
         !isCurrent &&
         BoardStore.instance.containsPlace(board.id, widget.place.id);
-    final count =
-        '${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}';
+    final count = plural(board.itemCount, 'place');
     return ListTile(
-      enabled: !isCurrent && !_busy,
+      enabled: !isCurrent,
       leading: ExcludeSemantics(
         child: Text(board.emoji, style: const TextStyle(fontSize: 22)),
       ),
@@ -275,7 +280,7 @@ class _PickerBodyState extends State<_PickerBody> {
               valueListenable: BoardStore.instance.boards,
               builder: (context, boards, _) {
                 final storedBoards = boards.where(
-                  (b) => b.id != _kNewFindsBoardId,
+                  (b) => b.id != kNewFindsBoardId,
                 );
                 return Column(
                   children: [
@@ -304,50 +309,17 @@ class _PickerBodyState extends State<_PickerBody> {
                             ),
                           ),
                           title: Text(board.name),
-                          subtitle: Text(
-                            '${board.itemCount} '
-                            '${board.itemCount == 1 ? 'place' : 'places'}',
-                          ),
+                          subtitle: Text(plural(board.itemCount, 'place')),
                         ),
                   ],
                 );
               },
             ),
-            if (!_creatingNew)
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: const Text('New board…'),
-                enabled: !_busy,
-                onTap: () => setState(() => _creatingNew = true),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _nameController,
-                        autofocus: true,
-                        enabled: !_busy,
-                        decoration: const InputDecoration(
-                          hintText: 'Board name',
-                        ),
-                        onSubmitted: (_) => _createAndAdd(),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      onPressed: _busy ? null : _createAndAdd,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppTheme.coral,
-                        minimumSize: const Size(0, 44),
-                      ),
-                      child: const Text('Create'),
-                    ),
-                  ],
-                ),
-              ),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('New board…'),
+              onTap: _createNew,
+            ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

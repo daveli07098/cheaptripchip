@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/map_filter.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'accessible_emoji.dart';
 import 'marker_clustering.dart';
 
 /// A single place pin rendered on the map.
@@ -77,23 +78,19 @@ class MapPin extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Semantics(
+              // Flutter's emoji vertical centering is unreliable
+              // (flutter/flutter#119623) — `height: 1` on the style plus
+              // this outer `Center` (not `TextAlign.center`) is what
+              // actually keeps the glyph centered in the circle.
+              child: Center(
                 // WCAG 1.4.1: the emoji glyph alone isn't an accessible
-                // label, so screen readers get the category's English name
-                // instead of (or in addition to) the glyph.
-                label: _pinLabel(place),
-                selected: selected,
-                child: ExcludeSemantics(
-                  child: Center(
-                    // Flutter's emoji vertical centering is unreliable
-                    // (flutter/flutter#119623) — `height: 1` on the style
-                    // plus this outer `Center` (not `TextAlign.center`) is
-                    // what actually keeps the glyph centered in the circle.
-                    child: Text(
-                      _pinEmoji(place),
-                      style: const TextStyle(fontSize: 20, height: 1),
-                    ),
-                  ),
+                // label, so screen readers get the pin's English name.
+                child: AccessibleEmoji(
+                  emoji: placeMarkerEmoji(place),
+                  label: placeMarkerLabel(place),
+                  fontSize: 20,
+                  height: 1,
+                  selected: selected,
                 ),
               ),
             ),
@@ -177,22 +174,4 @@ class ClusterPin extends StatelessWidget {
       ),
     );
   }
-}
-
-/// The pin shows the same icon as the place's entry in the ☰ drawer: a
-/// restaurant's sub-type (🍜 Ramen, 🍣 Sushi…) when known, otherwise the
-/// category emoji. "Other" restaurants keep the generic 🍽️. Uses the
-/// memoized [restaurantTypeOf] — pins rebuild on camera moves, and the raw
-/// getter re-runs keyword detection on every call.
-String _pinEmoji(Place place) {
-  final type = restaurantTypeOf(place);
-  if (type != null && type != RestaurantType.other) return type.emoji;
-  return place.category.emoji;
-}
-
-/// Accessible name matching [_pinEmoji] (WCAG 1.4.1).
-String _pinLabel(Place place) {
-  final type = restaurantTypeOf(place);
-  if (type != null && type != RestaurantType.other) return type.labelEn;
-  return place.category.labelEn;
 }

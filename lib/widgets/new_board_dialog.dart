@@ -27,7 +27,10 @@ const Map<String, String> _kBoardEmojiChoices = {
   '⭐': 'Star',
 };
 
-/// "New board" dialog: name + emoji picker → [BoardStore.createBoard].
+/// "New board" dialog: name + emoji picker → [BoardStore.createBoard]; pops
+/// the created [Board] (null when cancelled). Every create path uses it —
+/// the Boards tab's FAB / empty state ([showAndContinue]) and the board
+/// picker's "New board…" — so they all offer the same name + emoji.
 ///
 /// Owns its [TextEditingController] so it is disposed only when the dialog
 /// route is gone — disposing a controller right after `showDialog` returns
@@ -35,22 +38,36 @@ const Map<String, String> _kBoardEmojiChoices = {
 /// boards_screen.dart): the dialog's exit animation still rebuilds the
 /// TextField with it.
 class NewBoardDialog extends StatefulWidget {
-  const NewBoardDialog({super.key});
+  const NewBoardDialog({super.key, this.sections = const []});
 
-  /// Opens the dialog; if a board was created, shows a confirmation
-  /// SnackBar and opens [AddPlacesSheet] for it so places can be added right
-  /// away (closing that sheet skips the step, leaving an empty board).
-  static Future<void> showAndContinue(BuildContext context) async {
-    final board = await showDialog<Board>(
+  /// Sections the board is created with — the board picker pre-fills the
+  /// place being added, so the board lands in one upsert (see
+  /// [BoardStore.createBoard]).
+  final List<BoardSection> sections;
+
+  /// Opens the dialog; resolves to the created board, or null if cancelled.
+  static Future<Board?> show(
+    BuildContext context, {
+    List<BoardSection> sections = const [],
+  }) {
+    return showDialog<Board>(
       context: context,
-      builder: (_) => const NewBoardDialog(),
+      builder: (_) => NewBoardDialog(sections: sections),
     );
+  }
+
+  /// Opens the dialog; if a board was created, opens [AddPlacesSheet] for it
+  /// so places can be added right away (closing that sheet skips the step,
+  /// leaving an empty board). The "Created …" confirmation is shown on the
+  /// sheet's own messenger — one raised here would sit under its barrier.
+  static Future<void> showAndContinue(BuildContext context) async {
+    final board = await show(context);
     if (board == null || !context.mounted) return;
-    ScaffoldMessenger.of(
+    await AddPlacesSheet.show(
       context,
-    ).showSnackBar(SnackBar(content: Text('Created “${board.name}”')));
-    if (!context.mounted) return;
-    await AddPlacesSheet.show(context, board);
+      board,
+      initialMessage: 'Created “${board.name}”',
+    );
   }
 
   @override
@@ -74,9 +91,22 @@ class _NewBoardDialogState extends State<NewBoardDialog> {
     final name = _controller.text.trim();
     if (name.isEmpty) return;
     setState(() => _busy = true);
-    final board = await BoardStore.instance.createBoard(name, emoji: _emoji);
-    if (!mounted) return;
-    Navigator.pop(context, board);
+    try {
+      final board = await BoardStore.instance.createBoard(
+        name,
+        emoji: _emoji,
+        sections: widget.sections,
+      );
+      if (!mounted) return;
+      Navigator.pop(context, board);
+    } catch (e) {
+      debugPrint('create board failed: $e');
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text("Couldn't create the board. Try again.")),
+      );
+    }
   }
 
   @override

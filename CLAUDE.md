@@ -21,6 +21,7 @@ sign-in + Cloud Firestore), `http` for Gemini and geocoding.
   `local_repositories.dart` (guest mode), `firestore_repositories.dart` (signed in),
   `place_store` / `board_store` on top of them
 - `lib/services/` — `gemini_service`, `geocoding_service`, `place_extractor`, `auth_service`
+- `lib/utils/` — small pure helpers (`plural`)
 - `lib/theme/` — `app_theme` (incl. map tile URL), `theme_controller` (light/dark, persisted)
 - `test/` — unit tests for JSON models, stores, and the "New finds" board
 

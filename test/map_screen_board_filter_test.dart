@@ -42,7 +42,7 @@ Future<void> _pumpMap(WidgetTester tester) async {
 }
 
 Future<void> _openDrawer(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Categories'));
+  await tester.tap(find.byTooltip('Filters'));
   await tester.pumpAndSettle();
 }
 
@@ -62,6 +62,8 @@ void main() {
     await _pumpMap(tester);
     await _openDrawer(tester);
 
+    // Favourites + Categories come first; Boards sits below the fold.
+    await _scrollTo(tester, find.text('Boards'));
     expect(_inDrawer(find.text('Boards')), findsOneWidget);
     expect(_inDrawer(find.text('New finds')), findsOneWidget);
     await _scrollTo(tester, find.text('Coffee'));

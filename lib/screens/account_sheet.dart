@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_version_label.dart';
+import '../widgets/user_avatar.dart';
 
 /// Modal bottom sheet with the three [AuthService] states: Firebase not
 /// configured, signed out, and signed in. See [_AccountSheetBody].
@@ -19,6 +20,13 @@ Future<void> showAccountSheet(BuildContext context) {
     ),
     builder: (context) => _AccountSheetBody(messenger: messenger),
   );
+}
+
+/// The name an account's avatar initial comes from (the sheet's header and
+/// AccountButton): the display name, else the email, else empty (→ "?").
+String accountNameOf(AppUser user) {
+  final name = user.displayName?.trim() ?? '';
+  return name.isNotEmpty ? name : (user.email?.trim() ?? '');
 }
 
 class _AccountSheetBody extends StatefulWidget {
@@ -149,7 +157,11 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
       children: [
         Row(
           children: [
-            _Avatar(user: user, radius: 24),
+            UserAvatar(
+              photoUrl: user.photoUrl,
+              name: accountNameOf(user),
+              radius: 24,
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -206,55 +218,6 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 2×[radius] avatar matching [AccountButton]'s photo/initial-fallback
-/// logic, sized for the signed-in state's header row.
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.user, required this.radius});
-
-  final AppUser user;
-  final double radius;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final photoUrl = user.photoUrl;
-    final size = radius * 2;
-    if (photoUrl != null && photoUrl.isNotEmpty) {
-      return ClipOval(
-        child: Image.network(
-          photoUrl,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) =>
-              _initial(scheme, radius),
-        ),
-      );
-    }
-    return _initial(scheme, radius);
-  }
-
-  Widget _initial(ColorScheme scheme, double radius) {
-    final name = user.displayName?.trim();
-    final email = user.email?.trim();
-    final source = (name != null && name.isNotEmpty)
-        ? name
-        : (email != null && email.isNotEmpty ? email : '?');
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: scheme.primary,
-      child: Text(
-        source[0].toUpperCase(),
-        style: TextStyle(
-          color: scheme.onPrimary,
-          fontWeight: FontWeight.w700,
-          fontSize: radius * 0.8,
-        ),
-      ),
     );
   }
 }

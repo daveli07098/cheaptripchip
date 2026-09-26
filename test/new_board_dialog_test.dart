@@ -3,6 +3,7 @@ import 'dart:ui' show Tristate;
 import 'package:cheaptripchip/data/board_store.dart';
 import 'package:cheaptripchip/data/local_repositories.dart';
 import 'package:cheaptripchip/data/place_store.dart';
+import 'package:cheaptripchip/widgets/add_places_sheet.dart';
 import 'package:cheaptripchip/widgets/new_board_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -123,8 +124,16 @@ void main() {
     await tester.pump(); // AddPlacesSheet route transition
     await tester.pump();
 
-    expect(find.text('Created “Kyoto trip”'), findsOneWidget);
     expect(find.textContaining('Add places to “Kyoto trip”'), findsOneWidget);
+    // The confirmation is on the sheet's own messenger — one on the page's
+    // messenger would sit under the sheet's barrier.
+    expect(
+      find.descendant(
+        of: find.byType(AddPlacesSheet),
+        matching: find.text('Created “Kyoto trip”'),
+      ),
+      findsOneWidget,
+    );
 
     // Let the SnackBar's timer finish so no pending-timer failure at
     // teardown.

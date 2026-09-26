@@ -47,7 +47,7 @@ void main() {
   testWidgets('picking an area flies the camera to it once the drawer '
       'closes', (tester) async {
     await _pumpMap(tester);
-    await tester.tap(find.byTooltip('Categories'));
+    await tester.tap(find.byTooltip('Filters'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       _inDrawer(find.text('Hong Kong')),
@@ -73,7 +73,10 @@ void main() {
     await _pumpMap(tester, MockData.places);
     final start = _camera(tester);
     // Drag the sheet up so the first row is fully on screen.
-    await tester.drag(find.textContaining(' places'), const Offset(0, -250));
+    await tester.drag(
+      find.textContaining(RegExp(r'^\d+ of \d+ places$')),
+      const Offset(0, -250),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text(MockData.places.first.name));

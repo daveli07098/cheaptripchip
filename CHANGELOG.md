@@ -5,6 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- UX cleanup across the app (duplicates removed, easier to use):
+  - Map and Saved tab share one search bar and one "Filters" drawer
+    (Favourites, Categories, Boards, Areas, Settings); filters set on one tab
+    apply on the other; "Clear all" chip, 44dp chip ✕, badge with the number
+    of active filters, "No places match" feedback, pinned list header.
+  - ❤️ Favourites filter — the heart on a place now does something.
+  - Same sub-type emoji (🍜) on the pin, list row, preview card and feed card.
+  - Place page: "Summary / 總結" and "Visit notes / 到訪筆記" labelled, Clear
+    score button, one photo menu for add/change/remove, bilingual cuisine
+    picker, failed saves are reverted with "Couldn't save — try again".
+  - Boards: ⋮ menu grouped View / Share / Manage with subtitles, "Invite
+    link" for live sharing, same create-board dialog everywhere, remove menu
+    on shared-board rows, clearer add/remove wording, blank rename blocked,
+    "Import a trip" on the empty Boards tab, sign-in continues into sharing.
+
+### Fixed
+- Shared place text no longer reads "Unknown, Tokyo, Japan".
+
 ### Added
 - Map: the pin preview card shows which boards the place is on
   ("📋 Tokyo trip · Food list", personal and shared boards), or "Not on a

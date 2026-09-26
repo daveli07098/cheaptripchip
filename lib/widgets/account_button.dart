@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../screens/account_sheet.dart';
 import '../services/auth_service.dart';
+import 'user_avatar.dart';
 
 /// Small circular affordance that opens [showAccountSheet]: the signed-in
 /// user's Google avatar (falling back to their initial if the image fails
@@ -31,10 +32,12 @@ class AccountButton extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: () => showAccountSheet(context),
+                // 48×48 tap target (Material minimum) around the 40dp
+                // avatar.
                 child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: _AccountGlyph(user: user),
+                  width: 48,
+                  height: 48,
+                  child: Center(child: _AccountGlyph(user: user)),
                 ),
               ),
             ),
@@ -45,7 +48,8 @@ class AccountButton extends StatelessWidget {
   }
 }
 
-/// The 40×40 avatar/icon shown inside [AccountButton]'s tap target.
+/// The 40×40 avatar/icon shown inside [AccountButton]'s 48×48 tap target:
+/// the user's [UserAvatar], or a generic person icon for a guest.
 class _AccountGlyph extends StatelessWidget {
   const _AccountGlyph({required this.user});
 
@@ -53,51 +57,15 @@ class _AccountGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final photoUrl = user?.photoUrl;
-    if (user != null && photoUrl != null && photoUrl.isNotEmpty) {
-      return ClipOval(
-        child: Image.network(
-          photoUrl,
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          // Network avatars can 404/time out (revoked token, offline) —
-          // fall back to an initial letter rather than a broken-image icon.
-          errorBuilder: (context, error, stackTrace) =>
-              _InitialAvatar(user: user!, scheme: scheme),
-        ),
-      );
+    final user = this.user;
+    if (user != null) {
+      return UserAvatar(photoUrl: user.photoUrl, name: accountNameOf(user));
     }
-    if (user != null) return _InitialAvatar(user: user!, scheme: scheme);
+    final scheme = Theme.of(context).colorScheme;
     return CircleAvatar(
       radius: 20,
       backgroundColor: scheme.surfaceContainerHighest,
       child: Icon(Icons.person_outline, color: scheme.onSurfaceVariant),
-    );
-  }
-}
-
-class _InitialAvatar extends StatelessWidget {
-  const _InitialAvatar({required this.user, required this.scheme});
-
-  final AppUser user;
-  final ColorScheme scheme;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = user.displayName?.trim();
-    final email = user.email?.trim();
-    final source = (name != null && name.isNotEmpty)
-        ? name
-        : (email != null && email.isNotEmpty ? email : '?');
-    return CircleAvatar(
-      radius: 20,
-      backgroundColor: scheme.primary,
-      child: Text(
-        source[0].toUpperCase(),
-        style: TextStyle(color: scheme.onPrimary, fontWeight: FontWeight.w700),
-      ),
     );
   }
 }

@@ -51,4 +51,16 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
     },
   );
+
+  testWidgets('Boards app bar has a labelled Import menu', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: HomeShell()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Boards'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+    expect(find.text('From a shared trip link'), findsOneWidget);
+    expect(find.text('From Google My Maps'), findsOneWidget);
+  });
 }

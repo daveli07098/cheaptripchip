@@ -71,6 +71,8 @@ class PlaceStore {
     });
   }
 
+  /// Throwing lookup — test-only; app code uses [byIdOrNull].
+  @visibleForTesting
   Place byId(String id) => places.value.firstWhere((p) => p.id == id);
 
   /// Same as [byId] but returns null instead of throwing when not found.
@@ -139,81 +141,55 @@ class PlaceStore {
   }
 
   /// Flips [Place.isFavorite] for the place with the given [id], replacing it
-  /// in place and notifying listeners. Optimistic, like [add].
-  Future<void> toggleFavorite(String id) async {
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final updated = current.copyWith(isFavorite: !current.isFavorite);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
-  }
+  /// in place and notifying listeners. Optimistic, like [add] — but reverted
+  /// (and rethrown) if the repository write fails; see [_update].
+  Future<void> toggleFavorite(String id) => _update(
+    id,
+    (current) => current.copyWith(isFavorite: !current.isFavorite),
+  );
 
   /// Sets (or clears, when [score] is null) [Place.myScore] and overwrites
-  /// [Place.myNotes] for the place with the given [id]. Optimistic, like
-  /// [add]/[toggleFavorite]. Callers must pass the *current* [notes] even
-  /// when only the score is changing (and vice versa) — this replaces both
-  /// fields, it doesn't merge them.
-  Future<void> updateReview(
-    String id, {
-    int? score,
-    required String notes,
-  }) async {
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final updated = current.copyWith(
-      myScore: score,
-      clearMyScore: score == null,
-      myNotes: notes,
-    );
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
-  }
+  /// [Place.myNotes] for the place with the given [id]. Optimistic with
+  /// revert, like [toggleFavorite]. Callers must pass the *current* [notes]
+  /// even when only the score is changing (and vice versa) — this replaces
+  /// both fields, it doesn't merge them.
+  Future<void> updateReview(String id, {int? score, required String notes}) =>
+      _update(
+        id,
+        (current) => current.copyWith(
+          myScore: score,
+          clearMyScore: score == null,
+          myNotes: notes,
+        ),
+      );
 
   /// Sets (or clears, when [at] is null) [Place.myPhotoAt] for the place
   /// with the given [id]. Called by PhotoStore after the photo bytes are
   /// written/deleted — the bytes themselves never touch the place doc.
-  /// Optimistic, like [toggleFavorite].
-  Future<void> setPhotoMarker(String id, DateTime? at) async {
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final updated = current.copyWith(myPhotoAt: at, clearMyPhotoAt: at == null);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
-  }
+  /// Optimistic with revert, like [toggleFavorite].
+  Future<void> setPhotoMarker(String id, DateTime? at) => _update(
+    id,
+    (current) => current.copyWith(myPhotoAt: at, clearMyPhotoAt: at == null),
+  );
 
   /// Sets (or clears back to the default, when [type] is null)
-  /// [Place.restaurantType] for the place with the given [id]. Optimistic,
-  /// like [toggleFavorite]/[setPhotoMarker]. [manual] (default: this is the
-  /// detail sheet's picker) marks the pick as the user's own
+  /// [Place.restaurantType] for the place with the given [id]. Optimistic
+  /// with revert, like [toggleFavorite]/[setPhotoMarker]. [manual] (default:
+  /// this is the detail sheet's picker) marks the pick as the user's own
   /// ([Place.restaurantTypeManual]) so [rescanRestaurantTypes] never
   /// overrides it; clearing always resets the flag.
   Future<void> setRestaurantType(
     String id,
     RestaurantType? type, {
     bool manual = true,
-  }) async {
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final updated = current.copyWith(
+  }) => _update(
+    id,
+    (current) => current.copyWith(
       restaurantType: type,
       clearRestaurantType: type == null,
       restaurantTypeManual: type != null && manual,
-    );
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
-  }
+    ),
+  );
 
   /// Re-runs keyword detection over every saved place and stores the
   /// refinements [refinedRestaurantType] finds — automatic types that were
@@ -249,17 +225,13 @@ class PlaceStore {
   /// switching away just hides the cuisine chip
   /// ([Place.effectiveRestaurantType] is null off restaurants), and switching
   /// (back) to restaurant shows the earlier pick or the keyword-detected
-  /// guess. Optimistic, like [setRestaurantType].
-  Future<void> updateCategory(String id, PlaceCategory category) async {
-    final current = byIdOrNull(id);
-    if (current == null || current.category == category) return;
-    final updated = current.copyWith(category: category);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
-  }
+  /// guess. Optimistic with revert, like [setRestaurantType].
+  Future<void> updateCategory(String id, PlaceCategory category) => _update(
+    id,
+    (current) => current.category == category
+        ? null
+        : current.copyWith(category: category),
+  );
 
   /// Counter folded into the current microsecond timestamp — same pattern as
   /// TripShare._newId — so note ids stay unique even when several are added
@@ -272,24 +244,20 @@ class PlaceStore {
   }
 
   /// Appends a new dated [PlaceNote] to [Place.extraNotes] for the place
-  /// with the given [id] — the detail sheet's "Add another note". No-ops on
-  /// blank [text] or an unknown id. Optimistic, like [toggleFavorite].
+  /// with the given [id] — the detail sheet's "Add a visit note". No-ops on
+  /// blank [text] or an unknown id. Optimistic with revert, like
+  /// [toggleFavorite].
   Future<void> addNote(String id, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final note = PlaceNote(
-      id: _newNoteId(),
-      text: trimmed,
-      createdAt: DateTime.now(),
-    );
-    final updated = current.copyWith(extraNotes: [...current.extraNotes, note]);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
+    await _update(id, (current) {
+      final note = PlaceNote(
+        id: _newNoteId(),
+        text: trimmed,
+        createdAt: DateTime.now(),
+      );
+      return current.copyWith(extraNotes: [...current.extraNotes, note]);
+    });
   }
 
   /// Replaces the text of the [Place.extraNotes] entry [noteId] (keeping its
@@ -298,64 +266,67 @@ class PlaceStore {
   Future<void> editNote(String id, String noteId, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    final current = byIdOrNull(id);
-    if (current == null) return;
-    final notes = <PlaceNote>[];
-    var found = false;
-    for (final note in current.extraNotes) {
-      if (note.id == noteId) {
-        found = true;
-        notes.add(note.copyWith(text: trimmed));
-      } else {
-        notes.add(note);
-      }
-    }
-    if (!found) return;
-    final updated = current.copyWith(extraNotes: notes);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
+    await _update(id, (current) {
+      if (!current.extraNotes.any((note) => note.id == noteId)) return null;
+      return current.copyWith(
+        extraNotes: [
+          for (final note in current.extraNotes)
+            note.id == noteId ? note.copyWith(text: trimmed) : note,
+        ],
+      );
+    });
   }
 
   /// Removes the [Place.extraNotes] entry [noteId] for the place with the
   /// given [id]. Returns the removed [PlaceNote] (for an Undo snackbar via
   /// [restoreNote]), or `null` if the place/note wasn't found.
   Future<PlaceNote?> deleteNote(String id, String noteId) async {
-    final current = byIdOrNull(id);
-    if (current == null) return null;
-    final notes = <PlaceNote>[];
     PlaceNote? removed;
-    for (final note in current.extraNotes) {
-      if (note.id == noteId) {
-        removed = note;
-      } else {
-        notes.add(note);
+    await _update(id, (current) {
+      final notes = <PlaceNote>[];
+      for (final note in current.extraNotes) {
+        if (note.id == noteId) {
+          removed = note;
+        } else {
+          notes.add(note);
+        }
       }
-    }
-    if (removed == null) return null;
-    final updated = current.copyWith(extraNotes: notes);
-    places.value = [
-      for (final place in places.value)
-        if (place.id == id) updated else place,
-    ];
-    await _repository.upsert(updated);
+      return removed == null ? null : current.copyWith(extraNotes: notes);
+    });
     return removed;
   }
 
   /// Undo for [deleteNote]: re-inserts [note] (same id/createdAt) for the
   /// place with the given [id], unless a note with that id is already
   /// present (e.g. UNDO tapped twice).
-  Future<void> restoreNote(String id, PlaceNote note) async {
+  Future<void> restoreNote(String id, PlaceNote note) => _update(
+    id,
+    (current) => current.extraNotes.any((n) => n.id == note.id)
+        ? null
+        : current.copyWith(extraNotes: [...current.extraNotes, note]),
+  );
+
+  /// The single-place mutation every method above shares: looks up [id],
+  /// applies [mutate] (returning `null` means "nothing to change" — no
+  /// notification, no write), swaps the result into [places] optimistically,
+  /// then writes it. If the repository write fails, [places] goes back to
+  /// the list it held before this change and the error is rethrown for the
+  /// caller to surface (same contract as PhotoStore._write).
+  Future<void> _update(String id, Place? Function(Place current) mutate) async {
     final current = byIdOrNull(id);
     if (current == null) return;
-    if (current.extraNotes.any((n) => n.id == note.id)) return;
-    final updated = current.copyWith(extraNotes: [...current.extraNotes, note]);
+    final updated = mutate(current);
+    if (updated == null) return;
+    final previous = places.value;
     places.value = [
-      for (final place in places.value)
+      for (final place in previous)
         if (place.id == id) updated else place,
     ];
-    await _repository.upsert(updated);
+    try {
+      await _repository.upsert(updated);
+    } catch (_) {
+      places.value = previous;
+      rethrow;
+    }
   }
 }

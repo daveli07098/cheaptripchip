@@ -288,4 +288,76 @@ void main() {
     expect(countryName('XK'), 'XK');
     expect(countryName(''), 'Unknown country');
   });
+
+  group('favourites filter', () {
+    final fav = _place('fav').copyWith(isFavorite: true);
+    final plain = _place('plain');
+
+    test('favoritesOnly keeps only favourites and ANDs with the rest', () {
+      const filter = MapFilter(favoritesOnly: true);
+      expect(filter.matches(fav), isTrue);
+      expect(filter.matches(plain), isFalse);
+      expect(
+        const MapFilter(
+          favoritesOnly: true,
+          category: PlaceCategory.restaurant,
+        ).matches(fav),
+        isFalse,
+      );
+    });
+
+    test('is part of equality, so the cache recomputes on a toggle', () {
+      expect(const MapFilter(favoritesOnly: true), isNot(const MapFilter()));
+      expect(
+        const MapFilter(favoritesOnly: true).hashCode,
+        const MapFilter(favoritesOnly: true).hashCode,
+      );
+      final cache = MapFilterCache();
+      final loaded = [fav, plain];
+      final all = cache.visibleFor(loaded, const MapFilter());
+      final favs = cache.visibleFor(
+        loaded,
+        const MapFilter(favoritesOnly: true),
+      );
+      expect(all, hasLength(2));
+      expect(favs.map((p) => p.id), ['fav']);
+      expect(
+        cache.visibleFor(loaded, const MapFilter(favoritesOnly: true)),
+        same(favs),
+      );
+    });
+
+    test('MapPlaceIndex counts favourites; activeCount counts it', () {
+      expect(MapPlaceIndex.from([fav, plain, fav]).favoriteCount, 2);
+      expect(const MapFilter(favoritesOnly: true).activeCount, 1);
+      expect(
+        const MapFilter(
+          favoritesOnly: true,
+          city: 'Tokyo',
+          boards: {'a', 'b'},
+          query: 'ramen',
+        ).activeCount,
+        4,
+      );
+    });
+  });
+
+  test('placeMarkerEmoji/Label: sub-type for restaurants, else category', () {
+    final ramen = _place(
+      'r',
+      category: PlaceCategory.restaurant,
+      restaurantType: RestaurantType.ramen,
+    );
+    final other = _place(
+      'o',
+      category: PlaceCategory.restaurant,
+      restaurantType: RestaurantType.other,
+    );
+    final cafe = _place('c');
+    expect(placeMarkerEmoji(ramen), RestaurantType.ramen.emoji);
+    expect(placeMarkerLabel(ramen), 'Ramen');
+    expect(placeMarkerEmoji(other), PlaceCategory.restaurant.emoji);
+    expect(placeMarkerLabel(other), PlaceCategory.restaurant.labelEn);
+    expect(placeMarkerEmoji(cafe), PlaceCategory.cafe.emoji);
+  });
 }

@@ -6,15 +6,26 @@ import '../data/place_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../utils/plural.dart';
 
 /// "Add places" sheet: every saved place with a checkbox, pre-checked for
 /// ones already on [board]. Applies the diff to [BoardStore] in a single
 /// write (see [BoardStore.updateBoardPlaces]) rather than one repository
 /// write per toggled place — this list can hold ~1,700 saved places.
 class AddPlacesSheet extends StatefulWidget {
-  const AddPlacesSheet({super.key, required this.board, this.onApply});
+  const AddPlacesSheet({
+    super.key,
+    required this.board,
+    this.onApply,
+    this.initialMessage,
+  });
 
   final Board board;
+
+  /// Shown on the sheet's own messenger once it opens (e.g. "Created …"
+  /// right after [NewBoardDialog]) — an outer messenger's SnackBar would sit
+  /// beneath this sheet's barrier.
+  final String? initialMessage;
 
   /// Writes the diff; defaults to [BoardStore.updateBoardPlaces]. Shared
   /// boards pass SharedBoardStore's equivalent.
@@ -24,13 +35,28 @@ class AddPlacesSheet extends StatefulWidget {
     BuildContext context,
     Board board, {
     Future<void> Function(Set<String> add, Set<String> remove)? onApply,
+    String? initialMessage,
   }) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => AddPlacesSheet(board: board, onApply: onApply),
+      builder: (_) => AddPlacesSheet(
+        board: board,
+        onApply: onApply,
+        initialMessage: initialMessage,
+      ),
     );
+  }
+
+  /// SnackBar text after applying [added] additions and [removed] removals
+  /// to [boardName]: "Added 2 places to “Trip”", "Removed 1 place from
+  /// “Trip”", or "Added 2 places and removed 1 from “Trip”".
+  static String appliedMessage(int added, int removed, String boardName) {
+    final name = '“$boardName”';
+    if (removed == 0) return 'Added ${plural(added, 'place')} to $name';
+    if (added == 0) return 'Removed ${plural(removed, 'place')} from $name';
+    return 'Added ${plural(added, 'place')} and removed $removed from $name';
   }
 
   @override
@@ -39,6 +65,10 @@ class AddPlacesSheet extends StatefulWidget {
 
 class _AddPlacesSheetState extends State<AddPlacesSheet> {
   final _searchController = TextEditingController();
+
+  /// The sheet's own messenger (built in [build], so below this State's
+  /// context — `ScaffoldMessenger.of(context)` would find the outer one).
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   String _query = '';
   bool _busy = false;
 
@@ -52,6 +82,19 @@ class _AddPlacesSheetState extends State<AddPlacesSheet> {
   static Set<String> _membershipOf(Board board) => {
     for (final section in board.sections) ...section.placeIds,
   };
+
+  @override
+  void initState() {
+    super.initState();
+    final message = widget.initialMessage;
+    if (message != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _messengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -81,11 +124,19 @@ class _AddPlacesSheetState extends State<AddPlacesSheet> {
     });
     // Own messenger (see build below) — shows above this modal sheet, which
     // stays open so more places can be picked.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Added ${added.length} places to “${widget.board.name}”'),
-      ),
-    );
+    _messengerKey.currentState
+      ?..removeCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            AddPlacesSheet.appliedMessage(
+              added.length,
+              removed.length,
+              widget.board.name,
+            ),
+          ),
+        ),
+      );
   }
 
   @override
@@ -101,6 +152,7 @@ class _AddPlacesSheetState extends State<AddPlacesSheet> {
         // a SnackBar raised on an outer messenger would render beneath this
         // sheet's modal barrier and never be seen.
         return ScaffoldMessenger(
+          key: _messengerKey,
           child: Scaffold(
             backgroundColor: Colors.transparent,
             resizeToAvoidBottomInset: false,
@@ -231,7 +283,7 @@ class _AddPlacesSheetState extends State<AddPlacesSheet> {
     // pending, the button covers the whole batch rather than only additions.
     final label = removed.isNotEmpty
         ? 'Save changes'
-        : 'Add ${added.length} ${added.length == 1 ? 'place' : 'places'}';
+        : 'Add ${plural(added.length, 'place')}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: FilledButton(

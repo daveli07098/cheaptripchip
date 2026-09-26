@@ -46,7 +46,7 @@ Finder _inDrawer(Finder finder) =>
     find.descendant(of: find.byType(Drawer), matching: finder);
 
 Future<void> _openDrawerAt(WidgetTester tester, Finder target) async {
-  await tester.tap(find.byTooltip('Categories'));
+  await tester.tap(find.byTooltip('Filters'));
   await tester.pumpAndSettle();
   await tester.scrollUntilVisible(
     _inDrawer(target),
@@ -147,7 +147,7 @@ void main() {
     await _pumpMap(tester);
 
     // Category: Restaurant (Gogo in Tokyo + the two Hong Kong places).
-    await tester.tap(find.byTooltip('Categories'));
+    await tester.tap(find.byTooltip('Filters'));
     await tester.pumpAndSettle();
     await tester.tap(_inDrawer(find.text('Restaurant')));
     await tester.pumpAndSettle();

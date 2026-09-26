@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 
-/// Amber/gold used for the user's own rating — the same gold as the detail
-/// sheet's award chip, tuned to read clearly on both the dark and light
-/// scaffold backgrounds (see AppTheme).
-const Color _scoreGold = Color(0xFFFFC857);
+import '../theme/app_theme.dart';
+
+/// Amber/gold used for the user's own rating — [AppTheme.scoreGold], the
+/// same gold as the detail sheet's award pill.
+const Color _scoreGold = AppTheme.scoreGold;
 
 /// Interactive 5-star / 10-point "my review" rating picker.
 ///
 /// Each star represents two points: tapping the left half of star `i` sets
 /// [value] to `2i - 1`, the right half to `2i`. Tapping the half that
 /// already matches the current [value] clears it (calls [onChanged] with
-/// `null`) — there's no separate "clear" control.
+/// `null`). The picker itself has no separate "clear" control — the detail
+/// sheet adds a "Clear" text button next to it once a score is set.
 ///
 /// Pure/stateless: it renders [value] and reports taps via [onChanged];
 /// callers own persistence (PlaceDetailSheet calls

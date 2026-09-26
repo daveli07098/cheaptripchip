@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../data/map_focus.dart';
+import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
 import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
@@ -28,6 +29,34 @@ import 'place_detail_sheet.dart';
 
 /// Entries of the Boards tab's Import menu.
 enum _ImportSource { tripLink, myMaps }
+
+/// "⤓ Import", styled like a [TextButton.icon] — the Boards app bar's
+/// Import menu anchor.
+class _ImportLabel extends StatelessWidget {
+  const _ImportLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.download_outlined, size: 20, color: color),
+            const SizedBox(width: 6),
+            Text(
+              'Import',
+              style: TextStyle(fontWeight: FontWeight.w600, color: color),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// App shell with the Map ⇄ Saved ⇄ Boards triad (ANALYSIS.md §§3,5,6).
 class HomeShell extends StatefulWidget {
@@ -54,6 +83,9 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Boards tab → "Show on map" → the map applies that board's filter.
   final _mapFocus = MapFocusController();
+
+  /// Filters + search shared by the Explore and Saved tabs.
+  final _filters = PlaceFilterController();
 
   static const _titles = ['Explore', 'Saved', 'Boards'];
 
@@ -283,6 +315,7 @@ class _HomeShellState extends State<HomeShell> {
     _shareSub?.cancel();
     _linkSub?.cancel();
     _mapFocus.dispose();
+    _filters.dispose();
     super.dispose();
   }
 
@@ -305,7 +338,10 @@ class _HomeShellState extends State<HomeShell> {
                 if (_index == 2)
                   PopupMenuButton<_ImportSource>(
                     tooltip: 'Import',
-                    icon: const Icon(Icons.download_outlined),
+                    // A labelled affordance rather than a bare download
+                    // icon, whose meaning wasn't obvious. A plain (non-
+                    // interactive) child: the menu button owns the tap.
+                    child: const _ImportLabel(),
                     onSelected: (source) => switch (source) {
                       _ImportSource.tripLink => _importFromLinkDialog(),
                       _ImportSource.myMaps => _importFromMyMapsDialog(),
@@ -337,15 +373,24 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          MapScreen(onAddFind: _openAddFind, focus: _mapFocus),
-          const FeedScreen(),
-          BoardsScreen(onShowOnMap: _showBoardOnMap),
+          MapScreen(
+            onAddFind: _openAddFind,
+            focus: _mapFocus,
+            filters: _filters,
+          ),
+          FeedScreen(filters: _filters, onAddFind: _openAddFind),
+          BoardsScreen(
+            onShowOnMap: _showBoardOnMap,
+            onImportTripLink: _importFromLinkDialog,
+            onImportMyMaps: _importFromMyMapsDialog,
+          ),
         ],
       ),
       // The map tab surfaces its own "Add a find" button in the sheet
       // header (so it stays reachable at any drag extent and doesn't cover
-      // the sheet/attribution); Saved keeps the "Add a find" FAB; Boards
-      // gets a "New board" FAB instead (its own creation flow, not a find).
+      // the sheet/attribution); Saved keeps the "Add a find" FAB, on its own
+      // Scaffold (see FeedScreen.onAddFind) so its Filters drawer covers it;
+      // Boards gets a "New board" FAB instead (its own creation flow).
       floatingActionButton: switch (_index) {
         0 => null,
         2 => FloatingActionButton.extended(
@@ -355,13 +400,7 @@ class _HomeShellState extends State<HomeShell> {
           icon: const Icon(Icons.add),
           label: const Text('New board'),
         ),
-        _ => FloatingActionButton.extended(
-          onPressed: () => _openAddSheet(),
-          backgroundColor: AppTheme.coral,
-          foregroundColor: Theme.of(context).colorScheme.onPrimary,
-          icon: const Icon(Icons.add_link),
-          label: const Text('Add a find'),
-        ),
+        _ => null,
       },
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,

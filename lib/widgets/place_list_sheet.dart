@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../data/map_filter.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'accessible_emoji.dart';
 import 'score_stars.dart';
 
 /// Snap fractions for [PlaceListSheet]. `kSheetHalf` matches Material 3's
@@ -150,10 +152,12 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
         ? headerBox.size.height
         : 0.0;
     final position = controller.position;
+    // Row i starts at headerHeight + i × rowHeight, but the pinned header
+    // covers the viewport's top headerHeight — centre the row in the space
+    // below it.
     final target =
-        headerHeight +
         index * rowHeight -
-        (position.viewportDimension - rowHeight) / 2;
+        (position.viewportDimension - headerHeight - rowHeight) / 2;
     controller.jumpTo(
       target.clamp(position.minScrollExtent, position.maxScrollExtent),
     );
@@ -206,37 +210,53 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
           child: CustomScrollView(
             controller: scrollController,
             slivers: [
-              SliverToBoxAdapter(
-                child: Column(
-                  key: _headerKey,
-                  children: [
-                    const _DragHandle(),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${widget.places.length} of ${widget.total} places',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: scheme.onSurface.withValues(alpha: 0.6),
+              // Pinned so "Add a find" stays reachable when the list is
+              // scrolled. It is still inside this scroll view, so a drag
+              // that starts on it moves the sheet exactly as before.
+              PinnedHeaderSliver(
+                child: DecoratedBox(
+                  // Opaque (rows scroll underneath), with the sheet's own
+                  // rounded top corners.
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    key: _headerKey,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const _DragHandle(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${widget.places.length} of ${widget.total} places',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurface.withValues(
+                                    alpha: 0.6,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                          FilledButton.icon(
-                            onPressed: widget.onAddFind,
-                            icon: const Icon(Icons.add_link, size: 18),
-                            label: const Text('Add a find'),
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(0, 44),
+                            FilledButton.icon(
+                              onPressed: widget.onAddFind,
+                              icon: const Icon(Icons.add_link, size: 18),
+                              label: const Text('Add a find'),
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(0, 44),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               if (widget.places.isEmpty)
@@ -311,7 +331,7 @@ class _EmptyState extends StatelessWidget {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final title = filtered ? 'No matches' : 'No finds yet';
     final body = filtered
-        ? 'Try another search, or pick All in the ☰ menu.'
+        ? 'Try another search, or clear the filters.'
         : 'Tap Add a find to save your first place.';
     return Center(
       child: Padding(
@@ -339,8 +359,8 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// Compact local row — intentionally NOT `PlaceCard` (owned by a concurrent
-/// task); this is a smaller, list-tuned rendering of a [Place].
+/// Compact local row — intentionally NOT the feed's `PlaceCard`; this is a
+/// smaller, list-tuned rendering of a [Place] (same marker emoji).
 class _PlaceRow extends StatelessWidget {
   const _PlaceRow({
     required this.place,
@@ -375,14 +395,12 @@ class _PlaceRow extends StatelessWidget {
                 color: color.withValues(alpha: 0.18),
                 shape: BoxShape.circle,
               ),
-              child: Semantics(
-                label: place.category.labelEn,
-                child: ExcludeSemantics(
-                  child: Text(
-                    place.category.emoji,
-                    style: const TextStyle(fontSize: 18, height: 1),
-                  ),
-                ),
+              // Same emoji as the map pin (🍜 for a ramen place, not 🍽️).
+              child: AccessibleEmoji(
+                emoji: placeMarkerEmoji(place),
+                label: placeMarkerLabel(place),
+                fontSize: 18,
+                height: 1,
               ),
             ),
             const SizedBox(width: 12),

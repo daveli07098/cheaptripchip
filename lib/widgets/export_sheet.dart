@@ -5,6 +5,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/trip_share.dart';
+import '../utils/plural.dart';
+import 'share_or_report.dart';
 
 /// "Send a copy" sheet — every way to get a snapshot [TripBundle] out of the
 /// app (unlike a shared board, the copy never updates):
@@ -31,7 +33,7 @@ class ExportSheet extends StatelessWidget {
 
   int get _count => bundle.places.length;
 
-  String get _countLabel => '$_count ${_count == 1 ? 'place' : 'places'}';
+  String get _countLabel => plural(_count, 'place');
 
   Future<void> _shareLink(BuildContext context) async {
     final route = TripShare.googleMapsRouteUrl(bundle.places);
@@ -46,7 +48,7 @@ class ExportSheet extends StatelessWidget {
         ..writeln('No app? View in Google Maps:')
         ..writeln(route);
     }
-    await _sharePlus(
+    await shareOrReport(
       context,
       ShareParams(text: text.toString().trimRight(), subject: bundle.title),
     );
@@ -77,22 +79,10 @@ class ExportSheet extends StatelessWidget {
       mimeType: mimeType,
       name: name,
     );
-    return _sharePlus(
+    return shareOrReport(
       context,
       ShareParams(files: [file], fileNameOverrides: [name], subject: name),
     );
-  }
-
-  Future<void> _sharePlus(BuildContext context, ShareParams params) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    try {
-      await SharePlus.instance.share(params);
-    } catch (e) {
-      debugPrint('Share failed: $e');
-      messenger?.showSnackBar(
-        const SnackBar(content: Text('Could not open the share sheet')),
-      );
-    }
   }
 
   Future<void> _openRoute(BuildContext context) async {

@@ -13,8 +13,8 @@ void main() {
     final total = PlaceStore.instance.places.value.length;
     expect(find.text('$total of $total places'), findsOneWidget);
 
-    // Open the category drawer.
-    await tester.tap(find.byTooltip('Categories'));
+    // Open the Filters drawer.
+    await tester.tap(find.byTooltip('Filters'));
     await tester.pumpAndSettle();
 
     // Mock data has exactly one restaurant (Gogo, auto-detected as ramen
@@ -50,7 +50,7 @@ void main() {
       await tester.pump();
       final total = PlaceStore.instance.places.value.length;
 
-      await tester.tap(find.byTooltip('Categories'));
+      await tester.tap(find.byTooltip('Filters'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Restaurant'));
       await tester.pumpAndSettle();
@@ -67,7 +67,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: MapScreen(onAddFind: () {})));
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Categories'));
+    await tester.tap(find.byTooltip('Filters'));
     await tester.pumpAndSettle();
     final rescan = find.text('Re-scan food types');
     await tester.scrollUntilVisible(

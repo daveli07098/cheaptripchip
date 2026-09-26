@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../data/map_filter.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'accessible_emoji.dart';
 import 'score_stars.dart';
 
 /// Feed/sidebar card: category swatch, name, area tag, AI description preview,
@@ -27,7 +29,7 @@ class PlaceCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Photo placeholder — production pulls the IG carousel's first frame.
-              _Thumb(color: color, category: place.category),
+              _Thumb(color: color, place: place),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -115,15 +117,15 @@ String _metaLine(Place place) {
     parts.add('$rating ★$reviews');
   }
   if (place.priceRange != null) parts.add(place.priceRange!);
-  parts.add(place.effectiveRestaurantType?.labelEn ?? place.category.labelEn);
+  parts.add(restaurantTypeOf(place)?.labelEn ?? place.category.labelEn);
   return parts.join(' · ');
 }
 
 class _Thumb extends StatelessWidget {
-  const _Thumb({required this.color, required this.category});
+  const _Thumb({required this.color, required this.place});
 
   final Color color;
-  final PlaceCategory category;
+  final Place place;
 
   @override
   Widget build(BuildContext context) {
@@ -144,15 +146,13 @@ class _Thumb extends StatelessWidget {
       // Emoji aren't accessible labels (screen readers announce the CLDR
       // glyph name, not the category) — expose the real label via Semantics
       // and hide the raw glyph from the a11y tree.
+      // Same marker emoji as the map pin (🍜 for a ramen place).
       child: Center(
-        child: Semantics(
-          label: category.labelEn,
-          child: ExcludeSemantics(
-            child: Text(
-              category.emoji,
-              style: const TextStyle(fontSize: 28, height: 1),
-            ),
-          ),
+        child: AccessibleEmoji(
+          emoji: placeMarkerEmoji(place),
+          label: placeMarkerLabel(place),
+          fontSize: 28,
+          height: 1,
         ),
       ),
     );

@@ -6,6 +6,8 @@ import 'package:cheaptripchip/models/place.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'fakes/failing_place_repository.dart';
+
 const _testPlace = Place(
   id: 'test-place',
   name: 'Test Place',
@@ -42,6 +44,53 @@ void main() {
 
       expect(store.places.value.length, beforeCount + 1);
       expect(store.places.value.first.id, _testPlace.id);
+    });
+
+    group('failed repository write', () {
+      late FailingPlaceRepository repo;
+
+      setUp(() async {
+        repo = FailingPlaceRepository(failWrites: false);
+        PlaceStore.instance.bindRepository(repo);
+        await Future<void>.delayed(Duration.zero);
+        await PlaceStore.instance.add(_testPlace);
+        await Future<void>.delayed(Duration.zero);
+        repo.failWrites = true;
+      });
+
+      test(
+        'toggleFavorite reverts the optimistic change and rethrows',
+        () async {
+          final store = PlaceStore.instance;
+          final before = store.places.value;
+
+          await expectLater(
+            store.toggleFavorite(_testPlace.id),
+            throwsStateError,
+          );
+
+          expect(store.places.value, same(before));
+          expect(store.byIdOrNull(_testPlace.id)!.isFavorite, isFalse);
+        },
+      );
+
+      test('updateReview and addNote revert too', () async {
+        final store = PlaceStore.instance;
+
+        await expectLater(
+          store.updateReview(_testPlace.id, score: 8, notes: 'x'),
+          throwsStateError,
+        );
+        await expectLater(
+          store.addNote(_testPlace.id, 'note'),
+          throwsStateError,
+        );
+
+        final current = store.byIdOrNull(_testPlace.id)!;
+        expect(current.myScore, isNull);
+        expect(current.myNotes, isEmpty);
+        expect(current.extraNotes, isEmpty);
+      });
     });
 
     test('toggleFavorite flips isFavorite for the given id', () async {

@@ -9,33 +9,42 @@ import '../data/board_store.dart';
 import '../data/map_filter.dart';
 import '../data/map_focus.dart';
 import '../data/mock_data.dart';
-import '../data/place_search.dart';
+import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
 import '../data/shared_board_store.dart';
 import '../models/place.dart';
-import '../services/area_resolver.dart';
 import '../theme/app_theme.dart';
-import '../theme/theme_toggle_button.dart';
 import '../widgets/account_button.dart';
+import '../widgets/filter_chips.dart';
+import '../widgets/filter_drawer.dart';
 import '../widgets/map_pin.dart';
 import '../widgets/marker_clustering.dart';
 import '../widgets/place_list_sheet.dart';
 import '../widgets/place_preview_card.dart';
+import '../widgets/place_search_pill.dart';
+import '../widgets/show_snack.dart';
 import 'place_detail_sheet.dart';
 
 /// Map-first surface (ANALYSIS.md §3): theme-aware CartoDB tiles, coral pins
-/// grid-clustered at low zoom, a category filter in a left drawer (opened
-/// from the search bar's leading ☰, with the theme toggle in its footer), a
-/// Google-Maps-style search bar (free-text over [placeMatches], submit fits
-/// the camera to the matches), and a persistent (non-modal) place-list sheet
+/// grid-clustered at low zoom, the shared Filters drawer ([FilterDrawer]:
+/// favourites, categories, boards, areas; opened from the search pill's
+/// leading ☰, with the theme toggle in its Settings footer), a
+/// Google-Maps-style search pill (free-text over [placeMatches], submit fits
+/// the camera to the matches or says nothing matched), active-filter chips
+/// ([ActiveFilterChips]), and a persistent (non-modal) place-list sheet
 /// kept in sync with the pins. Tapping a pin selects it and floats a
 /// [PlacePreviewCard] just above the sheet (Google Maps style — the card or
 /// its Details action opens the full detail sheet); tapping empty map
 /// dismisses it. Tapping a list row selects + pans without a card.
-/// The drawer also filters by board (multi-select, see [MapFilter.boards]);
-/// [focus] lets the Boards tab show one board here ([MapFocusController]).
+/// Filters + search live in a [PlaceFilterController] shared with the Saved
+/// tab; only the camera fly on a drawer pick is map-only. [focus] lets the Boards tab show one board here ([MapFocusController]).
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, required this.onAddFind, this.focus});
+  const MapScreen({
+    super.key,
+    required this.onAddFind,
+    this.focus,
+    this.filters,
+  });
 
   /// Forwarded straight through to [PlaceListSheet] — see its doc comment
   /// for what triggers this (the "+" affordance for adding a new find).
@@ -44,6 +53,10 @@ class MapScreen extends StatefulWidget {
   /// "Show this board on the map" requests: each one replaces every filter
   /// with just that board and flies the camera to fit its places.
   final ValueListenable<MapBoardFocus?>? focus;
+
+  /// Filters + search shared with the Saved tab (owned by the home shell);
+  /// null = a private one, e.g. in tests.
+  final PlaceFilterController? filters;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -59,39 +72,17 @@ class _MapScreenState extends State<MapScreen>
 
   final _listSheetController = PlaceListSheetController();
 
-  /// Opens the category drawer from the search bar's leading ☰ button.
+  /// Opens the Filters drawer from the search bar's leading ☰ button.
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  /// Backs the search pill's [TextField]; read directly in [_filter] rather
-  /// than mirrored into a separate `_query` field.
-  final _searchController = TextEditingController();
+  /// Our own [PlaceFilterController] when the widget wasn't given one.
+  PlaceFilterController? _ownFilters;
+
+  /// The active filters + search text (its `search` backs the search pill).
+  PlaceFilterController get _filters =>
+      widget.filters ?? (_ownFilters ??= PlaceFilterController());
+
   final _searchFocusNode = FocusNode();
-
-  /// null = "All". Otherwise filter pins to the selected category.
-  PlaceCategory? _selected;
-
-  /// null = every restaurant (no sub-filter). Only meaningful alongside
-  /// `_selected == PlaceCategory.restaurant` — selecting any other category
-  /// (including "All") clears it back to null.
-  RestaurantType? _selectedType;
-
-  /// null = every area. Otherwise only places whose [Place.city] equals
-  /// it — the empty string selects "Unknown area" (no city yet). ANDed with
-  /// the category filter; the drawer's "All" row leaves it alone.
-  String? _selectedCity;
-
-  /// null = the whole [_selectedCity]. Otherwise only places whose
-  /// [Place.district] equals it (always set together with its city).
-  String? _selectedArea;
-
-  /// [BoardRef.key]s picked in the drawer's Boards section; empty = every
-  /// place. A place shows when it's on ANY of them (ANDed with the rest).
-  Set<String> _selectedBoards = const {};
-
-  /// Drawer section open/closed state, kept here so it survives the drawer
-  /// being closed and reopened.
-  bool _boardsExpanded = true;
-  bool _areasExpanded = true;
 
   /// The place currently highlighted on both the map (max z-order + scale)
   /// and the list (scrolled into view + tinted row). A notifier rather than
@@ -102,10 +93,6 @@ class _MapScreenState extends State<MapScreen>
   /// Whether the floating [PlacePreviewCard] is shown for [_selectedPlaceId].
   /// Only pin taps raise it; list selection and empty-map taps clear it.
   final _previewVisible = ValueNotifier<bool>(false);
-
-  /// Memoizes the filtered list and drawer counts, so rebuilds that don't
-  /// change the places or the filter do no per-place work.
-  final _filterCache = MapFilterCache();
 
   /// Whether the camera has been fitted to real places yet. Guest places
   /// load from disk after the first frame, so the map can start empty and
@@ -141,18 +128,15 @@ class _MapScreenState extends State<MapScreen>
   Offset _flyOffset = Offset.zero;
   Curve _flyCurve = Curves.easeOutCubic;
 
-  /// Category filter AND area filter AND free-text search (via
+  /// Favourites AND category AND area AND boards AND free-text search (via
   /// [placeMatches]) — search terms are matched across name/area/region/
   /// address/description/notes/category labels/source handle, so it also
   /// narrows results within a category.
-  MapFilter get _filter => MapFilter(
-    category: _selected,
-    restaurantType: _selectedType,
-    city: _selectedCity,
-    district: _selectedArea,
-    query: _searchController.text,
-    boards: _selectedBoards,
-  );
+  MapFilter get _filter => _filters.filter;
+
+  /// Memoizes the filtered list and drawer counts, so rebuilds that don't
+  /// change the places or the filter do no per-place work.
+  MapFilterCache get _filterCache => _filters.cache;
 
   /// Place ↔ board membership for the current snapshot (memoized).
   BoardIndex _boardIndexNow() => _filterCache.boardsFor(
@@ -245,13 +229,22 @@ class _MapScreenState extends State<MapScreen>
   }
 
   /// Keyboard "search" action: unfocus and, like [_focusCluster], fit the
-  /// camera to every currently-matching place (category filter + query
-  /// already applied by the caller). No-op on zero matches; a single match
-  /// pans/zooms to it (matching [_selectFromList]) rather than "fitting" to
-  /// one point.
+  /// camera to every currently-matching place ([matches], computed at
+  /// submit time from the current filter + query). Zero matches says so in a SnackBar
+  /// rather than silently doing nothing; a single match pans/zooms to it
+  /// (matching [_selectFromList]) rather than "fitting" to one point.
   void _submitSearch(BuildContext context, List<Place> matches) {
     _searchFocusNode.unfocus();
-    if (matches.isEmpty) return;
+    if (matches.isEmpty) {
+      final query = _filter.query.trim();
+      showSnack(
+        context,
+        query.isEmpty
+            ? 'No places match your filters'
+            : 'No places match “$query”',
+      );
+      return;
+    }
     if (matches.length == 1) {
       _selectFromList(context, matches.first);
       return;
@@ -260,34 +253,17 @@ class _MapScreenState extends State<MapScreen>
     if (fit != null) _flyToFit(fit);
   }
 
-  /// Applies a drawer pick, then — as the drawer starts closing (Scaffold's
+  /// A drawer pick was applied; as the drawer starts closing (Scaffold's
   /// `onDrawerChanged(false)`), so the flight plays out as the map is
-  /// revealed — flies the camera to the new results. [always] for
-  /// area picks (the user asked for a place on the map); category picks only
-  /// move when none of their results are on screen, so a filter never
+  /// revealed, fly the camera to the new results. [always] for area picks
+  /// (the user asked for a place on the map); category/favourites picks
+  /// only move when none of their results are on screen, so a filter never
   /// yanks the user away from where they were looking for no reason.
-  void _applyDrawerFilter(VoidCallback change, {required bool always}) {
-    setState(change);
-    _pendingFilterFit = always;
-    Navigator.of(context).pop();
-  }
+  void _onDrawerPicked({required bool always}) => _pendingFilterFit = always;
 
   /// Board rows are multi-select, so a toggle keeps the drawer open; the
   /// camera fits the new results once it closes (see [_onDrawerChanged]).
-  void _toggleBoard(String key) {
-    setState(() {
-      _selectedBoards = _selectedBoards.contains(key)
-          ? ({..._selectedBoards}..remove(key))
-          : {..._selectedBoards, key};
-    });
-    _pendingFilterFit = true;
-  }
-
-  void _clearBoards() {
-    if (_selectedBoards.isEmpty) return;
-    setState(() => _selectedBoards = const {});
-    _pendingFilterFit = true;
-  }
+  void _onDrawerBoardsChanged() => _pendingFilterFit = true;
 
   /// A [MapFocusController] request from the Boards tab: show only that
   /// board — the other filters and the search are cleared so none of its
@@ -295,31 +271,21 @@ class _MapScreenState extends State<MapScreen>
   void _onFocusRequest() {
     final request = widget.focus?.value;
     if (request == null || !mounted) return;
-    _searchController.clear();
     _searchFocusNode.unfocus();
     _selectedPlaceId.value = null;
     _previewVisible.value = false;
     _pendingFilterFit = null;
-    setState(() {
-      _selected = null;
-      _selectedType = null;
-      _selectedCity = null;
-      _selectedArea = null;
-      _selectedBoards = {request.boardKey};
-    });
+    _filters.showOnlyBoard(request.boardKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !identical(widget.focus?.value, request)) return;
       final visible = _visibleNow();
       if (visible.isEmpty) {
         final name = _boardIndexNow().byKey(request.boardKey)?.name;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              name == null
-                  ? 'None of this board’s places are on your map'
-                  : 'None of “$name”’s places are on your map',
-            ),
-          ),
+        showSnack(
+          context,
+          name == null
+              ? 'None of this board’s places are on your map'
+              : 'None of “$name”’s places are on your map',
         );
         return;
       }
@@ -509,7 +475,7 @@ class _MapScreenState extends State<MapScreen>
     widget.focus?.removeListener(_onFocusRequest);
     _cameraAnimation.dispose();
     _sheetExtentController.dispose();
-    _searchController.dispose();
+    _ownFilters?.dispose();
     _searchFocusNode.dispose();
     _selectedPlaceId.dispose();
     _previewVisible.dispose();
@@ -524,6 +490,7 @@ class _MapScreenState extends State<MapScreen>
         PlaceStore.instance.places,
         BoardStore.instance.boards,
         sharedBoards,
+        _filters,
       ]),
       builder: (context, _) {
         final loaded = PlaceStore.instance.places.value;
@@ -558,9 +525,6 @@ class _MapScreenState extends State<MapScreen>
         }
         final mapOptions = _mapOptions ??= _buildMapOptions(initialFit);
         final brightness = Theme.of(context).brightness;
-        final counts = index.counts;
-        final typeCounts = index.restaurantTypeCounts;
-        final areas = index.areas;
 
         // If a search/category change dropped the selected pin out of
         // `visible`, clear it — deferred to a post-frame callback since
@@ -571,16 +535,11 @@ class _MapScreenState extends State<MapScreen>
         // A picked board that no longer exists (deleted, left, or "New
         // finds" emptied) would hide every pin with no chip to clear it —
         // drop it after the frame, same deferral as the selection below.
-        final selectedBoards = _selectedBoards;
-        if (selectedBoards.any((key) => boardIndex.byKey(key) == null)) {
+        if (_filter.boards.any((key) => boardIndex.byKey(key) == null)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !identical(_selectedBoards, selectedBoards)) return;
-            setState(() {
-              _selectedBoards = {
-                for (final key in selectedBoards)
-                  if (_boardIndexNow().byKey(key) != null) key,
-              };
-            });
+            if (!mounted) return;
+            final boards = _boardIndexNow();
+            _filters.retainBoards((key) => boards.byKey(key) != null);
           });
         }
 
@@ -606,37 +565,12 @@ class _MapScreenState extends State<MapScreen>
           // the drawer opens from the filter button only.
           drawerEnableOpenDragGesture: false,
           onDrawerChanged: _onDrawerChanged,
-          drawer: _CategoryDrawer(
-            counts: counts,
-            total: all.length,
-            selected: _selected,
-            restaurantTypeCounts: typeCounts,
-            selectedType: _selectedType,
-            onSelect: (c) => _applyDrawerFilter(() {
-              _selected = c;
-              _selectedType = null;
-            }, always: false),
-            onSelectType: (t) => _applyDrawerFilter(() {
-              _selected = PlaceCategory.restaurant;
-              _selectedType = t;
-            }, always: false),
-            areas: areas,
-            selectedCity: _selectedCity,
-            selectedArea: _selectedArea,
-            onSelectArea: (city, district) => _applyDrawerFilter(() {
-              _selectedCity = city;
-              _selectedArea = district;
-            }, always: city != null),
-            areasExpanded: _areasExpanded,
-            onToggleAreas: () =>
-                setState(() => _areasExpanded = !_areasExpanded),
+          drawer: FilterDrawer(
+            filters: _filters,
+            index: index,
             boardIndex: boardIndex,
-            selectedBoards: _selectedBoards,
-            onToggleBoard: _toggleBoard,
-            onClearBoards: _clearBoards,
-            boardsExpanded: _boardsExpanded,
-            onToggleBoards: () =>
-                setState(() => _boardsExpanded = !_boardsExpanded),
+            onPicked: _onDrawerPicked,
+            onBoardsChanged: _onDrawerBoardsChanged,
           ),
           body: Stack(
             children: [
@@ -663,81 +597,32 @@ class _MapScreenState extends State<MapScreen>
                 bottom: false,
                 child: Column(
                   children: [
-                    _SearchBar(
-                      controller: _searchController,
-                      focusNode: _searchFocusNode,
-                      onOpenFilter: () =>
-                          _scaffoldKey.currentState?.openDrawer(),
-                      // The controller already holds the latest text by the
-                      // time this fires — just triggers a rebuild so
-                      // `_filter`/the clear button re-read it. Cheap per
-                      // keystroke: only the filter pass re-runs (the drawer
-                      // counts are memoized), so no debounce is needed.
-                      onChanged: (_) => setState(() {}),
-                      onSubmitted: (_) => _submitSearch(context, visible),
-                      onClear: () {
-                        _searchController.clear();
-                        setState(() {});
-                      },
-                    ),
-                    if (_selected != null ||
-                        _selectedCity != null ||
-                        _selectedBoards.isNotEmpty)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            children: [
-                              if (_selected != null)
-                                _CategoryChip(
-                                  category: _selected!,
-                                  type: _selectedType,
-                                  // Same "counts are over ALL places, not
-                                  // the search results" choice as the
-                                  // drawer (see `MapPlaceIndex.counts`) —
-                                  // keeps the number stable while the user
-                                  // types.
-                                  count: _selectedType != null
-                                      ? (typeCounts[_selectedType] ?? 0)
-                                      : (counts[_selected] ?? 0),
-                                  onClear: () => setState(() {
-                                    _selected = null;
-                                    _selectedType = null;
-                                  }),
-                                ),
-                              if (_selectedCity != null)
-                                _AreaChip(
-                                  city: _selectedCity!,
-                                  district: _selectedArea,
-                                  countryCode: areas.countryCodeOf(
-                                    _selectedCity!,
-                                  ),
-                                  count: areas.countOf(
-                                    _selectedCity!,
-                                    _selectedArea,
-                                  ),
-                                  onClear: () => setState(() {
-                                    _selectedCity = null;
-                                    _selectedArea = null;
-                                  }),
-                                ),
-                              for (final key in _selectedBoards)
-                                if (boardIndex.byKey(key) case final board?)
-                                  _BoardChip(
-                                    board: board,
-                                    count: boardIndex.countOf(key),
-                                    onClear: () => setState(() {
-                                      _selectedBoards = {..._selectedBoards}
-                                        ..remove(key);
-                                    }),
-                                  ),
-                            ],
-                          ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: PlaceSearchPill(
+                        controller: _filters.search,
+                        focusNode: _searchFocusNode,
+                        activeFilters: _filter.activeCount,
+                        onOpenFilters: () =>
+                            _scaffoldKey.currentState?.openDrawer(),
+                        // Typing needs no handler: the shared controller
+                        // mirrors the text into the filter and notifies.
+                        // Cheap per keystroke — only the filter pass re-runs
+                        // (the drawer counts are memoized), so no debounce.
+                        onSubmitted: (_) =>
+                            _submitSearch(context, _visibleNow()),
+                        trailing: const SizedBox.square(
+                          dimension: 48,
+                          child: Center(child: AccountButton()),
                         ),
                       ),
+                    ),
+                    ActiveFilterChips(
+                      filters: _filters,
+                      index: index,
+                      boardIndex: boardIndex,
+                      padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+                    ),
                   ],
                 ),
               ),
@@ -913,1081 +798,6 @@ class _ClusterMarkerLayerState extends State<_ClusterMarkerLayer> {
       valueListenable: widget.selectedId,
       builder: (context, selectedId, _) =>
           MarkerLayer(markers: _markersFor(clusters, selectedId, keyed: keyed)),
-    );
-  }
-}
-
-/// Floating full-width search pill: leading ☰ opens [_CategoryDrawer], a
-/// free-text field (submit fits the map to the matches — see
-/// [_MapScreenState._submitSearch]), a clear ✕ once there's text, and the
-/// account button trailing. The theme toggle lives in the drawer's footer
-/// instead of out here (see [_CategoryDrawer]).
-class _SearchBar extends StatelessWidget {
-  const _SearchBar({
-    required this.controller,
-    required this.focusNode,
-    required this.onOpenFilter,
-    required this.onChanged,
-    required this.onSubmitted,
-    required this.onClear,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final VoidCallback onOpenFilter;
-  final ValueChanged<String> onChanged;
-  final ValueChanged<String> onSubmitted;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Material(
-        color: scheme.surface,
-        elevation: 2,
-        borderRadius: BorderRadius.circular(28),
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              // IconButton/TextField already derive their a11y label from
-              // `tooltip`/`hintText` — an outer `Semantics` would just add a
-              // second, redundant node for screen readers to announce.
-              IconButton(
-                icon: const Icon(Icons.menu),
-                tooltip: 'Categories',
-                onPressed: onOpenFilter,
-              ),
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  textInputAction: TextInputAction.search,
-                  onChanged: onChanged,
-                  onSubmitted: onSubmitted,
-                  decoration: const InputDecoration(
-                    hintText: 'Search your finds',
-                    border: InputBorder.none,
-                    isCollapsed: true,
-                  ),
-                ),
-              ),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: controller,
-                builder: (context, value, _) {
-                  if (value.text.isEmpty) return const SizedBox.shrink();
-                  return IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    tooltip: 'Clear search',
-                    onPressed: onClear,
-                  );
-                },
-              ),
-              const SizedBox(width: 4),
-              const SizedBox.square(
-                dimension: 48,
-                child: Center(child: AccountButton()),
-              ),
-              const SizedBox(width: 4),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Small chip under the search pill showing the active category + its count
-/// (over ALL places, same as the drawer — see `_MapScreenState._counts`),
-/// with a ✕ to clear it. Nothing renders for "All" (see the `if (_selected
-/// != null)` guard at the call site). When [type] is set (a restaurant
-/// sub-type is active) it shows that instead of the bare category, e.g.
-/// "🍜 Ramen · 5 ✕".
-class _CategoryChip extends StatelessWidget {
-  const _CategoryChip({
-    required this.category,
-    required this.count,
-    required this.onClear,
-    this.type,
-  });
-
-  final PlaceCategory category;
-  final RestaurantType? type;
-  final int count;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final emoji = type?.emoji ?? category.emoji;
-    final label = type?.labelEn ?? category.labelEn;
-    return Material(
-      color: scheme.surface,
-      elevation: 1,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(
-              label: label,
-              child: ExcludeSemantics(
-                child: Text(emoji, style: const TextStyle(fontSize: 14)),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '$label · $count',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurface,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Semantics(
-              button: true,
-              label: 'Clear category filter',
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: onClear,
-                child: const Padding(
-                  padding: EdgeInsets.all(3),
-                  child: Icon(Icons.close, size: 15),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Area counterpart to [_CategoryChip], shown next to it: flag + "Shibuya,
-/// Tokyo · 12" (or just the city, or "Unknown area") with its own ✕ that
-/// clears only the area filter.
-class _AreaChip extends StatelessWidget {
-  const _AreaChip({
-    required this.city,
-    required this.district,
-    required this.countryCode,
-    required this.count,
-    required this.onClear,
-  });
-
-  final String city;
-  final String? district;
-  final String countryCode;
-  final int count;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final label = city.isEmpty
-        ? 'Unknown area'
-        : (district == null ? city : '$district, $city');
-    return Material(
-      color: scheme.surface,
-      elevation: 1,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _AreaLeading(countryCode: countryCode, size: 14),
-            const SizedBox(width: 6),
-            Text(
-              '$label · $count',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurface,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Semantics(
-              button: true,
-              label: 'Clear area filter',
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: onClear,
-                child: const Padding(
-                  padding: EdgeInsets.all(3),
-                  child: Icon(Icons.close, size: 15),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Board counterpart to [_CategoryChip], one per picked board: its emoji +
-/// "Tokyo trip · 12" (places on the map) with a ✕ that drops just that
-/// board from the filter.
-class _BoardChip extends StatelessWidget {
-  const _BoardChip({
-    required this.board,
-    required this.count,
-    required this.onClear,
-  });
-
-  final BoardRef board;
-  final int count;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surface,
-      elevation: 1,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(
-              label: 'Board',
-              child: ExcludeSemantics(
-                child: Text(board.emoji, style: const TextStyle(fontSize: 14)),
-              ),
-            ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 200),
-              child: Text(
-                '${board.name} · $count',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Semantics(
-              button: true,
-              label: 'Clear board filter ${board.name}',
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: onClear,
-                child: const Padding(
-                  padding: EdgeInsets.all(3),
-                  child: Icon(Icons.close, size: 15),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A flag for [countryCode] (wrapped in [Semantics], per the emoji rule),
-/// or a pin icon when the country is unknown.
-class _AreaLeading extends StatelessWidget {
-  const _AreaLeading({required this.countryCode, required this.size});
-
-  final String countryCode;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final flag = flagEmoji(countryCode);
-    if (flag.isEmpty) return Icon(Icons.place_outlined, size: size + 4);
-    return Semantics(
-      label: 'Country: $countryCode',
-      child: ExcludeSemantics(
-        child: Text(flag, style: TextStyle(fontSize: size)),
-      ),
-    );
-  }
-}
-
-/// "1,650" — thousands separators without pulling in package:intl.
-String _formatCount(int n) {
-  final digits = '$n';
-  final buffer = StringBuffer();
-  for (var i = 0; i < digits.length; i++) {
-    if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
-    buffer.write(digits[i]);
-  }
-  return buffer.toString();
-}
-
-/// Left drawer listing "All" plus every category present, with counts.
-/// Tapping a row applies the filter and closes the drawer. The Restaurant
-/// row is expandable — see [_RestaurantCategoryTile] — to filter by cuisine
-/// sub-type without leaving the Restaurant category. Below it, two
-/// collapsible sections: Boards (multi-select toggles that keep the drawer
-/// open) and Areas (country → city → district, each level A–Z and
-/// collapsible).
-class _CategoryDrawer extends StatelessWidget {
-  const _CategoryDrawer({
-    required this.counts,
-    required this.total,
-    required this.selected,
-    required this.onSelect,
-    required this.restaurantTypeCounts,
-    required this.selectedType,
-    required this.onSelectType,
-    required this.areas,
-    required this.selectedCity,
-    required this.selectedArea,
-    required this.onSelectArea,
-    required this.areasExpanded,
-    required this.onToggleAreas,
-    required this.boardIndex,
-    required this.selectedBoards,
-    required this.onToggleBoard,
-    required this.onClearBoards,
-    required this.boardsExpanded,
-    required this.onToggleBoards,
-  });
-
-  final Map<PlaceCategory, int> counts;
-  final int total;
-  final PlaceCategory? selected;
-  final ValueChanged<PlaceCategory?> onSelect;
-  final Map<RestaurantType, int> restaurantTypeCounts;
-  final RestaurantType? selectedType;
-  final ValueChanged<RestaurantType> onSelectType;
-  final AreaIndex areas;
-  final String? selectedCity;
-  final String? selectedArea;
-
-  /// (city, district): (null, null) = all areas, ("", null) = unknown,
-  /// (city, null) = a whole city, (city, district) = one district.
-  final void Function(String? city, String? district) onSelectArea;
-
-  final bool areasExpanded;
-  final VoidCallback onToggleAreas;
-
-  final BoardIndex boardIndex;
-  final Set<String> selectedBoards;
-  final ValueChanged<String> onToggleBoard;
-  final VoidCallback onClearBoards;
-  final bool boardsExpanded;
-  final VoidCallback onToggleBoards;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-    // Boards with pins on the map, plus any still picked (so it can be
-    // unticked even after its places are gone).
-    final boards = [
-      for (final board in boardIndex.boards)
-        if (boardIndex.countOf(board.key) > 0 ||
-            selectedBoards.contains(board.key))
-          board,
-    ];
-    // One country: open it straight away; several: collapsed, except the
-    // one holding the picked city.
-    final expandCountries = areas.countries.length == 1;
-    return Drawer(
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-              child: Text(
-                'Categories',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            _CategoryTile(
-              leading: const Icon(Icons.apps),
-              label: 'All',
-              count: total,
-              color: AppTheme.coral,
-              selected: selected == null,
-              onTap: () => onSelect(null),
-            ),
-            for (final entry in counts.entries)
-              if (entry.key == PlaceCategory.restaurant)
-                _RestaurantCategoryTile(
-                  count: entry.value,
-                  typeCounts: restaurantTypeCounts,
-                  selected: selected == PlaceCategory.restaurant,
-                  selectedType: selectedType,
-                  onSelectCategory: () => onSelect(PlaceCategory.restaurant),
-                  onSelectType: onSelectType,
-                )
-              else
-                _CategoryTile(
-                  leading: Semantics(
-                    label: entry.key.labelEn,
-                    child: ExcludeSemantics(
-                      child: Text(
-                        entry.key.emoji,
-                        style: const TextStyle(fontSize: 22),
-                      ),
-                    ),
-                  ),
-                  label: entry.key.labelEn,
-                  count: entry.value,
-                  color: AppTheme.categoryColor(entry.key, brightness),
-                  selected: selected == entry.key,
-                  onTap: () => onSelect(entry.key),
-                ),
-            if (boards.isNotEmpty) ...[
-              const Divider(height: 24),
-              _SectionHeader(
-                title: 'Boards',
-                expanded: boardsExpanded,
-                onToggle: onToggleBoards,
-              ),
-              if (boardsExpanded) ...[
-                _CategoryTile(
-                  leading: const Icon(Icons.dashboard_outlined),
-                  label: 'All boards',
-                  count: total,
-                  color: AppTheme.coral,
-                  selected: selectedBoards.isEmpty,
-                  onTap: onClearBoards,
-                ),
-                for (final board in boards)
-                  _BoardFilterTile(
-                    board: board,
-                    count: boardIndex.countOf(board.key),
-                    selected: selectedBoards.contains(board.key),
-                    onToggle: () => onToggleBoard(board.key),
-                  ),
-              ],
-            ],
-            const Divider(height: 24),
-            _SectionHeader(
-              title: 'Areas',
-              expanded: areasExpanded,
-              onToggle: onToggleAreas,
-            ),
-            const _AreaProgressLine(),
-            if (areasExpanded) ...[
-              _CategoryTile(
-                leading: const Icon(Icons.public),
-                label: 'All areas',
-                count: total,
-                color: AppTheme.coral,
-                selected: selectedCity == null,
-                onTap: () => onSelectArea(null, null),
-              ),
-              for (final country in areas.countries)
-                _CountryTile(
-                  key: ValueKey('country:${country.code}'),
-                  country: country,
-                  initiallyExpanded:
-                      expandCountries ||
-                      country.cities.any((c) => c.city == selectedCity),
-                  selectedCity: selectedCity,
-                  selectedArea: selectedArea,
-                  onSelectArea: onSelectArea,
-                ),
-              if (areas.unknownCount > 0)
-                _CategoryTile(
-                  leading: const Icon(Icons.help_outline),
-                  label: 'Unknown area',
-                  count: areas.unknownCount,
-                  color: AppTheme.coral,
-                  selected: selectedCity == '',
-                  onTap: () => onSelectArea('', null),
-                ),
-            ],
-            const Divider(height: 24),
-            // Manual trigger for the rescan that also runs automatically
-            // after a detection-keyword update (restaurant_type_rescan.dart).
-            ListTile(
-              leading: const Icon(Icons.manage_search),
-              title: const Text('Re-scan food types'),
-              onTap: () async {
-                final messenger = ScaffoldMessenger.of(context);
-                final changed = await PlaceStore.instance
-                    .rescanRestaurantTypes();
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      changed == 0
-                          ? 'Food types are up to date'
-                          : 'Updated the food type of $changed '
-                                '${changed == 1 ? 'place' : 'places'}',
-                    ),
-                  ),
-                );
-              },
-            ),
-            // Moved here from the map's floating row (commit ec3b355) so the
-            // search pill can stay a single, uninterrupted control.
-            const ListTile(
-              leading: Icon(Icons.brightness_6_outlined),
-              title: Text('Theme'),
-              trailing: ThemeToggleButton(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Collapsible drawer section title ("Boards", "Areas"): the whole row
-/// toggles, with a chevron and the expanded state exposed to screen readers.
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.expanded,
-    required this.onToggle,
-  });
-
-  final String title;
-  final bool expanded;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      expanded: expanded,
-      label: title,
-      excludeSemantics: true,
-      child: InkWell(
-        onTap: onToggle,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 20, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-                Icon(expanded ? Icons.expand_less : Icons.expand_more),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A board in the drawer's Boards section: emoji + name + places on the
-/// map, with a checkbox — tapping toggles it in the (multi-select) filter.
-class _BoardFilterTile extends StatelessWidget {
-  const _BoardFilterTile({
-    required this.board,
-    required this.count,
-    required this.selected,
-    required this.onToggle,
-  });
-
-  final BoardRef board;
-  final int count;
-  final bool selected;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: MergeSemantics(
-        child: Semantics(
-          checked: selected,
-          child: ListTile(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
-            selected: selected,
-            selectedTileColor: AppTheme.coral.withValues(alpha: 0.16),
-            selectedColor: scheme.onSurface,
-            leading: SizedBox(
-              width: 28,
-              child: Center(
-                child: Semantics(
-                  label: board.shared ? 'Shared board' : 'Board',
-                  child: ExcludeSemantics(
-                    child: Text(
-                      board.emoji,
-                      style: const TextStyle(fontSize: 22),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            title: Text(
-              board.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-            subtitle: board.shared ? const Text('Shared') : null,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('$count'),
-                const SizedBox(width: 8),
-                ExcludeSemantics(
-                  child: Icon(
-                    selected ? Icons.check_box : Icons.check_box_outline_blank,
-                    color: selected ? AppTheme.coral : scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-            onTap: onToggle,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Country row in the drawer's Areas section: flag + name + count; the
-/// whole row expands/collapses its cities (A–Z, each a [_CityTile]). There
-/// is no country-wide filter — pick a city or district inside. Re-expands
-/// when a city inside becomes the picked area.
-class _CountryTile extends StatefulWidget {
-  const _CountryTile({
-    super.key,
-    required this.country,
-    required this.initiallyExpanded,
-    required this.selectedCity,
-    required this.selectedArea,
-    required this.onSelectArea,
-  });
-
-  final CountryGroup country;
-  final bool initiallyExpanded;
-  final String? selectedCity;
-  final String? selectedArea;
-  final void Function(String? city, String? district) onSelectArea;
-
-  @override
-  State<_CountryTile> createState() => _CountryTileState();
-}
-
-class _CountryTileState extends State<_CountryTile> {
-  late bool _expanded = widget.initiallyExpanded;
-
-  @override
-  void didUpdateWidget(covariant _CountryTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final city = widget.selectedCity;
-    if (city != null &&
-        city != oldWidget.selectedCity &&
-        widget.country.cities.any((c) => c.city == city)) {
-      _expanded = true;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final country = widget.country;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          child: Semantics(
-            expanded: _expanded,
-            child: ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(28),
-              ),
-              leading: SizedBox(
-                width: 28,
-                child: Center(
-                  child: _AreaLeading(countryCode: country.code, size: 20),
-                ),
-              ),
-              title: Text(
-                country.name,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('${country.count}'),
-                  const SizedBox(width: 8),
-                  ExcludeSemantics(
-                    child: Icon(
-                      _expanded ? Icons.expand_less : Icons.expand_more,
-                    ),
-                  ),
-                ],
-              ),
-              onTap: () => setState(() => _expanded = !_expanded),
-            ),
-          ),
-        ),
-        if (_expanded)
-          for (final group in country.cities)
-            Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: _CityTile(
-                group: group,
-                selected: widget.selectedCity == group.city,
-                selectedDistrict: widget.selectedCity == group.city
-                    ? widget.selectedArea
-                    : null,
-                onSelectCity: () => widget.onSelectArea(group.city, null),
-                onSelectDistrict: (d) => widget.onSelectArea(group.city, d),
-              ),
-            ),
-      ],
-    );
-  }
-}
-
-class _CategoryTile extends StatelessWidget {
-  const _CategoryTile({
-    required this.leading,
-    required this.label,
-    required this.count,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Widget leading;
-  final String label;
-  final int count;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        selected: selected,
-        selectedTileColor: color.withValues(alpha: 0.16),
-        selectedColor: Theme.of(context).colorScheme.onSurface,
-        leading: SizedBox(width: 28, child: Center(child: leading)),
-        title: Text(
-          label,
-          style: TextStyle(
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-        trailing: Text('$count'),
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
-/// Restaurant row in [_CategoryDrawer]: same look as [_CategoryTile] plus an
-/// expand/collapse chevron when there's at least one sub-type to show (only
-/// types with a count > 0, in [RestaurantType] declaration order). Tapping
-/// the row itself still filters to all restaurants (via [onSelectCategory]);
-/// tapping a sub-type row filters to just that type (via [onSelectType]).
-/// Auto-expands whenever a sub-type becomes the active selection, but a
-/// manual collapse otherwise sticks — see [_RestaurantCategoryTileState].
-class _RestaurantCategoryTile extends StatefulWidget {
-  const _RestaurantCategoryTile({
-    required this.count,
-    required this.typeCounts,
-    required this.selected,
-    required this.selectedType,
-    required this.onSelectCategory,
-    required this.onSelectType,
-  });
-
-  final int count;
-  final Map<RestaurantType, int> typeCounts;
-  final bool selected;
-  final RestaurantType? selectedType;
-  final VoidCallback onSelectCategory;
-  final ValueChanged<RestaurantType> onSelectType;
-
-  @override
-  State<_RestaurantCategoryTile> createState() =>
-      _RestaurantCategoryTileState();
-}
-
-class _RestaurantCategoryTileState extends State<_RestaurantCategoryTile> {
-  late bool _expanded = widget.selected;
-
-  @override
-  void didUpdateWidget(covariant _RestaurantCategoryTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.selectedType != null &&
-        widget.selectedType != oldWidget.selectedType) {
-      _expanded = true;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-    final color = AppTheme.categoryColor(PlaceCategory.restaurant, brightness);
-    final orderedTypes = [
-      for (final type in RestaurantType.values)
-        if ((widget.typeCounts[type] ?? 0) > 0) type,
-    ];
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          child: ListTile(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
-            selected: widget.selected,
-            selectedTileColor: color.withValues(alpha: 0.16),
-            selectedColor: Theme.of(context).colorScheme.onSurface,
-            leading: SizedBox(
-              width: 28,
-              child: Center(
-                child: Semantics(
-                  label: PlaceCategory.restaurant.labelEn,
-                  child: ExcludeSemantics(
-                    child: Text(
-                      PlaceCategory.restaurant.emoji,
-                      style: const TextStyle(fontSize: 22),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            title: Text(
-              PlaceCategory.restaurant.labelEn,
-              style: TextStyle(
-                fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('${widget.count}'),
-                if (orderedTypes.isNotEmpty)
-                  IconButton(
-                    icon: Icon(
-                      _expanded ? Icons.expand_less : Icons.expand_more,
-                    ),
-                    tooltip: _expanded ? 'Hide cuisines' : 'Show cuisines',
-                    onPressed: () => setState(() => _expanded = !_expanded),
-                  ),
-              ],
-            ),
-            onTap: widget.onSelectCategory,
-          ),
-        ),
-        if (_expanded)
-          for (final type in orderedTypes)
-            Padding(
-              padding: const EdgeInsets.only(left: 20, right: 12, top: 2),
-              child: ListTile(
-                dense: true,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                selected: widget.selectedType == type,
-                selectedTileColor: color.withValues(alpha: 0.12),
-                selectedColor: Theme.of(context).colorScheme.onSurface,
-                leading: SizedBox(
-                  width: 24,
-                  child: Center(
-                    child: Semantics(
-                      label: type.labelEn,
-                      child: ExcludeSemantics(
-                        child: Text(
-                          type.emoji,
-                          style: const TextStyle(fontSize: 17),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                title: Text(
-                  type.labelEn,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: widget.selectedType == type
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                  ),
-                ),
-                trailing: Text('${widget.typeCounts[type] ?? 0}'),
-                onTap: () => widget.onSelectType(type),
-              ),
-            ),
-      ],
-    );
-  }
-}
-
-/// "Finding areas… 320 / 1,650" + a thin bar while [AreaResolver] is
-/// backfilling cities/districts; nothing otherwise.
-class _AreaProgressLine extends StatelessWidget {
-  const _AreaProgressLine();
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<AreaProgress>(
-      valueListenable: AreaResolver.instance.progress,
-      builder: (context, progress, _) {
-        if (!progress.running || progress.total == 0) {
-          return const SizedBox.shrink();
-        }
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Finding areas… ${_formatCount(progress.done)} / '
-                '${_formatCount(progress.total)}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 6),
-              LinearProgressIndicator(
-                value: progress.done / progress.total,
-                minHeight: 3,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// City row in the drawer's Areas section (under its [_CountryTile]): city
-/// + count, expandable (same pattern as [_RestaurantCategoryTile]) to its
-/// districts A–Z.
-/// Tapping the row filters to the city; a district row to that district.
-class _CityTile extends StatefulWidget {
-  const _CityTile({
-    required this.group,
-    required this.selected,
-    required this.selectedDistrict,
-    required this.onSelectCity,
-    required this.onSelectDistrict,
-  });
-
-  final CityGroup group;
-  final bool selected;
-  final String? selectedDistrict;
-  final VoidCallback onSelectCity;
-  final ValueChanged<String> onSelectDistrict;
-
-  @override
-  State<_CityTile> createState() => _CityTileState();
-}
-
-class _CityTileState extends State<_CityTile> {
-  late bool _expanded = widget.selectedDistrict != null;
-
-  @override
-  void didUpdateWidget(covariant _CityTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.selectedDistrict != null &&
-        widget.selectedDistrict != oldWidget.selectedDistrict) {
-      _expanded = true;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = AppTheme.coral;
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    final districts = widget.group.sortedDistricts;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          child: ListTile(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
-            selected: widget.selected && widget.selectedDistrict == null,
-            selectedTileColor: color.withValues(alpha: 0.16),
-            selectedColor: onSurface,
-            // The country row above already shows the flag.
-            leading: const SizedBox(
-              width: 28,
-              child: Center(child: Icon(Icons.location_city_outlined)),
-            ),
-            title: Text(
-              widget.group.city,
-              style: TextStyle(
-                fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('${widget.group.count}'),
-                if (districts.isNotEmpty)
-                  Semantics(
-                    expanded: _expanded,
-                    child: IconButton(
-                      icon: Icon(
-                        _expanded ? Icons.expand_less : Icons.expand_more,
-                      ),
-                      tooltip: _expanded
-                          ? 'Hide ${widget.group.city} districts'
-                          : 'Show ${widget.group.city} districts',
-                      onPressed: () => setState(() => _expanded = !_expanded),
-                    ),
-                  ),
-              ],
-            ),
-            onTap: widget.onSelectCity,
-          ),
-        ),
-        if (_expanded)
-          for (final entry in districts)
-            Padding(
-              padding: const EdgeInsets.only(left: 20, right: 12, top: 2),
-              child: ListTile(
-                dense: true,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                selected: widget.selectedDistrict == entry.key,
-                selectedTileColor: color.withValues(alpha: 0.12),
-                selectedColor: onSurface,
-                leading: const SizedBox(
-                  width: 24,
-                  child: Icon(Icons.subdirectory_arrow_right, size: 16),
-                ),
-                title: Text(
-                  entry.key,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: widget.selectedDistrict == entry.key
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                  ),
-                ),
-                trailing: Text('${entry.value}'),
-                onTap: () => widget.onSelectDistrict(entry.key),
-              ),
-            ),
-      ],
     );
   }
 }

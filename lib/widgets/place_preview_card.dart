@@ -7,9 +7,11 @@ import '../data/map_filter.dart';
 import '../data/photo_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import 'accessible_emoji.dart';
 import 'place_photo.dart';
 import 'place_photo_actions.dart';
 import 'score_stars.dart';
+import 'show_snack.dart';
 
 /// Roughly how tall [PlacePreviewCard] renders at the default text scale —
 /// used to lift other floating map chrome (the attribution button) clear of
@@ -90,14 +92,9 @@ class PlacePreviewCard extends StatelessWidget {
                         const SizedBox(height: 4),
                         Row(
                           children: [
-                            Semantics(
-                              label: place.category.labelEn,
-                              child: ExcludeSemantics(
-                                child: Text(
-                                  place.category.emoji,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
+                            AccessibleEmoji(
+                              emoji: placeMarkerEmoji(place),
+                              label: placeMarkerLabel(place),
                             ),
                             const SizedBox(width: 6),
                             Flexible(
@@ -157,17 +154,14 @@ class PlacePreviewCard extends StatelessWidget {
   }
 
   Future<void> _openInMaps(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
     // Same deep link as the detail sheet's "Open in Google Maps" — just a
     // URL, no API key.
     final ok = await launchUrl(
       place.googleMapsUrl,
       mode: LaunchMode.externalApplication,
     );
-    if (!ok) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Could not open Google Maps')),
-      );
+    if (!ok && context.mounted) {
+      showSnack(context, 'Could not open Google Maps');
     }
   }
 }
@@ -189,12 +183,7 @@ class _BoardsLine extends StatelessWidget {
     final onNone = names.isEmpty;
     return Row(
       children: [
-        Semantics(
-          label: 'Boards',
-          child: const ExcludeSemantics(
-            child: Text('📋', style: TextStyle(fontSize: 13)),
-          ),
-        ),
+        const AccessibleEmoji(emoji: '📋', label: 'Boards', fontSize: 13),
         const SizedBox(width: 6),
         Flexible(
           child: Text(
@@ -242,7 +231,7 @@ class _CardAction extends StatelessWidget {
   }
 }
 
-/// No-photo thumbnail: the category emoji on a square tinted with the
+/// No-photo thumbnail: the place's marker emoji on a square tinted with the
 /// category colour.
 class _EmojiTile extends StatelessWidget {
   const _EmojiTile({required this.place, required this.color});
@@ -255,14 +244,11 @@ class _EmojiTile extends StatelessWidget {
     return ColoredBox(
       color: color.withValues(alpha: 0.22),
       child: Center(
-        child: Semantics(
-          label: place.category.labelEn,
-          child: ExcludeSemantics(
-            child: Text(
-              place.category.emoji,
-              style: const TextStyle(fontSize: 32, height: 1),
-            ),
-          ),
+        child: AccessibleEmoji(
+          emoji: placeMarkerEmoji(place),
+          label: placeMarkerLabel(place),
+          fontSize: 32,
+          height: 1,
         ),
       ),
     );

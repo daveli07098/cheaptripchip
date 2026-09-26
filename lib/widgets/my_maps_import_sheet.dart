@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../services/import_service.dart';
 import '../services/my_maps_import.dart';
 import '../theme/app_theme.dart';
+import '../utils/plural.dart';
 
 /// Downloads and parses map [mid]. Parsing a large export (1.3 MB, ~1,700
 /// placemarks) takes a few hundred ms, so it runs in a background isolate
@@ -281,8 +282,8 @@ class _MyMapsImportSheetState extends State<MyMapsImportSheet> {
         ),
         const SizedBox(height: 4),
         Text(
-          '${_formatCount(total)} ${total == 1 ? 'place' : 'places'} in '
-          '$layers ${layers == 1 ? 'layer' : 'layers'}',
+          '${_formatCount(total)} ${pluralWord(total, 'place')} in '
+          '${plural(layers, 'layer')}',
           style: TextStyle(color: c.onSurfaceVariant.withValues(alpha: 0.7)),
         ),
         const SizedBox(height: 8),

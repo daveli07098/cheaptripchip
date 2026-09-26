@@ -12,6 +12,11 @@ class AppTheme {
   static const Color coral = Color(0xFFFF5A6E);
   static const Color coralDeep = Color(0xFFE63E55);
 
+  /// Amber/gold for ratings and awards — the score stars/badge and the
+  /// detail sheet's award pill. Reads clearly on both the dark and light
+  /// scaffold backgrounds.
+  static const Color scoreGold = Color(0xFFFFC857);
+
   static const Color ink = Color(0xFF15171C);
   static const Color surface = Color(0xFF1E2127);
   static const Color surfaceAlt = Color(0xFF272B33);
