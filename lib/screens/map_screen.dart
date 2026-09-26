@@ -1,9 +1,11 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/map_filter.dart';
 import '../data/mock_data.dart';
 import '../data/place_search.dart';
 import '../data/place_store.dart';
@@ -38,7 +40,8 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen>
+    with SingleTickerProviderStateMixin {
   final _mapController = MapController();
 
   /// Drives (and lets us read `.size` from) the persistent list sheet's
@@ -50,7 +53,7 @@ class _MapScreenState extends State<MapScreen> {
   /// Opens the category drawer from the search bar's leading ☰ button.
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  /// Backs the search pill's [TextField]; read directly in [_visible] rather
+  /// Backs the search pill's [TextField]; read directly in [_filter] rather
   /// than mirrored into a separate `_query` field.
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
@@ -73,12 +76,18 @@ class _MapScreenState extends State<MapScreen> {
   String? _selectedArea;
 
   /// The place currently highlighted on both the map (max z-order + scale)
-  /// and the list (scrolled into view + tinted row).
-  String? _selectedPlaceId;
+  /// and the list (scrolled into view + tinted row). A notifier rather than
+  /// `setState` state: a pin tap then rebuilds only the marker layer, the
+  /// built list rows and the preview card — not the whole screen.
+  final _selectedPlaceId = ValueNotifier<String?>(null);
 
   /// Whether the floating [PlacePreviewCard] is shown for [_selectedPlaceId].
   /// Only pin taps raise it; list selection and empty-map taps clear it.
-  bool _previewVisible = false;
+  final _previewVisible = ValueNotifier<bool>(false);
+
+  /// Memoizes the filtered list and drawer counts, so rebuilds that don't
+  /// change the places or the filter do no per-place work.
+  final _filterCache = MapFilterCache();
 
   /// Whether the camera has been fitted to real places yet. Guest places
   /// load from disk after the first frame, so the map can start empty and
@@ -88,76 +97,46 @@ class _MapScreenState extends State<MapScreen> {
   /// Set once FlutterMap has laid out; before that the controller can't move.
   bool _mapReady = false;
 
-  /// Category filter AND free-text search (via [placeMatches]) — search
-  /// terms are matched across name/area/region/address/description/notes/
-  /// category labels/source handle, so it also narrows results within a
-  /// category.
-  List<Place> _visible(List<Place> all) {
-    final query = _searchController.text;
-    return all.where((p) {
-      if (_selected != null && p.category != _selected) return false;
-      if (_selected == PlaceCategory.restaurant &&
-          _selectedType != null &&
-          p.effectiveRestaurantType != _selectedType) {
-        return false;
-      }
-      if (_selectedCity != null && p.city != _selectedCity) return false;
-      if (_selectedArea != null && p.district != _selectedArea) return false;
-      return placeMatches(p, query);
-    }).toList();
-  }
+  /// Built once: [FlutterMap] pushes a new options object into its
+  /// controller whenever `options != oldWidget.options`, and a fresh
+  /// [MapOptions] (new closures, new fit) never compares equal — so every
+  /// filter change or keystroke used to re-notify every map layer.
+  MapOptions? _mapOptions;
 
-  Map<PlaceCategory, int> _counts(List<Place> all) {
-    final map = <PlaceCategory, int>{};
-    for (final p in all) {
-      map[p.category] = (map[p.category] ?? 0) + 1;
-    }
-    return map;
-  }
+  /// Cached per brightness so screen rebuilds hand FlutterMap the identical
+  /// widget (no tile-layer update, no throwaway [NetworkTileProvider]).
+  TileLayer? _tileLayer;
+  Brightness? _tileLayerBrightness;
 
-  /// Restaurant sub-type counts over ALL places (same "not narrowed by
-  /// search" choice as [_counts]) — drives both the drawer's expandable rows
-  /// and the active-category chip's count when a sub-type is selected. Uses
-  /// [Place.effectiveRestaurantType] so an unset type still counts under its
-  /// keyword-detected guess (or "Other"), consistently with the filter in
-  /// [_visible].
-  Map<RestaurantType, int> _restaurantTypeCounts(List<Place> all) {
-    final map = <RestaurantType, int>{};
-    for (final p in all) {
-      final type = p.effectiveRestaurantType;
-      if (type == null) continue;
-      map[type] = (map[type] ?? 0) + 1;
-    }
-    return map;
-  }
+  /// A drawer pick waiting for the drawer to close before the camera flies
+  /// to its results (true = always fit, e.g. an area).
+  bool? _pendingFilterFit;
 
-  /// City → district counts over ALL places (same "not narrowed by
-  /// category or search" choice as [_counts]), cities by count desc then
-  /// name. Places without a city are counted in [_AreaIndex.unknownCount].
-  _AreaIndex _areaIndex(List<Place> all) {
-    final byCity = <String, _CityGroup>{};
-    var unknown = 0;
-    for (final p in all) {
-      final city = p.city;
-      if (city.isEmpty) {
-        unknown++;
-        continue;
-      }
-      final group = byCity.putIfAbsent(city, () => _CityGroup(city));
-      group.count++;
-      if (group.countryCode.isEmpty) group.countryCode = p.countryCode;
-      final district = p.district;
-      if (district.isNotEmpty) {
-        group.districts[district] = (group.districts[district] ?? 0) + 1;
-      }
-    }
-    final cities = byCity.values.toList()
-      ..sort((a, b) {
-        final byCount = b.count.compareTo(a.count);
-        return byCount != 0 ? byCount : a.city.compareTo(b.city);
-      });
-    return _AreaIndex(cities: cities, unknownCount: unknown);
-  }
+  // Camera fly animation (flutter_map 8 has no public animated move): the
+  // controller ticks [_onCameraTick], which interpolates from/to below.
+  late final AnimationController _cameraAnimation;
+  LatLng _flyFromCenter = const LatLng(0, 0);
+  LatLng _flyToCenter = const LatLng(0, 0);
+  double _flyFromZoom = 0;
+  double _flyToZoom = 0;
+  double _flyZoomDip = 0;
+  Offset _flyOffset = Offset.zero;
+  Curve _flyCurve = Curves.easeOutCubic;
+
+  /// Category filter AND area filter AND free-text search (via
+  /// [placeMatches]) — search terms are matched across name/area/region/
+  /// address/description/notes/category labels/source handle, so it also
+  /// narrows results within a category.
+  MapFilter get _filter => MapFilter(
+    category: _selected,
+    restaurantType: _selectedType,
+    city: _selectedCity,
+    district: _selectedArea,
+    query: _searchController.text,
+  );
+
+  List<Place> _visibleNow() =>
+      _filterCache.visibleFor(PlaceStore.instance.places.value, _filter);
 
   /// How many logical pixels of screen height the list sheet currently
   /// covers, used to keep map moves from landing a pin underneath it.
@@ -174,10 +153,8 @@ class _MapScreenState extends State<MapScreen> {
   /// Deliberately does NOT move the map — re-centering under an active
   /// pan/tap is a documented anti-pattern that fights the user.
   void _selectFromPin(Place place) {
-    setState(() {
-      _selectedPlaceId = place.id;
-      _previewVisible = true;
-    });
+    _selectedPlaceId.value = place.id;
+    _previewVisible.value = true;
     _listSheetController.scrollToPlace(place.id);
     if (_sheetExtentController.isAttached &&
         _sheetExtentController.size > kSheetHalf + 0.01) {
@@ -191,27 +168,21 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Empty map tapped: drop search focus (matching Google Maps) and dismiss
   /// the preview card along with the pin highlight.
-  void _onMapTap() {
+  void _onMapTap(TapPosition _, LatLng _) {
     _searchFocusNode.unfocus();
-    if (_previewVisible || _selectedPlaceId != null) {
-      setState(() {
-        _previewVisible = false;
-        _selectedPlaceId = null;
-      });
-    }
+    _previewVisible.value = false;
+    _selectedPlaceId.value = null;
   }
 
-  /// Row tapped in the list sheet: highlight + pan/zoom the map to it,
+  /// Row tapped in the list sheet: highlight + fly the map to it,
   /// offsetting the target upward so it lands above the sheet rather than
   /// underneath it.
   void _selectFromList(BuildContext context, Place place) {
-    setState(() {
-      _selectedPlaceId = place.id;
-      // The list already shows this place — no floating card on top of it.
-      _previewVisible = false;
-    });
+    _selectedPlaceId.value = place.id;
+    // The list already shows this place — no floating card on top of it.
+    _previewVisible.value = false;
     final targetZoom = math.max(_mapController.camera.zoom, 15.0);
-    _mapController.move(
+    _flyTo(
       place.location,
       targetZoom,
       // MapController.move's `offset` places `center` at
@@ -224,10 +195,11 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Cluster tapped: zoom the camera to fit every place in that cluster,
   /// padding the bottom by the sheet's current height so the fit result
-  /// isn't computed as if that space were still available.
-  void _focusCluster(BuildContext context, PlaceCluster cluster) {
+  /// isn't computed as if that space were still available. A method (not a
+  /// per-build closure) so the marker layer's cached markers stay valid.
+  void _focusCluster(PlaceCluster cluster) {
     final fit = _fitFor(context, cluster.places);
-    if (fit != null) _mapController.fitCamera(fit);
+    if (fit != null) _flyToFit(fit);
   }
 
   /// Keyboard "search" action: unfocus and, like [_focusCluster], fit the
@@ -243,7 +215,34 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
     final fit = _fitFor(context, matches);
-    if (fit != null) _mapController.fitCamera(fit);
+    if (fit != null) _flyToFit(fit);
+  }
+
+  /// Applies a drawer pick, then — as the drawer starts closing (Scaffold's
+  /// `onDrawerChanged(false)`), so the flight plays out as the map is
+  /// revealed — flies the camera to the new results. [always] for
+  /// area picks (the user asked for a place on the map); category picks only
+  /// move when none of their results are on screen, so a filter never
+  /// yanks the user away from where they were looking for no reason.
+  void _applyDrawerFilter(VoidCallback change, {required bool always}) {
+    setState(change);
+    _pendingFilterFit = always;
+    Navigator.of(context).pop();
+  }
+
+  void _onDrawerChanged(bool open) {
+    final always = _pendingFilterFit;
+    if (open || always == null) return;
+    _pendingFilterFit = null;
+    if (!mounted || !_mapReady) return;
+    final visible = _visibleNow();
+    if (visible.isEmpty) return;
+    if (!always) {
+      final bounds = _mapController.camera.visibleBounds;
+      if (visible.any((p) => bounds.contains(p.location))) return;
+    }
+    final fit = _fitFor(context, visible);
+    if (fit != null) _flyToFit(fit);
   }
 
   /// A camera fit for [points], or null when there's nothing valid to fit.
@@ -252,7 +251,7 @@ class _MapScreenState extends State<MapScreen> {
   CameraFit? _fitFor(BuildContext context, Iterable<Place> places) {
     final points = [
       for (final p in places)
-        if (_isFinite(p)) p.location,
+        if (isFinitePlace(p)) p.location,
     ];
     if (points.isEmpty) return null;
     final padding = EdgeInsets.fromLTRB(48, 96, 48, 48 + _sheetPixels(context));
@@ -275,14 +274,127 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  static bool _isFinite(Place p) =>
-      p.location.latitude.isFinite && p.location.longitude.isFinite;
+  /// Resolves [fit] against the current camera and flies there.
+  void _flyToFit(CameraFit fit) {
+    if (!_mapReady) {
+      _mapController.fitCamera(fit);
+      return;
+    }
+    final target = fit.fit(_mapController.camera);
+    if (!target.center.latitude.isFinite || !target.zoom.isFinite) return;
+    _flyTo(target.center, target.zoom);
+  }
+
+  /// Short eased camera move instead of an instant jump, so the user can
+  /// follow where the map went. Far targets (more than a screen away) dip
+  /// the zoom mid-flight, Google-Maps style, instead of smearing tiles past
+  /// at full zoom. A new call or a finger on the map cancels the flight.
+  void _flyTo(LatLng center, double zoom, {Offset offset = Offset.zero}) {
+    if (!_mapReady) {
+      _mapController.move(center, zoom, offset: offset);
+      return;
+    }
+    final camera = _mapController.camera;
+    final lowZoom = math.min(camera.zoom, zoom);
+    final distance =
+        (camera.projectAtZoom(center, lowZoom) -
+                camera.projectAtZoom(camera.center, lowZoom))
+            .distance;
+    final span = camera.size.longestSide;
+    final dip = span > 0 && distance > span
+        ? math.min(4.0, math.log(distance / span) / math.ln2)
+        : 0.0;
+
+    _flyFromCenter = camera.center;
+    _flyFromZoom = camera.zoom;
+    _flyToCenter = center;
+    _flyToZoom = zoom;
+    _flyZoomDip = dip;
+    _flyOffset = offset;
+    _flyCurve = dip > 0 ? Curves.easeInOutCubic : Curves.easeOutCubic;
+    _cameraAnimation.duration = Duration(milliseconds: dip > 0 ? 650 : 350);
+    _cameraAnimation.forward(from: 0);
+  }
+
+  void _onCameraTick() {
+    final t = _flyCurve.transform(_cameraAnimation.value);
+    final lat =
+        _flyFromCenter.latitude +
+        (_flyToCenter.latitude - _flyFromCenter.latitude) * t;
+    final lng =
+        _flyFromCenter.longitude +
+        (_flyToCenter.longitude - _flyFromCenter.longitude) * t;
+    final zoom =
+        _flyFromZoom +
+        (_flyToZoom - _flyFromZoom) * t -
+        _flyZoomDip * math.sin(math.pi * t);
+    _mapController.move(
+      LatLng(lat, lng),
+      zoom.clamp(_minZoom, _maxZoom),
+      offset: _flyOffset * t,
+    );
+  }
+
+  void _stopFlight(PointerDownEvent _, LatLng _) => _cameraAnimation.stop();
+
+  static const double _minZoom = 3;
+  static const double _maxZoom = 18;
+
+  MapOptions _buildMapOptions(CameraFit? initialFit) => MapOptions(
+    // Fit every place on first load rather than a fixed
+    // center/zoom: a hardcoded zoom happened to clip the
+    // Hoshinoya (Stay) pin, the easternmost place, right at the
+    // viewport edge — there was no bounds-fitting logic here at
+    // all, unlike `_focusCluster`/`_selectFromList` above, which
+    // both already fit-to-content. `CameraFit.coordinates` is
+    // resolved against the map's actual layout size, so — like
+    // those two — it's computed with the sheet's current height
+    // padded out from the bottom so no pin lands underneath it.
+    initialCameraFit: initialFit,
+    // Used only when there are no places yet (initialFit null).
+    initialCenter: MockData.tokyoCenter,
+    initialZoom: 11,
+    onMapReady: () => _mapReady = true,
+    minZoom: _minZoom,
+    maxZoom: _maxZoom,
+    // Tapping the map (not a pin/cluster) drops keyboard focus
+    // from the search field and dismisses the preview card,
+    // matching Google Maps.
+    onTap: _onMapTap,
+    // The user grabbing the map wins over an in-flight camera move.
+    onPointerDown: _stopFlight,
+  );
+
+  TileLayer _tileLayerFor(Brightness brightness) {
+    final cached = _tileLayer;
+    if (cached != null && _tileLayerBrightness == brightness) return cached;
+    _tileLayerBrightness = brightness;
+    return _tileLayer = TileLayer(
+      // OSM raster tiles — see AppTheme.mapTileUrl doc comment
+      // re: usage-policy limits and swapping in a keyed provider.
+      urlTemplate: AppTheme.mapTileUrl,
+      userAgentPackageName: 'com.cheaptripchip.app',
+      // OSM has no dark-tile variant, so dark mode is simulated
+      // by inverting/hue-rotating the same tiles.
+      tileBuilder: brightness == Brightness.dark ? darkModeTileBuilder : null,
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _cameraAnimation = AnimationController(vsync: this)
+      ..addListener(_onCameraTick);
+  }
 
   @override
   void dispose() {
+    _cameraAnimation.dispose();
     _sheetExtentController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _selectedPlaceId.dispose();
+    _previewVisible.dispose();
     super.dispose();
   }
 
@@ -291,11 +403,15 @@ class _MapScreenState extends State<MapScreen> {
     return ValueListenableBuilder<List<Place>>(
       valueListenable: PlaceStore.instance.places,
       builder: (context, loaded, _) {
-        // Drop places with non-finite coordinates: one NaN pin would crash
-        // the map's camera and tile layer.
-        final all = loaded.where(_isFinite).toList();
-        final visible = _visible(all);
-        final initialFit = _fitFor(context, all);
+        // Memoized: unchanged places + filter → the same instances, no
+        // per-place work (see MapFilterCache).
+        final index = _filterCache.indexFor(loaded);
+        final all = index.all;
+        final visible = _filterCache.visibleFor(loaded, _filter);
+        // Only needed until the first fit (and for the one-time options).
+        final initialFit = !_fittedToPlaces || _mapOptions == null
+            ? _fitFor(context, all)
+            : null;
         if (!_fittedToPlaces && initialFit != null) {
           // First frame with places: if the map started empty (places were
           // still loading), fit once now that they're here.
@@ -307,26 +423,24 @@ class _MapScreenState extends State<MapScreen> {
             });
           }
         }
+        final mapOptions = _mapOptions ??= _buildMapOptions(initialFit);
         final brightness = Theme.of(context).brightness;
-        final counts = _counts(all);
-        final typeCounts = _restaurantTypeCounts(all);
-        final areas = _areaIndex(all);
+        final counts = index.counts;
+        final typeCounts = index.restaurantTypeCounts;
+        final areas = index.areas;
 
         // If a search/category change dropped the selected pin out of
         // `visible`, clear it — deferred to a post-frame callback since
-        // `all`/`visible` are only known mid-build, and mutating state
-        // directly here would call setState during build. Re-checks
+        // `all`/`visible` are only known mid-build, and mutating the
+        // notifiers here would rebuild listeners during build. Re-checks
         // `_selectedPlaceId` still equals the id that dropped out before
         // clearing, in case more changes landed before the frame runs.
-        if (_selectedPlaceId != null &&
-            !visible.any((p) => p.id == _selectedPlaceId)) {
-          final droppedId = _selectedPlaceId;
+        final selectedId = _selectedPlaceId.value;
+        if (selectedId != null && !visible.any((p) => p.id == selectedId)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _selectedPlaceId == droppedId) {
-              setState(() {
-                _selectedPlaceId = null;
-                _previewVisible = false;
-              });
+            if (mounted && _selectedPlaceId.value == selectedId) {
+              _selectedPlaceId.value = null;
+              _previewVisible.value = false;
             }
           });
         }
@@ -342,88 +456,47 @@ class _MapScreenState extends State<MapScreen> {
           // Edge-swipe would fight map panning and Android's back gesture;
           // the drawer opens from the filter button only.
           drawerEnableOpenDragGesture: false,
+          onDrawerChanged: _onDrawerChanged,
           drawer: _CategoryDrawer(
             counts: counts,
             total: all.length,
             selected: _selected,
             restaurantTypeCounts: typeCounts,
             selectedType: _selectedType,
-            onSelect: (c) {
-              setState(() {
-                _selected = c;
-                _selectedType = null;
-              });
-              Navigator.of(context).pop();
-            },
-            onSelectType: (t) {
-              setState(() {
-                _selected = PlaceCategory.restaurant;
-                _selectedType = t;
-              });
-              Navigator.of(context).pop();
-            },
+            onSelect: (c) => _applyDrawerFilter(() {
+              _selected = c;
+              _selectedType = null;
+            }, always: false),
+            onSelectType: (t) => _applyDrawerFilter(() {
+              _selected = PlaceCategory.restaurant;
+              _selectedType = t;
+            }, always: false),
             areas: areas,
             selectedCity: _selectedCity,
             selectedArea: _selectedArea,
-            onSelectArea: (city, district) {
-              setState(() {
-                _selectedCity = city;
-                _selectedArea = district;
-              });
-              Navigator.of(context).pop();
-            },
+            onSelectArea: (city, district) => _applyDrawerFilter(() {
+              _selectedCity = city;
+              _selectedArea = district;
+            }, always: city != null),
           ),
           body: Stack(
             children: [
               FlutterMap(
                 mapController: _mapController,
-                options: MapOptions(
-                  // Fit every place on first load rather than a fixed
-                  // center/zoom: a hardcoded zoom happened to clip the
-                  // Hoshinoya (Stay) pin, the easternmost place, right at the
-                  // viewport edge — there was no bounds-fitting logic here at
-                  // all, unlike `_focusCluster`/`_selectFromList` below, which
-                  // both already fit-to-content. `CameraFit.coordinates` is
-                  // resolved against the map's actual layout size, so — like
-                  // those two — it's computed with the sheet's current height
-                  // padded out from the bottom so no pin lands underneath it.
-                  initialCameraFit: initialFit,
-                  // Used only when there are no places yet (initialFit null).
-                  initialCenter: MockData.tokyoCenter,
-                  initialZoom: 11,
-                  onMapReady: () => _mapReady = true,
-                  minZoom: 3,
-                  maxZoom: 18,
-                  // Tapping the map (not a pin/cluster) drops keyboard focus
-                  // from the search field and dismisses the preview card,
-                  // matching Google Maps.
-                  onTap: (_, _) => _onMapTap(),
-                ),
+                options: mapOptions,
                 children: [
-                  TileLayer(
-                    // OSM raster tiles — see AppTheme.mapTileUrl doc comment
-                    // re: usage-policy limits and swapping in a keyed provider.
-                    urlTemplate: AppTheme.mapTileUrl,
-                    userAgentPackageName: 'com.cheaptripchip.app',
-                    // OSM has no dark-tile variant, so dark mode is simulated
-                    // by inverting/hue-rotating the same tiles.
-                    tileBuilder: brightness == Brightness.dark
-                        ? darkModeTileBuilder
-                        : null,
-                  ),
+                  _tileLayerFor(brightness),
                   _ClusterMarkerLayer(
                     places: visible,
                     selectedId: _selectedPlaceId,
                     brightness: brightness,
                     onTapPlace: _selectFromPin,
-                    onTapCluster: (cluster) => _focusCluster(context, cluster),
+                    onTapCluster: _focusCluster,
                   ),
                   _AttributionBar(
                     sheetExtentController: _sheetExtentController,
                     // Lifted above the preview card while it's shown.
-                    extraBottom: _previewVisible
-                        ? kPlacePreviewCardApproxHeight + 12
-                        : 0,
+                    previewVisible: _previewVisible,
                   ),
                 ],
               ),
@@ -438,7 +511,9 @@ class _MapScreenState extends State<MapScreen> {
                           _scaffoldKey.currentState?.openDrawer(),
                       // The controller already holds the latest text by the
                       // time this fires — just triggers a rebuild so
-                      // `_visible`/the clear button re-read it.
+                      // `_filter`/the clear button re-read it. Cheap per
+                      // keystroke: only the filter pass re-runs (the drawer
+                      // counts are memoized), so no debounce is needed.
                       onChanged: (_) => setState(() {}),
                       onSubmitted: (_) => _submitSearch(context, visible),
                       onClear: () {
@@ -461,8 +536,9 @@ class _MapScreenState extends State<MapScreen> {
                                   type: _selectedType,
                                   // Same "counts are over ALL places, not
                                   // the search results" choice as the
-                                  // drawer (see `_counts`) — keeps the
-                                  // number stable while the user types.
+                                  // drawer (see `MapPlaceIndex.counts`) —
+                                  // keeps the number stable while the user
+                                  // types.
                                   count: _selectedType != null
                                       ? (typeCounts[_selectedType] ?? 0)
                                       : (counts[_selected] ?? 0),
@@ -506,9 +582,9 @@ class _MapScreenState extends State<MapScreen> {
               ),
               _PreviewCardLayer(
                 sheetExtentController: _sheetExtentController,
-                place: _previewVisible
-                    ? visible.where((p) => p.id == _selectedPlaceId).firstOrNull
-                    : null,
+                places: visible,
+                selectedId: _selectedPlaceId,
+                previewVisible: _previewVisible,
                 onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
               ),
             ],
@@ -522,11 +598,15 @@ class _MapScreenState extends State<MapScreen> {
 /// Renders [places] as pins, grid-clustering them per [clusterPlaces].
 ///
 /// Reading `MapCamera.of(context)` here (rather than in `_MapScreenState`)
-/// is what makes clustering recompute automatically on every pan/zoom/
-/// rotate: this widget is a child of [FlutterMap], so that read registers a
-/// dependency on flutter_map's `MapInheritedModel` and triggers a rebuild of
-/// just this layer whenever the camera changes.
-class _ClusterMarkerLayer extends StatelessWidget {
+/// is what keeps clustering in sync with pan/zoom/rotate: this widget is a
+/// child of [FlutterMap], so that read registers a dependency on
+/// flutter_map's `MapInheritedModel` and triggers a rebuild of just this
+/// layer whenever the camera changes. That rebuild runs every frame of a
+/// gesture or fly animation, so it does no per-place work when nothing
+/// changed: clusters are memoized per zoom bucket ([PlaceClusterCache]) and
+/// the [Marker] list per (clusters, selection) — identical child widgets
+/// let Flutter skip rebuilding every pin.
+class _ClusterMarkerLayer extends StatefulWidget {
   const _ClusterMarkerLayer({
     required this.places,
     required this.selectedId,
@@ -536,59 +616,131 @@ class _ClusterMarkerLayer extends StatelessWidget {
   });
 
   final List<Place> places;
-  final String? selectedId;
+  final ValueListenable<String?> selectedId;
   final Brightness brightness;
   final ValueChanged<Place> onTapPlace;
   final ValueChanged<PlaceCluster> onTapCluster;
 
   @override
-  Widget build(BuildContext context) {
-    final camera = MapCamera.of(context);
-    final clusters = clusterPlaces(places: places, camera: camera);
+  State<_ClusterMarkerLayer> createState() => _ClusterMarkerLayerState();
+}
 
-    // Split out the selected (unclustered) pin so it can be appended last —
-    // MarkerLayer draws later entries on top, giving the selected pin max
-    // z-order so neighbours never occlude it.
-    final unselected = <PlaceCluster>[];
-    PlaceCluster? selectedCluster;
-    for (final cluster in clusters) {
-      if (cluster.isSingle && cluster.places.first.id == selectedId) {
-        selectedCluster = cluster;
-      } else {
-        unselected.add(cluster);
-      }
-    }
-    final ordered = [...unselected, ?selectedCluster];
+class _ClusterMarkerLayerState extends State<_ClusterMarkerLayer> {
+  final _clusterCache = PlaceClusterCache();
 
-    return MarkerLayer(
-      markers: [
-        for (final cluster in ordered)
+  // Unselected markers, one per cluster, rebuilt only when the clusters or
+  // their inputs change.
+  List<PlaceCluster>? _baseClusters;
+  Brightness? _baseBrightness;
+  ValueChanged<Place>? _baseOnTapPlace;
+  ValueChanged<PlaceCluster>? _baseOnTapCluster;
+  bool? _baseKeyed;
+  List<Marker> _baseMarkers = const [];
+
+  // The final z-ordered list for one selection.
+  List<Marker>? _orderedFor;
+  String? _orderedSelectedId;
+  List<Marker> _ordered = const [];
+
+  Marker _pinMarker(
+    Place place, {
+    required bool selected,
+    required bool keyed,
+  }) {
+    return Marker(
+      // Keys let the Stack match pins across frames, so markers culled at
+      // the viewport edge or the selected pin moving to the end don't shift
+      // (and rebuild/reinflate) every other pin — and AnimatedScale keeps
+      // its state, so the selection grow actually animates.
+      key: keyed ? ValueKey('pin:${place.id}') : null,
+      point: place.location,
+      width: 48,
+      height: 48,
+      alignment: Alignment.topCenter,
+      child: MapPin(
+        place: place,
+        selected: selected,
+        brightness: widget.brightness,
+        onTap: () => widget.onTapPlace(place),
+      ),
+    );
+  }
+
+  List<Marker> _markersFor(
+    List<PlaceCluster> clusters,
+    String? selectedId, {
+    required bool keyed,
+  }) {
+    if (!identical(clusters, _baseClusters) ||
+        widget.brightness != _baseBrightness ||
+        widget.onTapPlace != _baseOnTapPlace ||
+        widget.onTapCluster != _baseOnTapCluster ||
+        keyed != _baseKeyed) {
+      _baseClusters = clusters;
+      _baseBrightness = widget.brightness;
+      _baseOnTapPlace = widget.onTapPlace;
+      _baseOnTapCluster = widget.onTapCluster;
+      _baseKeyed = keyed;
+      _orderedFor = null;
+      _baseMarkers = [
+        for (final cluster in clusters)
           if (cluster.isSingle)
-            Marker(
-              point: cluster.places.first.location,
-              width: 48,
-              height: 48,
-              alignment: Alignment.topCenter,
-              child: MapPin(
-                place: cluster.places.first,
-                selected: cluster.places.first.id == selectedId,
-                brightness: brightness,
-                onTap: () => onTapPlace(cluster.places.first),
-              ),
-            )
+            _pinMarker(cluster.places.first, selected: false, keyed: keyed)
           else
             Marker(
+              key: keyed ? ValueKey('cluster:${cluster.cellKey}') : null,
               point: cluster.center,
               width: 48,
               height: 48,
               alignment: Alignment.center,
               child: ClusterPin(
                 cluster: cluster,
-                brightness: brightness,
-                onTap: () => onTapCluster(cluster),
+                brightness: widget.brightness,
+                onTap: () => widget.onTapCluster(cluster),
               ),
             ),
-      ],
+      ];
+    }
+    if (identical(_orderedFor, _baseMarkers) &&
+        selectedId == _orderedSelectedId) {
+      return _ordered;
+    }
+    _orderedFor = _baseMarkers;
+    _orderedSelectedId = selectedId;
+
+    // Move the selected (unclustered) pin to the end — MarkerLayer draws
+    // later entries on top, giving the selected pin max z-order so
+    // neighbours never occlude it.
+    final selectedIndex = selectedId == null
+        ? -1
+        : clusters.indexWhere(
+            (c) => c.isSingle && c.places.first.id == selectedId,
+          );
+    if (selectedIndex < 0) return _ordered = _baseMarkers;
+    return _ordered = [
+      for (var i = 0; i < _baseMarkers.length; i++)
+        if (i != selectedIndex) _baseMarkers[i],
+      _pinMarker(
+        clusters[selectedIndex].places.first,
+        selected: true,
+        keyed: keyed,
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = MapCamera.of(context);
+    final clusters = _clusterCache.clustersFor(widget.places, camera);
+    // MarkerLayer repeats a marker once per visible world copy; that only
+    // happens when the viewport (plus a marker's width) is wider than the
+    // world, and those copies would share a key — so fall back to unkeyed
+    // markers then. Never the case on phones (minZoom 3 = 2048px world).
+    final keyed = camera.size.width + 48 < camera.getWorldWidthAtZoom();
+    return ValueListenableBuilder<String?>(
+      valueListenable: widget.selectedId,
+      builder: (context, selectedId, _) =>
+          MarkerLayer(markers: _markersFor(clusters, selectedId, keyed: keyed)),
     );
   }
 }
@@ -827,47 +979,6 @@ class _AreaLeading extends StatelessWidget {
   }
 }
 
-/// One city in the drawer's Areas section (see `_areaIndex`).
-class _CityGroup {
-  _CityGroup(this.city);
-
-  final String city;
-  String countryCode = '';
-  int count = 0;
-  final Map<String, int> districts = {};
-
-  /// Districts by count desc, then name.
-  List<MapEntry<String, int>> get sortedDistricts =>
-      districts.entries.toList()..sort((a, b) {
-        final byCount = b.value.compareTo(a.value);
-        return byCount != 0 ? byCount : a.key.compareTo(b.key);
-      });
-}
-
-class _AreaIndex {
-  const _AreaIndex({required this.cities, required this.unknownCount});
-
-  final List<_CityGroup> cities;
-  final int unknownCount;
-
-  _CityGroup? _group(String city) {
-    for (final group in cities) {
-      if (group.city == city) return group;
-    }
-    return null;
-  }
-
-  String countryCodeOf(String city) => _group(city)?.countryCode ?? '';
-
-  /// Places in [city] (and [district], when given); "" = Unknown area.
-  int countOf(String city, String? district) {
-    if (city.isEmpty) return unknownCount;
-    final group = _group(city);
-    if (group == null) return 0;
-    return district == null ? group.count : (group.districts[district] ?? 0);
-  }
-}
-
 /// "1,650" — thousands separators without pulling in package:intl.
 String _formatCount(int n) {
   final digits = '$n';
@@ -905,7 +1016,7 @@ class _CategoryDrawer extends StatelessWidget {
   final Map<RestaurantType, int> restaurantTypeCounts;
   final RestaurantType? selectedType;
   final ValueChanged<RestaurantType> onSelectType;
-  final _AreaIndex areas;
+  final AreaIndex areas;
   final String? selectedCity;
   final String? selectedArea;
 
@@ -1244,7 +1355,7 @@ class _CityTile extends StatefulWidget {
     required this.onSelectDistrict,
   });
 
-  final _CityGroup group;
+  final CityGroup group;
   final bool selected;
   final String? selectedDistrict;
   final VoidCallback onSelectCity;
@@ -1350,20 +1461,38 @@ class _CityTileState extends State<_CityTile> {
   }
 }
 
-/// Floats [PlacePreviewCard] for [place] (null = hidden) just above the list
-/// sheet's current top edge, tracking the sheet continuously like
-/// [_AttributionBar]. Full width minus 12dp margins. Fades + slides in, and
-/// cross-fades when another pin is tapped (keyed by place id).
+/// Floats [PlacePreviewCard] for the selected place (when [previewVisible])
+/// just above the list sheet's current top edge, tracking the sheet
+/// continuously like [_AttributionBar]. Full width minus 12dp margins. Fades
+/// + slides in, and cross-fades when another pin is tapped (keyed by place
+/// id). Listens to the selection itself, so a pin tap rebuilds just this
+/// card rather than the map screen.
 class _PreviewCardLayer extends StatelessWidget {
   const _PreviewCardLayer({
     required this.sheetExtentController,
-    required this.place,
+    required this.places,
+    required this.selectedId,
+    required this.previewVisible,
     required this.onOpenDetail,
   });
 
   final DraggableScrollableController sheetExtentController;
-  final Place? place;
+
+  /// The currently visible places; the card shows the selected one's
+  /// latest data, and hides if it's filtered out.
+  final List<Place> places;
+  final ValueListenable<String?> selectedId;
+  final ValueListenable<bool> previewVisible;
   final ValueChanged<Place> onOpenDetail;
+
+  Place? _previewPlace() {
+    final id = selectedId.value;
+    if (!previewVisible.value || id == null) return null;
+    for (final p in places) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1381,33 +1510,39 @@ class _PreviewCardLayer extends StatelessWidget {
           child: child!,
         );
       },
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        transitionBuilder: (child, animation) => FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.15),
-              end: Offset.zero,
-            ).animate(animation),
-            child: child,
-          ),
-        ),
-        // Bottom-anchored so a taller/shorter incoming card grows upward
-        // from the sheet edge rather than jumping.
-        layoutBuilder: (current, previous) => Stack(
-          alignment: Alignment.bottomCenter,
-          children: [...previous, ?current],
-        ),
-        child: place == null
-            ? const SizedBox.shrink(key: ValueKey('no-preview'))
-            : PlacePreviewCard(
-                key: ValueKey(place!.id),
-                place: place!,
-                onOpenDetails: () => onOpenDetail(place!),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([selectedId, previewVisible]),
+        builder: (context, _) {
+          final place = _previewPlace();
+          return AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.15),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
               ),
+            ),
+            // Bottom-anchored so a taller/shorter incoming card grows upward
+            // from the sheet edge rather than jumping.
+            layoutBuilder: (current, previous) => Stack(
+              alignment: Alignment.bottomCenter,
+              children: [...previous, ?current],
+            ),
+            child: place == null
+                ? const SizedBox.shrink(key: ValueKey('no-preview'))
+                : PlacePreviewCard(
+                    key: ValueKey(place.id),
+                    place: place,
+                    onOpenDetails: () => onOpenDetail(place),
+                  ),
+          );
+        },
       ),
     );
   }
@@ -1416,27 +1551,30 @@ class _PreviewCardLayer extends StatelessWidget {
 class _AttributionBar extends StatelessWidget {
   const _AttributionBar({
     required this.sheetExtentController,
-    this.extraBottom = 0,
+    required this.previewVisible,
   });
 
   /// Tracked so the bar can float just above the persistent list sheet's
   /// current top edge instead of sitting permanently underneath it.
   final DraggableScrollableController sheetExtentController;
 
-  /// Additional lift, e.g. to clear the floating preview card.
-  final double extraBottom;
+  /// While true the bar lifts to clear the floating preview card.
+  final ValueListenable<bool> previewVisible;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       // Rebuilds on every drag of the sheet, not just on settle, so the bar
       // tracks it continuously rather than jumping at the end.
-      animation: sheetExtentController,
+      animation: Listenable.merge([sheetExtentController, previewVisible]),
       builder: (context, _) {
         final fraction = sheetExtentController.isAttached
             ? sheetExtentController.size
             : kSheetPeek;
         final sheetPixels = MediaQuery.of(context).size.height * fraction;
+        final extraBottom = previewVisible.value
+            ? kPlacePreviewCardApproxHeight + 12
+            : 0.0;
         return Positioned(
           right: 8,
           bottom: sheetPixels + 8 + extraBottom,

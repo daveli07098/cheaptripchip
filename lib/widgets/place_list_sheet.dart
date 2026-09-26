@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/place.dart';
@@ -47,7 +48,9 @@ class PlaceListSheetController {
 /// Tapping a row calls [onSelectPlace] (the map pans/zooms to that place);
 /// tapping a row's chevron calls [onOpenDetail] (opens the full
 /// [PlaceDetailSheet]). Selection highlighting is driven by [selectedId],
-/// which [MapScreen] also sets when a map pin is tapped.
+/// which [MapScreen] also sets when a map pin is tapped. It is a
+/// [ValueListenable] so a selection change rebuilds only the built rows,
+/// not the sheet (or the whole map screen).
 class PlaceListSheet extends StatefulWidget {
   const PlaceListSheet({
     super.key,
@@ -63,7 +66,7 @@ class PlaceListSheet extends StatefulWidget {
 
   final List<Place> places;
   final int total;
-  final String? selectedId;
+  final ValueListenable<String?> selectedId;
   final ValueChanged<Place> onSelectPlace;
   final ValueChanged<Place> onOpenDetail;
 
@@ -250,12 +253,15 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
                     itemCount: widget.places.length,
                     itemBuilder: (context, i) {
                       final place = widget.places[i];
-                      return _PlaceRow(
+                      return ValueListenableBuilder<String?>(
                         key: _keyFor(place.id),
-                        place: place,
-                        selected: place.id == widget.selectedId,
-                        onTap: () => widget.onSelectPlace(place),
-                        onOpenDetail: () => widget.onOpenDetail(place),
+                        valueListenable: widget.selectedId,
+                        builder: (context, selectedId, _) => _PlaceRow(
+                          place: place,
+                          selected: place.id == selectedId,
+                          onTap: () => widget.onSelectPlace(place),
+                          onOpenDetail: () => widget.onOpenDetail(place),
+                        ),
                       );
                     },
                   ),
@@ -337,7 +343,6 @@ class _EmptyState extends StatelessWidget {
 /// task); this is a smaller, list-tuned rendering of a [Place].
 class _PlaceRow extends StatelessWidget {
   const _PlaceRow({
-    super.key,
     required this.place,
     required this.selected,
     required this.onTap,
