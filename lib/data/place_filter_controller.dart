@@ -135,6 +135,14 @@ class PlaceFilterController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clears every filter and the search — "Show this place on the map"
+  /// when the current filters hide it.
+  void showAll() {
+    _filter = const MapFilter();
+    search.clear();
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     search.removeListener(_onSearchChanged);

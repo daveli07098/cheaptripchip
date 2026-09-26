@@ -14,9 +14,11 @@ import '../utils/plural.dart';
 import '../widgets/add_places_sheet.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/confirm_dialog.dart';
+import '../widgets/delete_find.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/new_board_dialog.dart';
 import '../widgets/sharing_sheet.dart';
+import '../widgets/show_place_on_map.dart';
 import '../widgets/sign_in_gate.dart';
 import 'place_detail_sheet.dart';
 
@@ -665,7 +667,7 @@ class _BoardCardState extends State<_BoardCard> {
   }
 }
 
-enum _RowAction { move, saveCopy, remove }
+enum _RowAction { showOnMap, move, saveCopy, remove, deleteFind }
 
 class _SectionBlock extends StatefulWidget {
   const _SectionBlock({
@@ -688,8 +690,8 @@ class _SectionBlock extends StatefulWidget {
   final Map<String, Place> placesById;
 
   /// Rows are swipe-to-remove. False for the auto-generated "New finds"
-  /// board ([kNewFindsBoardId]) — not a stored [Board] — and for viewers of
-  /// a shared board.
+  /// board ([kNewFindsBoardId]) — not a stored [Board]; its rows swipe to
+  /// delete the find instead — and for viewers of a shared board.
   final bool canRemove;
 
   /// Rows offer "Save to my places" (shared boards, non-owners).
@@ -723,6 +725,13 @@ class _SectionBlockState extends State<_SectionBlock> {
   /// Personal-board rows (not the auto board, not shared) get Move in the
   /// ⋮ menu, long-press move and open the place page with a Move action.
   bool get _isPersonal => widget.canRemove && widget.sharedBoard == null;
+
+  /// Rows of the auto "New finds" board: not on any board, so there is
+  /// nothing to remove them from — their swipe and ⋮ delete the find itself.
+  bool get _isNewFinds => boardId == kNewFindsBoardId;
+
+  /// Rows with a ⋮ menu and a swipe action.
+  bool get _hasRowActions => widget.canRemove || _isNewFinds;
 
   String get boardId => widget.boardId;
   String get boardName => widget.boardName;
@@ -838,9 +847,10 @@ class _SectionBlockState extends State<_SectionBlock> {
         ),
       ),
       // Editable rows (personal boards, shared-board owners and editors)
-      // get a ⋮ menu so removal isn't swipe-only; view-only shared rows
+      // and "New finds" rows get a ⋮ menu so removal/deletion isn't
+      // swipe-only; view-only shared rows
       // keep the one-tap "Save to my places".
-      trailing: widget.canRemove
+      trailing: _hasRowActions
           ? _rowMenu(context, place)
           : widget.canSaveCopies
           ? IconButton(
@@ -863,8 +873,11 @@ class _SectionBlockState extends State<_SectionBlock> {
             : PlaceDetailSource.mine,
       ),
     );
-    if (!widget.canRemove) return tile;
+    if (!_hasRowActions) return tile;
 
+    // Board rows: swipe = remove from this board. "New finds" rows: swipe =
+    // delete the find (with UNDO).
+    final swipeLabel = _isNewFinds ? 'Delete' : 'Remove';
     return Dismissible(
       key: ValueKey('$boardId/${section.title}/${place.id}'),
       direction: DismissDirection.endToStart,
@@ -881,7 +894,7 @@ class _SectionBlockState extends State<_SectionBlock> {
             ),
             const SizedBox(width: 8),
             Text(
-              'Remove',
+              swipeLabel,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onError,
                 fontWeight: FontWeight.w600,
@@ -890,13 +903,19 @@ class _SectionBlockState extends State<_SectionBlock> {
           ],
         ),
       ),
-      onDismissed: (_) => _removePlace(context, place),
+      onDismissed: (_) => _isNewFinds
+          ? _deleteFind(context, place)
+          : _removePlace(context, place),
       // A Dismissible's swipe gesture alone isn't exposed to assistive tech
       // — pair it with an explicit custom action.
       child: Semantics(
         customSemanticsActions: {
-          CustomSemanticsAction(label: 'Remove from board'): () =>
-              _removePlace(context, place, animate: true),
+          if (_isNewFinds)
+            CustomSemanticsAction(label: 'Delete find'): () =>
+                _deleteFind(context, place, animate: true)
+          else
+            CustomSemanticsAction(label: 'Remove from board'): () =>
+                _removePlace(context, place, animate: true),
           if (_isPersonal)
             CustomSemanticsAction(label: 'Move to another board'): () =>
                 _movePlace(context, place),
@@ -906,8 +925,9 @@ class _SectionBlockState extends State<_SectionBlock> {
     );
   }
 
-  /// ⋮ on an editable row: Move (personal boards), Save to my places
-  /// (shared-board editors) and Remove from board.
+  /// ⋮ on an editable row: Show on map, Move (personal boards), Save to my
+  /// places (shared-board editors) and Remove from board — or, on "New
+  /// finds" rows, Show on map and Delete find.
   Widget _rowMenu(BuildContext context, Place place) {
     PopupMenuItem<_RowAction> item(
       _RowAction value,
@@ -924,15 +944,20 @@ class _SectionBlockState extends State<_SectionBlock> {
       );
     }
 
+    final showOnMap = ShowPlaceOnMap.maybeOf(context);
     return PopupMenuButton<_RowAction>(
       tooltip: 'Place options',
       icon: const Icon(Icons.more_vert, size: 20),
       onSelected: (action) => switch (action) {
+        _RowAction.showOnMap => showOnMap?.call(place),
         _RowAction.move => _movePlace(context, place),
         _RowAction.saveCopy => _saveToMyPlaces(context, place),
         _RowAction.remove => _removePlace(context, place, animate: true),
+        _RowAction.deleteFind => _deleteFind(context, place, animate: true),
       },
       itemBuilder: (context) => [
+        if (showOnMap != null)
+          item(_RowAction.showOnMap, Icons.map_outlined, 'Show on map'),
         if (_isPersonal)
           item(
             _RowAction.move,
@@ -945,13 +970,29 @@ class _SectionBlockState extends State<_SectionBlock> {
             Icons.bookmark_add_outlined,
             'Save to my places',
           ),
-        item(
-          _RowAction.remove,
-          Icons.remove_circle_outline,
-          'Remove from board',
-        ),
+        if (widget.canRemove)
+          item(
+            _RowAction.remove,
+            Icons.remove_circle_outline,
+            'Remove from board',
+          ),
+        if (_isNewFinds)
+          item(_RowAction.deleteFind, Icons.delete_outline, 'Delete find'),
       ],
     );
+  }
+
+  /// "New finds" rows: delete the find itself (it's on no board to remove
+  /// it from), with "Deleted “Name”" + UNDO on the Boards tab's messenger.
+  /// [animate] as for [_removePlace].
+  Future<void> _deleteFind(
+    BuildContext context,
+    Place place, {
+    bool animate = false,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    Future<bool> delete() => deleteFindWithUndo(messenger, place);
+    await (animate ? _collapseThen(place.id, delete) : delete());
   }
 
   Future<void> _saveToMyPlaces(BuildContext context, Place place) async {

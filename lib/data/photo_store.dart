@@ -129,6 +129,28 @@ class PhotoStore {
     );
   }
 
+  /// Deletes the stored photo of a find removed by
+  /// [PlaceStore.deletePlace] — called once its undo window has closed
+  /// without UNDO. Skipped when the place is back in the store (restored),
+  /// and on a billed backend when no photo was marked. Local (cheap)
+  /// backends always delete: guest photo files outlive the in-memory marker
+  /// (see [PhotoRepository.loadIsCostly]), and deleting a missing photo is a
+  /// no-op. Best effort: a failure is logged, never thrown — the find is
+  /// already gone. Doesn't touch the place's marker (there is no place).
+  Future<void> discardPhotoOf(DeletedPlace deleted) async {
+    final placeId = deleted.place.id;
+    if (PlaceStore.instance.byIdOrNull(placeId) != null) return;
+    if (_repository.loadIsCostly && !deleted.hadPhoto) return;
+    _writes[placeId] = (_writes[placeId] ?? 0) + 1;
+    _loadedFor.remove(placeId);
+    _photos[placeId]?.value = null;
+    try {
+      await _repository.delete(placeId);
+    } catch (error, stackTrace) {
+      debugPrint('PhotoStore: discard $placeId failed: $error\n$stackTrace');
+    }
+  }
+
   Future<void> _write(
     String placeId, {
     required Uint8List? value,

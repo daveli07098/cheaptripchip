@@ -15,6 +15,7 @@ import '../data/shared_board_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import '../widgets/account_button.dart';
+import '../widgets/delete_find.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
 import '../widgets/map_pin.dart';
@@ -37,7 +38,8 @@ import 'place_detail_sheet.dart';
 /// its Details action opens the full detail sheet); tapping empty map
 /// dismisses it. Tapping a list row selects + pans without a card.
 /// Filters + search live in a [PlaceFilterController] shared with the Saved
-/// tab; only the camera fly on a drawer pick is map-only. [focus] lets the Boards tab show one board here ([MapFocusController]).
+/// tab; only the camera fly on a drawer pick is map-only. [focus] lets the Boards tab show one board here, and any tab one place
+/// ([MapFocusController]).
 class MapScreen extends StatefulWidget {
   const MapScreen({
     super.key,
@@ -51,8 +53,9 @@ class MapScreen extends StatefulWidget {
   final VoidCallback onAddFind;
 
   /// "Show this board on the map" requests: each one replaces every filter
-  /// with just that board and flies the camera to fit its places.
-  final ValueListenable<MapBoardFocus?>? focus;
+  /// with just that board and flies the camera to fit its places. "Show
+  /// this place" requests fly to one place and open its preview card.
+  final ValueListenable<MapFocus?>? focus;
 
   /// Filters + search shared with the Saved tab (owned by the home shell);
   /// null = a private one, e.g. in tests.
@@ -271,6 +274,67 @@ class _MapScreenState extends State<MapScreen>
   void _onFocusRequest() {
     final request = widget.focus?.value;
     if (request == null || !mounted) return;
+    switch (request) {
+      case MapBoardFocus():
+        _showBoardFocus(request);
+      case MapPlaceFocus():
+        _showPlaceFocus(request);
+    }
+  }
+
+  /// A place's "Show on map": select its pin and open its preview card, then
+  /// fly close to it (zoom ≥ 16) with the pin landing above the card. If the
+  /// current filters or search hide it, they are all cleared first (the
+  /// user asked for this place; a half-kept filter would be confusing). A
+  /// place that isn't one of the user's own (a shared-board copy) has no
+  /// pin: the map flies to its coordinates and says so.
+  void _showPlaceFocus(MapPlaceFocus request) {
+    _searchFocusNode.unfocus();
+    _pendingFilterFit = null;
+    final place = PlaceStore.instance.byIdOrNull(request.placeId);
+    if (place != null && !_visibleNow().any((p) => p.id == place.id)) {
+      _filters.showAll();
+    }
+    _selectedPlaceId.value = place?.id;
+    _previewVisible.value = place != null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(widget.focus?.value, request)) return;
+      final location = place?.location ?? request.location;
+      if (!location.latitude.isFinite || !location.longitude.isFinite) {
+        showSnack(context, '“${request.name}” has no location on the map');
+        return;
+      }
+      if (place == null) {
+        showSnack(
+          context,
+          '“${request.name}” isn’t in your places — showing where it is',
+        );
+      } else {
+        PlaceDetailSheet.precacheHeader(context, place);
+      }
+      // Down to peek, so the card and the pin both have room.
+      if (_sheetExtentController.isAttached &&
+          _sheetExtentController.size > kSheetPeek + 0.01) {
+        _sheetExtentController.animateTo(
+          kSheetPeek,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
+      final covered =
+          MediaQuery.of(context).size.height * kSheetPeek +
+          (place == null ? 0 : kPlacePreviewCardApproxHeight + 12);
+      _flyTo(
+        location,
+        math.max(_mapController.camera.zoom, 16.0),
+        // Same offset trick as _selectFromList: centre the pin in the space
+        // left above the sheet (and the card).
+        offset: Offset(0, -covered / 2),
+      );
+    });
+  }
+
+  void _showBoardFocus(MapBoardFocus request) {
     _searchFocusNode.unfocus();
     _selectedPlaceId.value = null;
     _previewVisible.value = false;
@@ -422,6 +486,9 @@ class _MapScreenState extends State<MapScreen>
     initialZoom: 11,
     onMapReady: () => _mapReady = true,
     minZoom: _minZoom,
+    // Stop dragging past the poles — beyond ±85° there are no tiles, only
+    // background, which read as "the whole map went grey" when zoomed out.
+    cameraConstraint: const CameraConstraint.containLatitude(),
     maxZoom: _maxZoom,
     // Tapping the map (not a pin/cluster) drops keyboard focus
     // from the search field and dismisses the preview card,
@@ -435,11 +502,26 @@ class _MapScreenState extends State<MapScreen>
     final cached = _tileLayer;
     if (cached != null && _tileLayerBrightness == brightness) return cached;
     _tileLayerBrightness = brightness;
-    final tiles = TileLayer(
-      // OSM raster tiles — see AppTheme.mapTileUrl doc comment
-      // re: usage-policy limits and swapping in a keyed provider.
-      urlTemplate: AppTheme.mapTileUrl,
-      userAgentPackageName: 'com.cheaptripchip.app',
+    final tiles = Stack(
+      children: [
+        // Tile-coloured backdrop instead of flutter_map's flat grey while
+        // tiles load after a big zoom-out. Inside the dark-mode filter, so
+        // it inverts to a dark backdrop along with the tiles.
+        const Positioned.fill(child: ColoredBox(color: Color(0xFFF2EFE9))),
+        TileLayer(
+          // OSM raster tiles — see AppTheme.mapTileUrl doc comment
+          // re: usage-policy limits and swapping in a keyed provider.
+          urlTemplate: AppTheme.mapTileUrl,
+          userAgentPackageName: 'com.cheaptripchip.app',
+          // A tile that failed (network blip, app just resumed) is dropped
+          // once off-screen, so it loads again next time instead of staying
+          // blank forever (the default never retries).
+          evictErrorTileStrategy:
+              EvictErrorTileStrategy.notVisibleRespectMargin,
+          errorTileCallback: (tile, error, _) =>
+              debugPrint('Map tile ${tile.coordinates} failed: $error'),
+        ),
+      ],
     );
     // OSM has no dark-tile variant, so dark mode is simulated by
     // inverting/hue-rotating the same tiles — with ONE colour filter over
@@ -635,6 +717,8 @@ class _MapScreenState extends State<MapScreen>
                 onSelectPlace: (place) => _selectFromList(context, place),
                 onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
                 onAddFind: widget.onAddFind,
+                onDeletePlace: (place) =>
+                    deleteFindWithUndo(ScaffoldMessenger.of(context), place),
               ),
               _PreviewCardLayer(
                 sheetExtentController: _sheetExtentController,

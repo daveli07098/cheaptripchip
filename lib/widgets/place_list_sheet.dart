@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../data/map_filter.dart';
 import '../models/place.dart';
@@ -62,6 +63,7 @@ class PlaceListSheet extends StatefulWidget {
     required this.onSelectPlace,
     required this.onOpenDetail,
     required this.onAddFind,
+    this.onDeletePlace,
     this.controller,
     this.sheetController,
   });
@@ -75,6 +77,12 @@ class PlaceListSheet extends StatefulWidget {
   /// Invoked by the header's "Add a find" button (moved here from the map's
   /// FAB so it stays reachable regardless of the sheet's drag extent).
   final VoidCallback onAddFind;
+
+  /// Swipe a row end-to-start (or its "Delete find" a11y action) to delete
+  /// the find; rows aren't swipeable when null. A horizontal swipe doesn't
+  /// fight the sheet: its drag is vertical (the scroll view), and the
+  /// gesture arena splits the two by direction, as in any list.
+  final ValueChanged<Place>? onDeletePlace;
   final PlaceListSheetController? controller;
 
   /// Exposed so [MapScreen] can read the sheet's current extent (via
@@ -276,11 +284,15 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
                       return ValueListenableBuilder<String?>(
                         key: _keyFor(place.id),
                         valueListenable: widget.selectedId,
-                        builder: (context, selectedId, _) => _PlaceRow(
-                          place: place,
-                          selected: place.id == selectedId,
-                          onTap: () => widget.onSelectPlace(place),
-                          onOpenDetail: () => widget.onOpenDetail(place),
+                        builder: (context, selectedId, _) => _deletable(
+                          context,
+                          place,
+                          _PlaceRow(
+                            place: place,
+                            selected: place.id == selectedId,
+                            onTap: () => widget.onSelectPlace(place),
+                            onOpenDetail: () => widget.onOpenDetail(place),
+                          ),
                         ),
                       );
                     },
@@ -290,6 +302,46 @@ class _PlaceListSheetState extends State<PlaceListSheet> {
           ),
         );
       },
+    );
+  }
+}
+
+/// [row] wrapped in the swipe-to-delete [Dismissible] (same look as the
+/// Saved tab and board rows) when [PlaceListSheet.onDeletePlace] is set.
+extension on _PlaceListSheetState {
+  Widget _deletable(BuildContext context, Place place, Widget row) {
+    final onDelete = widget.onDeletePlace;
+    if (onDelete == null) return row;
+    final scheme = Theme.of(context).colorScheme;
+    return Dismissible(
+      key: ValueKey('sheet/${place.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: scheme.error,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.delete_outline, color: scheme.onError),
+            const SizedBox(width: 8),
+            Text(
+              'Delete',
+              style: TextStyle(
+                color: scheme.onError,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+      onDismissed: (_) => onDelete(place),
+      child: Semantics(
+        customSemanticsActions: {
+          CustomSemanticsAction(label: 'Delete find'): () => onDelete(place),
+        },
+        child: row,
+      ),
     );
   }
 }

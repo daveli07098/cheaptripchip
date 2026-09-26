@@ -329,6 +329,97 @@ class BoardStore {
     return _replaceAll(live);
   }
 
+  /// Where [placeId] sits on the personal boards right now — one
+  /// [BoardMembership] per section holding it, in board then section
+  /// order. Enough for [restoreMemberships] to put it back in place.
+  List<BoardMembership> membershipsOf(String placeId) {
+    return [
+      for (final board in boards.value)
+        for (var s = 0; s < board.sections.length; s++)
+          if (board.sections[s].placeIds.indexOf(placeId) case final index
+              when index != -1)
+            BoardMembership(
+              boardId: board.id,
+              sectionIndex: s,
+              sectionTitle: board.sections[s].title,
+              index: index,
+            ),
+    ];
+  }
+
+  /// Takes [placeId] off every personal board (pruning emptied sections,
+  /// same rule as [removePlaceFromBoard]) in one optimistic [boards] update
+  /// and one [BoardRepository.upsertAll] — a deleted find must not leave a
+  /// dangling id behind. The optimistic update lands synchronously, before
+  /// this returns its future. If the write fails, [boards] goes back to what
+  /// it held before and the error is rethrown (as PlaceStore._update does).
+  Future<void> removeFromAllBoards(String placeId) async {
+    final changed = [
+      for (final board in boards.value)
+        if (board.sections.any((s) => s.placeIds.contains(placeId)))
+          board.copyWith(
+            sections: sectionsWithChanges(
+              board.sections,
+              remove: {placeId},
+              sectionTitleFor: (_) => '',
+            ),
+          ),
+    ];
+    if (changed.isEmpty) return;
+    final previous = boards.value;
+    try {
+      await _replaceAll(changed);
+    } catch (_) {
+      boards.value = previous;
+      rethrow;
+    }
+  }
+
+  /// Undo for [removeFromAllBoards]: puts [placeId] back into each board of
+  /// [memberships] at its old section and position (a pruned section is
+  /// recreated at its old index). Inserts into the boards as they are now,
+  /// so other edits made meanwhile survive; indexes are clamped, boards
+  /// deleted since are skipped and sections already holding the place are
+  /// left alone. One optimistic update, one write.
+  Future<void> restoreMemberships(
+    String placeId,
+    List<BoardMembership> memberships,
+  ) {
+    final byBoard = <String, List<BoardMembership>>{};
+    for (final membership in memberships) {
+      byBoard.putIfAbsent(membership.boardId, () => []).add(membership);
+    }
+    final changed = <Board>[];
+    for (final MapEntry(key: boardId, value: entries) in byBoard.entries) {
+      final board = byIdOrNull(boardId);
+      if (board == null) continue;
+      final sections = [...board.sections];
+      var touched = false;
+      // Section order ascending, so recreated sections land at their old
+      // indexes relative to each other.
+      entries.sort((a, b) => a.sectionIndex.compareTo(b.sectionIndex));
+      for (final entry in entries) {
+        final at = sections.indexWhere((s) => s.title == entry.sectionTitle);
+        if (at == -1) {
+          sections.insert(
+            entry.sectionIndex.clamp(0, sections.length),
+            BoardSection(title: entry.sectionTitle, placeIds: [placeId]),
+          );
+          touched = true;
+          continue;
+        }
+        final ids = sections[at].placeIds;
+        if (ids.contains(placeId)) continue;
+        sections[at] = sections[at].copyWith(
+          placeIds: [...ids]..insert(entry.index.clamp(0, ids.length), placeId),
+        );
+        touched = true;
+      }
+      if (touched) changed.add(board.copyWith(sections: sections));
+    }
+    return _replaceAll(changed);
+  }
+
   /// Replaces every board in [updated] (by id) in a single [boards] emit,
   /// then persists them together.
   Future<void> _replaceAll(List<Board> updated) async {
@@ -354,7 +445,27 @@ class BoardStore {
   }
 }
 
-/// Result of [BoardStore.movePlace]: the moved place and both boards as
+/// One section a place sat in before [BoardStore.removeFromAllBoards] —
+/// see [BoardStore.membershipsOf].
+class BoardMembership {
+  const BoardMembership({
+    required this.boardId,
+    required this.sectionIndex,
+    required this.sectionTitle,
+    required this.index,
+  });
+
+  final String boardId;
+
+  /// The section's position on the board (to recreate a pruned section).
+  final int sectionIndex;
+  final String sectionTitle;
+
+  /// The place's position within the section.
+  final int index;
+}
+
+/// Result of [BoardStore.movePlace]:the moved place and both boards as
 /// they were just before the move, for [BoardStore.undoMove].
 class BoardMove {
   const BoardMove({

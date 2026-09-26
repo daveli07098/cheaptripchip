@@ -16,9 +16,12 @@ import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
+import '../widgets/confirm_dialog.dart';
+import '../widgets/delete_find.dart';
 import '../widgets/place_photo.dart';
 import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
+import '../widgets/show_place_on_map.dart';
 import '../widgets/user_avatar.dart';
 
 /// Where a [PlaceDetailSheet] was opened from. [mine] (the default) is the
@@ -67,6 +70,8 @@ class PlaceDetailSheet extends StatelessWidget {
     super.key,
     required this.place,
     this.source = PlaceDetailSource.mine,
+    this.onShowOnMap,
+    this.hostMessenger,
   });
 
   final Place place;
@@ -75,19 +80,38 @@ class PlaceDetailSheet extends StatelessWidget {
   /// controls or a read-only view with "Save to my places".
   final PlaceDetailSource source;
 
+  /// "Show on map" (the sheet closes first); hidden when null.
+  final ValueChanged<Place>? onShowOnMap;
+
+  /// The messenger of the screen under this sheet — "Delete find" closes
+  /// the sheet (and its own messenger), so its UNDO SnackBar goes here.
+  /// Falls back to the messenger above the navigator.
+  final ScaffoldMessengerState? hostMessenger;
+
+  /// [onShowOnMap] defaults to the home shell's [ShowPlaceOnMap] found from
+  /// [context] (the sheet itself is pushed above the shell, so it can't look
+  /// it up).
   static Future<void> show(
     BuildContext context,
     Place place, {
     PlaceDetailSource source = PlaceDetailSource.mine,
+    ValueChanged<Place>? onShowOnMap,
   }) {
     // Start decoding the header photo now, so it's (ideally) cached by the
     // time the sheet's first frame builds instead of popping in mid-slide.
     precacheHeader(context, place, source: source);
+    final showOnMap = onShowOnMap ?? ShowPlaceOnMap.maybeOf(context);
+    final hostMessenger = ScaffoldMessenger.maybeOf(context);
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => PlaceDetailSheet(place: place, source: source),
+      builder: (_) => PlaceDetailSheet(
+        place: place,
+        source: source,
+        onShowOnMap: showOnMap,
+        hostMessenger: hostMessenger,
+      ),
     );
   }
 
@@ -187,6 +211,7 @@ class PlaceDetailSheet extends StatelessWidget {
                   place: place,
                   shared: source.isSharedBoard,
                   fromBoardId: source.personalBoardId,
+                  onShowOnMap: onShowOnMap,
                 ),
                 const SizedBox(height: 20),
                 _SectionLabel('About / 簡介'),
@@ -243,6 +268,13 @@ class PlaceDetailSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 22),
                       _OpenInMapsButton(place: place),
+                      if (!source.isSharedBoard) ...[
+                        const SizedBox(height: 12),
+                        _DeleteFindButton(
+                          place: place,
+                          hostMessenger: hostMessenger,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -920,11 +952,18 @@ class _LivePlace extends StatelessWidget {
 /// ([SharedBoardStore.saveToMyPlaces], deduped the same way as the Boards
 /// tab's row action). Share stays in both: it's just the public link.
 class _ActionRow extends StatelessWidget {
-  const _ActionRow({required this.place, this.shared = false, this.fromBoardId})
-    : assert(!shared || fromBoardId == null);
+  const _ActionRow({
+    required this.place,
+    this.shared = false,
+    this.fromBoardId,
+    this.onShowOnMap,
+  }) : assert(!shared || fromBoardId == null);
 
   final Place place;
   final bool shared;
+
+  /// See [PlaceDetailSheet.onShowOnMap].
+  final ValueChanged<Place>? onShowOnMap;
 
   /// Personal board the sheet was opened from (see
   /// [PlaceDetailSource.personalBoard]); enables "Move to another board"
@@ -971,6 +1010,15 @@ class _ActionRow extends StatelessWidget {
                     onTap: () => _move(context, boardId),
                   )
                 : const SizedBox.shrink(),
+          ),
+        if (onShowOnMap case final show?)
+          _IconAction(
+            icon: Icons.map_outlined,
+            tooltip: 'Show on map',
+            onTap: () {
+              Navigator.pop(context);
+              show(place);
+            },
           ),
         _IconAction(
           icon: Icons.ios_share,
@@ -1836,6 +1884,45 @@ class _IconAction extends StatelessWidget {
           ).colorScheme.surfaceContainerHighest,
           padding: const EdgeInsets.all(12),
         ),
+      ),
+    );
+  }
+}
+
+/// "Delete find" at the foot of the user's own place page: confirms, closes
+/// the sheet, then deletes with an UNDO SnackBar on the screen underneath
+/// ([deleteFindWithUndo]).
+class _DeleteFindButton extends StatelessWidget {
+  const _DeleteFindButton({required this.place, this.hostMessenger});
+
+  final Place place;
+  final ScaffoldMessengerState? hostMessenger;
+
+  Future<void> _delete(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    final messenger = hostMessenger ?? ScaffoldMessenger.of(navigator.context);
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete “${place.name}”?',
+      body: 'It’s removed from Saved and from all your boards.',
+      action: 'Delete',
+    );
+    if (!confirmed || !context.mounted) return;
+    navigator.pop();
+    await deleteFindWithUndo(messenger, place);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = Theme.of(context).colorScheme.error;
+    return TextButton.icon(
+      onPressed: () => _delete(context),
+      icon: const Icon(Icons.delete_outline, size: 18),
+      label: const Text('Delete find'),
+      style: TextButton.styleFrom(
+        foregroundColor: error,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        minimumSize: const Size(double.infinity, 0),
       ),
     );
   }

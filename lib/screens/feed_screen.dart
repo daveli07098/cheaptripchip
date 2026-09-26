@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../data/board_store.dart';
 import '../data/map_filter.dart';
@@ -7,10 +8,12 @@ import '../data/place_store.dart';
 import '../data/shared_board_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
+import '../widgets/delete_find.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
 import '../widgets/place_card.dart';
 import '../widgets/place_search_pill.dart';
+import '../widgets/show_place_on_map.dart';
 import 'place_detail_sheet.dart';
 
 /// Saved feed (ANALYSIS.md §6): scrollable card list of all saves, narrowed
@@ -145,11 +148,8 @@ class _FeedScreenState extends State<FeedScreen> {
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                         itemCount: results.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, i) => PlaceCard(
-                          place: results[i],
-                          onTap: () =>
-                              PlaceDetailSheet.show(context, results[i]),
-                        ),
+                        itemBuilder: (context, i) =>
+                            _dismissibleCard(context, results[i]),
                       ),
               ),
             ],
@@ -158,6 +158,58 @@ class _FeedScreenState extends State<FeedScreen> {
       },
     );
   }
+}
+
+/// Saved-tab card: tap opens the place page, the map button shows it on
+/// the map, and a swipe end-to-start deletes the find (with UNDO) — same
+/// look as the Boards tab's swipe-to-remove rows.
+Widget _dismissibleCard(BuildContext context, Place place) {
+  final scheme = Theme.of(context).colorScheme;
+  final showOnMap = ShowPlaceOnMap.maybeOf(context);
+  // Grabbed per call: the optimistic delete rebuilds this list without the
+  // card, so the card's context can't be used afterwards.
+  void delete() => deleteFindWithUndo(ScaffoldMessenger.of(context), place);
+  return Dismissible(
+    key: ValueKey('saved/${place.id}'),
+    direction: DismissDirection.endToStart,
+    background: Container(
+      // Matches the Card's default margin and the theme's 18dp corners.
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: scheme.error,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.delete_outline, color: scheme.onError),
+          const SizedBox(width: 8),
+          Text(
+            'Delete',
+            style: TextStyle(
+              color: scheme.onError,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    ),
+    onDismissed: (_) => delete(),
+    // A Dismissible's swipe gesture alone isn't exposed to assistive tech
+    // — pair it with an explicit custom action.
+    child: Semantics(
+      customSemanticsActions: {
+        CustomSemanticsAction(label: 'Delete find'): delete,
+      },
+      child: PlaceCard(
+        place: place,
+        onTap: () => PlaceDetailSheet.show(context, place),
+        onShowOnMap: showOnMap == null ? null : () => showOnMap(place),
+      ),
+    ),
+  );
 }
 
 class _EmptyState extends StatelessWidget {

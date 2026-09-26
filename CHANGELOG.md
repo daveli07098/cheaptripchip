@@ -22,9 +22,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     "Import a trip" on the empty Boards tab, sign-in continues into sharing.
 
 ### Fixed
+- Map no longer turns grey when zoomed far out: camera can't drag past the
+  poles, a tile-coloured backdrop shows while tiles load, and failed tiles
+  are retried instead of staying blank.
 - Shared place text no longer reads "Unknown, Tokyo, Japan".
 
 ### Added
+- Delete a find (swipe-to-delete is back): swipe a Saved card or a map-list
+  row right-to-left (red "Delete"), swipe a "New finds" row, or use "Delete
+  find" at the bottom of the place page (with a confirm). "Deleted “Name”"
+  + UNDO (6 s) puts the place back, including its board sections and
+  positions. The find is removed from every personal board in one write;
+  shared-board copies are left alone. Its photo is deleted only once the
+  undo window closes without UNDO. Screen readers get a "Delete find"
+  action. Swiping a row on a normal board still only removes it from that
+  board.
+- "Show on map" for one place — the map icon on Saved cards and on the
+  place page, and the ⋮ menu on board rows (incl. "New finds"): switches
+  to the map, opens the place's preview card and flies close to it. If the
+  filters or search hide it, they are cleared. A shared-board place you
+  don't have is shown by its location, with a note.
 - Map: the pin preview card shows which boards the place is on
   ("📋 Tokyo trip · Food list", personal and shared boards), or "Not on a
   board" when it's only in "New finds".

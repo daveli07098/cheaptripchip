@@ -9,10 +9,18 @@ import 'score_stars.dart';
 /// Feed/sidebar card: category swatch, name, area tag, AI description preview,
 /// and the "Pinned" location-confidence indicator (Yaay parity, ANALYSIS.md §6).
 class PlaceCard extends StatelessWidget {
-  const PlaceCard({super.key, required this.place, required this.onTap});
+  const PlaceCard({
+    super.key,
+    required this.place,
+    required this.onTap,
+    this.onShowOnMap,
+  });
 
   final Place place;
   final VoidCallback onTap;
+
+  /// A small map button at the end of the area line; hidden when null.
+  final VoidCallback? onShowOnMap;
 
   @override
   Widget build(BuildContext context) {
@@ -72,13 +80,32 @@ class PlaceCard extends StatelessWidget {
                       children: [
                         Icon(Icons.place, size: 14, color: color),
                         const SizedBox(width: 3),
-                        Text(
-                          '${place.areaLabel} · ${place.region}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: onSurfaceVariant.withValues(alpha: 0.6),
+                        Expanded(
+                          child: Text(
+                            '${place.areaLabel} · ${place.region}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: onSurfaceVariant.withValues(alpha: 0.6),
+                            ),
                           ),
                         ),
+                        if (onShowOnMap != null)
+                          // Compact: a 40×32 target, so the single text
+                          // line doesn't grow the card much.
+                          IconButton(
+                            tooltip: 'Show on map',
+                            onPressed: onShowOnMap,
+                            icon: const Icon(Icons.map_outlined, size: 18),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 40,
+                              height: 32,
+                            ),
+                            color: onSurfaceVariant,
+                          ),
                       ],
                     ),
                     const SizedBox(height: 8),

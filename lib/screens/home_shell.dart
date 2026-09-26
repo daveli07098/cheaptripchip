@@ -9,6 +9,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../data/map_focus.dart';
 import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
+import '../models/place.dart';
 import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
 import '../services/my_maps_import.dart';
@@ -22,6 +23,7 @@ import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
 import '../widgets/my_maps_import_sheet.dart';
 import '../widgets/new_board_dialog.dart';
+import '../widgets/show_place_on_map.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
@@ -81,7 +83,9 @@ class _HomeShellState extends State<HomeShell> {
   String? _lastInviteKey;
   DateTime? _lastInviteAt;
 
-  /// Boards tab → "Show on map" → the map applies that board's filter.
+  /// Boards tab → "Show on map" → the map applies that board's filter; a
+  /// place's "Show on map" (place page, Saved card, board row) → the map
+  /// flies to it.
   final _mapFocus = MapFocusController();
 
   /// Filters + search shared by the Explore and Saved tabs.
@@ -323,6 +327,15 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     final showAppBar = _index != 0;
 
+    // Every tab (and the place pages opened from them) reaches the map's
+    // per-place "Show on map" through this scope.
+    return ShowPlaceOnMap(
+      onShow: _showPlaceOnMap,
+      child: _buildScaffold(context, showAppBar),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, bool showAppBar) {
     return Scaffold(
       extendBodyBehindAppBar: !showAppBar,
       appBar: showAppBar
@@ -430,6 +443,17 @@ class _HomeShellState extends State<HomeShell> {
   void _showBoardOnMap(String boardKey) {
     setState(() => _index = 0);
     _mapFocus.showBoard(boardKey);
+  }
+
+  /// Switches to the map tab, then asks it to fly to [place] and open its
+  /// preview card.
+  void _showPlaceOnMap(Place place) {
+    setState(() => _index = 0);
+    _mapFocus.showPlace(
+      placeId: place.id,
+      name: place.name,
+      location: place.location,
+    );
   }
 
   /// Zero-arg wrapper so [MapScreen]'s `VoidCallback onAddFind` can call

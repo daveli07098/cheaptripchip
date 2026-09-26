@@ -7,6 +7,7 @@ import '../models/place_area.dart';
 import '../models/place_note.dart';
 import '../models/restaurant_type_detect.dart';
 import '../services/auth_service.dart';
+import 'board_store.dart';
 import 'firestore_repositories.dart';
 import 'guest_storage.dart';
 import 'local_repositories.dart';
@@ -306,6 +307,95 @@ class PlaceStore {
         : current.copyWith(extraNotes: [...current.extraNotes, note]),
   );
 
+  /// Deletes the find [id]: optimistically drops it from [places] and (in
+  /// the same synchronous step, before the first await — a swiped
+  /// Dismissible must be gone by the next frame) from every personal board
+  /// via [BoardStore.removeFromAllBoards], one board write. Then deletes it
+  /// from the repository. Shared-board copies are untouched (they're copies).
+  ///
+  /// The stored photo is NOT deleted here — the caller discards it once the
+  /// undo window has passed (PhotoStore.discardPhotoOf), so [restoreDeleted]
+  /// has nothing to re-upload. Returns the [DeletedPlace] snapshot for
+  /// [restoreDeleted], or null for an unknown id. If a write fails, [places]
+  /// and the boards are reverted and the error is rethrown (as [_update]).
+  Future<DeletedPlace?> deletePlace(String id) async {
+    final previous = places.value;
+    final index = previous.indexWhere((p) => p.id == id);
+    if (index == -1) return null;
+    final boards = BoardStore.instance;
+    final deleted = DeletedPlace(
+      place: previous[index],
+      index: index,
+      memberships: boards.membershipsOf(id),
+    );
+    places.value = [
+      for (final place in previous)
+        if (place.id != id) place,
+    ];
+    // Called (not awaited) here so its optimistic update lands now.
+    final boardsWrite = boards.removeFromAllBoards(id);
+    try {
+      await boardsWrite;
+    } catch (_) {
+      // BoardStore already reverted its own list.
+      places.value = previous;
+      rethrow;
+    }
+    try {
+      await _repository.delete(id);
+    } catch (_) {
+      places.value = previous;
+      try {
+        await boards.restoreMemberships(id, deleted.memberships);
+      } catch (error) {
+        debugPrint('PlaceStore: re-adding $id to its boards failed: $error');
+      }
+      rethrow;
+    }
+    return deleted;
+  }
+
+  /// Undo for [deletePlace]: puts the place back at its old index in
+  /// [places] and onto its boards at their old sections/positions (see
+  /// [BoardStore.restoreMemberships]). No-op if it is already back (UNDO
+  /// tapped twice). The feed position is only honoured optimistically, like
+  /// [BoardStore.restoreBoard]: once the repository echoes back (Local:
+  /// re-added ids land at index 0; Firestore: a fresh `savedAt`), the place
+  /// shows at the top of the feed. If the place write fails it is taken out
+  /// again and the error is rethrown.
+  Future<void> restoreDeleted(DeletedPlace deleted) async {
+    final place = deleted.place;
+    if (byIdOrNull(place.id) != null) return;
+    final current = places.value;
+    final index = deleted.index.clamp(0, current.length);
+    places.value = [
+      ...current.sublist(0, index),
+      place,
+      ...current.sublist(index),
+    ];
+    final boards = BoardStore.instance;
+    final boardsWrite = boards.restoreMemberships(
+      place.id,
+      deleted.memberships,
+    );
+    try {
+      await _repository.upsert(place);
+    } catch (_) {
+      places.value = [
+        for (final p in places.value)
+          if (p.id != place.id) p,
+      ];
+      try {
+        await boardsWrite;
+        await boards.removeFromAllBoards(place.id);
+      } catch (error) {
+        debugPrint('PlaceStore: undoing restore of ${place.id} failed: $error');
+      }
+      rethrow;
+    }
+    await boardsWrite;
+  }
+
   /// The single-place mutation every method above shares: looks up [id],
   /// applies [mutate] (returning `null` means "nothing to change" — no
   /// notification, no write), swaps the result into [places] optimistically,
@@ -329,4 +419,25 @@ class PlaceStore {
       rethrow;
     }
   }
+}
+
+/// What [PlaceStore.deletePlace] removed, for [PlaceStore.restoreDeleted]
+/// (and PhotoStore.discardPhotoOf once the undo window has passed).
+class DeletedPlace {
+  const DeletedPlace({
+    required this.place,
+    required this.index,
+    required this.memberships,
+  });
+
+  final Place place;
+
+  /// Its index in [PlaceStore.places] at deletion time.
+  final int index;
+
+  /// The personal-board sections it sat in.
+  final List<BoardMembership> memberships;
+
+  /// Whether the place carried a photo marker ([Place.myPhotoAt]).
+  bool get hadPhoto => place.myPhotoAt != null;
 }
