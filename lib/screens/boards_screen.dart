@@ -318,6 +318,7 @@ class _BoardCardState extends State<_BoardCard> {
           children: [
             for (final section in board.sections)
               _SectionBlock(
+                key: ValueKey('${board.id}/${section.title}'),
                 boardId: board.id,
                 boardName: board.name,
                 section: section,
@@ -568,6 +569,7 @@ class _BoardCardState extends State<_BoardCard> {
 
 class _SectionBlock extends StatefulWidget {
   const _SectionBlock({
+    super.key,
     required this.boardId,
     required this.boardName,
     required this.section,
@@ -609,6 +611,9 @@ class _SectionBlockState extends State<_SectionBlock> {
   static const _pageSize = 100;
   int _shown = _pageSize;
 
+  /// Each section (category) collapses independently; starts expanded.
+  bool _expanded = true;
+
   String get boardId => widget.boardId;
   String get boardName => widget.boardName;
   BoardSection get section => widget.section;
@@ -623,32 +628,62 @@ class _SectionBlockState extends State<_SectionBlock> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: Text(
-            '${section.title.toUpperCase()} · ${ids.length}',
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-            ),
-          ),
-        ),
-        for (final id in ids.take(_shown)) _itemTile(context, placesById[id]!),
-        if (hidden > 0)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: TextButton(
-              onPressed: () => setState(() => _shown += _pageSize),
-              child: Text(
-                'Show ${hidden > _pageSize ? _pageSize : hidden} more '
-                '($hidden hidden)',
+        Semantics(
+          button: true,
+          expanded: _expanded,
+          label: '${section.title}, ${ids.length} places',
+          child: InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 12, 6),
+              child: ExcludeSemantics(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${section.title.toUpperCase()} · ${ids.length}',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
+                    AnimatedRotation(
+                      turns: _expanded ? 0 : -0.25,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(
+                        Icons.expand_more,
+                        size: 18,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
+        ),
+        if (_expanded) ...[
+          for (final id in ids.take(_shown))
+            _itemTile(context, placesById[id]!),
+          if (hidden > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: TextButton(
+                onPressed: () => setState(() => _shown += _pageSize),
+                child: Text(
+                  'Show ${hidden > _pageSize ? _pageSize : hidden} more '
+                  '($hidden hidden)',
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }
