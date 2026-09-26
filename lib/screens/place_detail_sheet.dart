@@ -950,38 +950,48 @@ class _MyNotes extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (place.myNotes.isEmpty) {
-      return Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: () => _editNotes(context),
-          icon: const Icon(Icons.edit_note, size: 18),
-          label: const Text('Add notes'),
-          style: TextButton.styleFrom(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(0, 44),
+    final scheme = Theme.of(context).colorScheme;
+    final empty = place.myNotes.isEmpty;
+    // Always a visible box under the stars — the old "Add notes" text button
+    // was easy to miss. Tapping opens [_NotesDialog]; the sheet itself
+    // ignores keyboard insets, so an inline TextField would sit under it.
+    return Semantics(
+      button: true,
+      label: empty ? 'Add a remark' : 'Edit remark',
+      child: InkWell(
+        onTap: () => _editNotes(context),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 52),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: scheme.outlineVariant),
           ),
-        ),
-      );
-    }
-    return InkWell(
-      onTap: () => _editNotes(context),
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          place.myNotes,
-          style: TextStyle(
-            fontSize: 14,
-            height: 1.5,
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  empty ? 'Add a remark… / 加備註' : place.myNotes,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: empty
+                        ? scheme.onSurfaceVariant.withValues(alpha: 0.6)
+                        : scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                empty ? Icons.edit_note : Icons.edit_outlined,
+                size: 18,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ],
           ),
         ),
       ),
@@ -1029,14 +1039,16 @@ class _NotesDialogState extends State<_NotesDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('My notes'),
+      title: const Text('Remark / 備註'),
       content: TextField(
         controller: controller,
         autofocus: true,
         minLines: 3,
         maxLines: 6,
         maxLength: 1000,
-        decoration: const InputDecoration(hintText: 'What did you think?'),
+        decoration: const InputDecoration(
+          hintText: 'What did you think? Tips, dishes, prices…',
+        ),
       ),
       actions: [
         TextButton(
