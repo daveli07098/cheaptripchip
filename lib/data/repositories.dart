@@ -25,5 +25,10 @@ abstract class PlaceRepository {
 abstract class BoardRepository {
   Stream<List<Board>> watch();
   Future<void> upsert(Board board);
+
+  /// Saves several boards together (e.g. both ends of a place move) — one
+  /// change event / one atomic batched write, so watchers never see a
+  /// half-applied state.
+  Future<void> upsertAll(List<Board> boards);
   Future<void> delete(String id);
 }

@@ -11,6 +11,7 @@ import '../services/auth_service.dart';
 import '../services/trip_share.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_places_sheet.dart';
+import '../widgets/board_picker_sheet.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/new_board_dialog.dart';
 import '../widgets/sharing_sheet.dart';
@@ -72,6 +73,15 @@ class BoardsScreen extends StatelessWidget {
           // "Add a find" button.
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
           itemCount: cards.length,
+          // Match cards to their old elements by key: without this a sliver
+          // list reuses state by index, so whenever the list shifts (the
+          // "New finds" card appearing/disappearing after a remove, move or
+          // undo, a board deleted/restored) every card below would get a
+          // fresh State — collapsing it and resetting its sections.
+          findItemIndexCallback: (key) {
+            final index = cards.indexWhere((card) => card.key == key);
+            return index < 0 ? null : index;
+          },
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, i) => cards[i],
         );
@@ -567,6 +577,8 @@ class _BoardCardState extends State<_BoardCard> {
   }
 }
 
+enum _RowAction { move, remove }
+
 class _SectionBlock extends StatefulWidget {
   const _SectionBlock({
     super.key,
@@ -613,6 +625,16 @@ class _SectionBlockState extends State<_SectionBlock> {
 
   /// Each section (category) collapses independently; starts expanded.
   bool _expanded = true;
+
+  /// Rows collapsing out ahead of a menu-driven move/remove (a swipe has
+  /// Dismissible's own animation) — the store update lands once the row has
+  /// shrunk away, so the rows below slide up instead of jumping.
+  final Set<String> _leaving = {};
+  static const _leaveDuration = Duration(milliseconds: 220);
+
+  /// Personal-board rows (not the auto board, not shared) get the ⋮ menu,
+  /// long-press move and open the place page with a Move action.
+  bool get _isPersonal => widget.canRemove && widget.sharedBoard == null;
 
   String get boardId => widget.boardId;
   String get boardName => widget.boardName;
@@ -671,7 +693,15 @@ class _SectionBlockState extends State<_SectionBlock> {
         ),
         if (_expanded) ...[
           for (final id in ids.take(_shown))
-            _itemTile(context, placesById[id]!),
+            KeyedSubtree(
+              key: ValueKey('row/$id'),
+              child: _leaving.contains(id)
+                  ? _CollapseOut(
+                      duration: _leaveDuration,
+                      child: _itemTile(context, placesById[id]!),
+                    )
+                  : _itemTile(context, placesById[id]!),
+            ),
           if (hidden > 0)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -725,16 +755,50 @@ class _SectionBlockState extends State<_SectionBlock> {
               icon: const Icon(Icons.bookmark_add_outlined, size: 20),
               onPressed: () => _saveToMyPlaces(context, place),
             )
+          : _isPersonal
+          ? PopupMenuButton<_RowAction>(
+              tooltip: 'Place options',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (action) => switch (action) {
+                _RowAction.move => _movePlace(context, place),
+                _RowAction.remove => _removePlace(
+                  context,
+                  place,
+                  animate: true,
+                ),
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _RowAction.move,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.drive_file_move_outline),
+                    title: Text('Move to board…'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _RowAction.remove,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.remove_circle_outline),
+                    title: Text('Remove from board'),
+                  ),
+                ),
+              ],
+            )
           : const Icon(Icons.chevron_right, size: 20),
+      onLongPress: _isPersonal ? () => _movePlace(context, place) : null,
       onTap: () => PlaceDetailSheet.show(
         context,
         place,
-        source: widget.sharedBoard == null
-            ? PlaceDetailSource.mine
-            : PlaceDetailSource.sharedBoard(
+        source: widget.sharedBoard != null
+            ? PlaceDetailSource.sharedBoard(
                 widget.sharedBoard!,
                 widget.sharedBoard!.roleOf(SharedBoardStore.instance.uid),
-              ),
+              )
+            : _isPersonal
+            ? PlaceDetailSource.personalBoard(boardId)
+            : PlaceDetailSource.mine,
       ),
     );
     if (!widget.canRemove) return tile;
@@ -770,7 +834,10 @@ class _SectionBlockState extends State<_SectionBlock> {
       child: Semantics(
         customSemanticsActions: {
           CustomSemanticsAction(label: 'Remove from board'): () =>
-              _removePlace(context, place),
+              _removePlace(context, place, animate: true),
+          if (_isPersonal)
+            CustomSemanticsAction(label: 'Move to another board'): () =>
+                _movePlace(context, place),
         },
         child: tile,
       ),
@@ -791,7 +858,56 @@ class _SectionBlockState extends State<_SectionBlock> {
     );
   }
 
-  Future<void> _removePlace(BuildContext context, Place place) async {
+  /// Plays the row's collapse-out, then runs [mutate] (the store update
+  /// that drops the row). The store call is started before clearing
+  /// [_leaving] so both land in the same frame — no flash of the row.
+  /// Runs [mutate] even if this block is disposed mid-animation.
+  Future<T> _collapseThen<T>(
+    String placeId,
+    Future<T> Function() mutate,
+  ) async {
+    if (!mounted) return mutate();
+    setState(() => _leaving.add(placeId));
+    // The collapse starts on the next frame; allow a couple of frames of
+    // slack so the row is fully gone before the store drops it.
+    await Future<void>.delayed(
+      _leaveDuration + const Duration(milliseconds: 32),
+    );
+    final result = mutate();
+    if (mounted) setState(() => _leaving.remove(placeId));
+    return result;
+  }
+
+  /// Personal boards only: pick a target in the move picker (the current
+  /// board shown as "Current"), collapse the row, then move it in one store
+  /// update. "Moved to …" + UNDO goes on the Boards tab's messenger, which
+  /// is visible again once the picker has closed.
+  Future<void> _movePlace(BuildContext context, Place place) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final target = await BoardPickerSheet.pickMoveTarget(
+      context,
+      place,
+      fromBoardId: boardId,
+    );
+    if (target == null) return;
+    final move = await _collapseThen(
+      place.id,
+      () => BoardStore.instance.movePlace(
+        placeId: place.id,
+        fromBoardId: boardId,
+        toBoardId: target.id,
+      ),
+    );
+    if (move != null) showMovedSnackBar(messenger, move);
+  }
+
+  /// [animate]: collapse the row first (menu / a11y action); a swipe has
+  /// already animated it via Dismissible.
+  Future<void> _removePlace(
+    BuildContext context,
+    Place place, {
+    bool animate = false,
+  }) async {
     // Grabbed before the store mutation optimistically rebuilds this row's
     // ancestors without it.
     final messenger = ScaffoldMessenger.of(context);
@@ -819,26 +935,68 @@ class _SectionBlockState extends State<_SectionBlock> {
       );
       return;
     }
-    final removedFrom = await BoardStore.instance.removePlaceFromBoard(
+    // Snapshot first: UNDO writes it back in one update, so the place
+    // returns to its old section and position (re-adding would append it).
+    final before = BoardStore.instance.byIdOrNull(boardId);
+    Future<List<String>> remove() => BoardStore.instance.removePlaceFromBoard(
       boardId: boardId,
       placeId: place.id,
     );
-    if (removedFrom.isEmpty) return;
+    final removedFrom = animate
+        ? await _collapseThen(place.id, remove)
+        : await remove();
+    if (removedFrom.isEmpty || before == null) return;
+    messenger.removeCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
         content: Text('Removed from $boardName'),
         action: SnackBarAction(
           label: 'UNDO',
-          onPressed: () {
-            for (final title in removedFrom) {
-              BoardStore.instance.addPlaceToBoard(
-                boardId: boardId,
-                placeId: place.id,
-                sectionTitle: title,
-              );
-            }
-          },
+          onPressed: () => BoardStore.instance.restoreBoards([before]),
         ),
+      ),
+    );
+  }
+}
+
+/// Shrinks and fades [child] to nothing over [duration] as soon as it is
+/// built — a row leaving its section.
+class _CollapseOut extends StatefulWidget {
+  const _CollapseOut({required this.duration, required this.child});
+
+  final Duration duration;
+  final Widget child;
+
+  @override
+  State<_CollapseOut> createState() => _CollapseOutState();
+}
+
+class _CollapseOutState extends State<_CollapseOut>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.duration,
+    value: 1,
+  )..reverse();
+
+  late final Animation<double> _curve = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOut,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: SizeTransition(
+        sizeFactor: _curve,
+        axisAlignment: -1,
+        child: FadeTransition(opacity: _curve, child: widget.child),
       ),
     );
   }

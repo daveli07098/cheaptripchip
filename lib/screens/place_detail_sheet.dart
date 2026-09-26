@@ -31,10 +31,16 @@ import '../widgets/score_stars.dart';
 /// member's own rating (`_SharedRatingsSection`), which lives in the
 /// board's `ratings` subcollection, not in anyone's Saved store.
 class PlaceDetailSource {
-  const PlaceDetailSource._({this.board, this.role});
+  const PlaceDetailSource._({this.board, this.role, this.personalBoardId});
 
   /// The default: the place is the user's own.
   static const mine = PlaceDetailSource._();
+
+  /// The user's own place, opened from their personal board
+  /// [personalBoardId] — same as [mine], plus a "Move to another board"
+  /// action.
+  factory PlaceDetailSource.personalBoard(String boardId) =>
+      PlaceDetailSource._(personalBoardId: boardId);
 
   /// Opened from [board]'s place list, as [role] (owner/editor/viewer).
   factory PlaceDetailSource.sharedBoard(SharedBoard board, BoardRole? role) =>
@@ -42,6 +48,9 @@ class PlaceDetailSource {
 
   final SharedBoard? board;
   final BoardRole? role;
+
+  /// Set when opened from one of the user's personal boards.
+  final String? personalBoardId;
 
   bool get isSharedBoard => board != null;
 }
@@ -170,7 +179,10 @@ class PlaceDetailSheet extends StatelessWidget {
                 const SizedBox(height: 18),
                 source.isSharedBoard
                     ? _SharedActionRow(place: place)
-                    : _ActionRow(place: place),
+                    : _ActionRow(
+                        place: place,
+                        fromBoardId: source.personalBoardId,
+                      ),
                 const SizedBox(height: 20),
                 _SectionLabel('About / 簡介'),
                 const SizedBox(height: 6),
@@ -874,9 +886,14 @@ class _RestaurantTypePicker extends StatelessWidget {
 }
 
 class _ActionRow extends StatelessWidget {
-  const _ActionRow({required this.place});
+  const _ActionRow({required this.place, this.fromBoardId});
 
   final Place place;
+
+  /// Personal board the sheet was opened from (see
+  /// [PlaceDetailSource.personalBoard]); enables "Move to another board"
+  /// while the place is still on it.
+  final String? fromBoardId;
 
   @override
   Widget build(BuildContext context) {
@@ -932,9 +949,39 @@ class _ActionRow extends StatelessWidget {
             );
           },
         ),
+        if (fromBoardId case final boardId?)
+          ValueListenableBuilder<List<Board>>(
+            valueListenable: BoardStore.instance.boards,
+            builder: (context, _, _) =>
+                BoardStore.instance.containsPlace(boardId, place.id)
+                ? _IconAction(
+                    icon: Icons.drive_file_move_outline,
+                    tooltip: 'Move to another board',
+                    onTap: () => _move(context, boardId),
+                  )
+                : const SizedBox.shrink(),
+          ),
         _IconAction(icon: Icons.ios_share, tooltip: 'Share', onTap: _share),
       ],
     );
+  }
+
+  /// Move picker over this sheet; once it closes, the move lands and
+  /// "Moved to …" shows on this sheet's own messenger (topmost again).
+  Future<void> _move(BuildContext context, String boardId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final target = await BoardPickerSheet.pickMoveTarget(
+      context,
+      place,
+      fromBoardId: boardId,
+    );
+    if (target == null) return;
+    final move = await BoardStore.instance.movePlace(
+      placeId: place.id,
+      fromBoardId: boardId,
+      toBoardId: target.id,
+    );
+    if (move != null) showMovedSnackBar(messenger, move);
   }
 
   Future<void> _share() async {

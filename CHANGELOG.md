@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Move a place between personal boards: the row ⋮ menu on a personal
+  board ("Move to board…" / "Remove from board"), a long-press on the row,
+  or "Move to another board" on the place page opened from that board. The
+  board picker opens in move mode (source tagged "Current", tap a target or
+  create a new board), the row collapses out, and `BoardStore.movePlace`
+  takes it off the source and onto the target's category section in one
+  optimistic update and one repository write (`BoardRepository.upsertAll`:
+  a single change event locally, one atomic `WriteBatch` on Firestore) —
+  no frame shows the place on both boards or neither. "Moved to …" with
+  UNDO (`undoMove`, restores both boards exactly) shows on the Boards tab or
+  the place page once the picker has closed. Shared boards keep the
+  existing add/remove flow.
 - Shared-board ratings: on a shared board's place page every member (owner,
   editor or viewer) rates the place — "Ratings / 評分" shows "Your rating"
   (editable stars + remark box) with every other current member's rating
@@ -261,6 +273,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   owner's place id, so the personal widgets' usual `PlaceStore`/`PhotoStore`
   lookups by id would leak the owner's own photo, score, and notes.
 ### Fixed
+- Boards tab: board cards no longer collapse (and their sections no longer
+  reset) when the list shifts — e.g. the "New finds" card appearing after
+  a place is removed from its last board, or a board delete/undo. The
+  `ListView` now matches cards by key (`findItemIndexCallback`) instead of
+  reusing state by index.
+- Removing a place from a board (swipe, row menu, or the add picker) now
+  undoes in place: UNDO writes back the pre-removal board in one update, so
+  the place returns to its old section and position instead of being
+  appended to the end (one rebuild instead of one per section).
 - Detail sheet's "Add to board" button gave no feedback on success and no
   indication a place was already saved anywhere, so a re-tap silently
   no-opped: the button now reads "In <board name>" / "In N boards" (kept in

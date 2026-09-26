@@ -160,6 +160,23 @@ class FirestoreBoardRepository implements BoardRepository {
         .set(board.toJson(), SetOptions(merge: true));
   }
 
+  /// One [WriteBatch] for all [boards]: it commits atomically, so the
+  /// snapshot listener (and other devices) see every board change at once
+  /// rather than one intermediate snapshot per doc.
+  @override
+  Future<void> upsertAll(List<Board> boards) async {
+    if (boards.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final board in boards) {
+      batch.set(
+        _collection.doc(board.id),
+        board.toJson(),
+        SetOptions(merge: true),
+      );
+    }
+    await batch.commit();
+  }
+
   @override
   Future<void> delete(String id) => _collection.doc(id).delete();
 }

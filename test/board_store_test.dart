@@ -2,6 +2,7 @@ import 'package:cheaptripchip/data/board_store.dart';
 import 'package:cheaptripchip/data/local_repositories.dart';
 import 'package:cheaptripchip/data/mock_data.dart';
 import 'package:cheaptripchip/data/place_store.dart';
+import 'package:cheaptripchip/models/board.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -209,6 +210,147 @@ void main() {
 
       final persisted = await repository.watch().first;
       expect(persisted.any((b) => b.id == 'b1'), isFalse);
+    });
+
+    group('movePlace', () {
+      List<String> ids(Board board) => [
+        for (final section in board.sections) ...section.placeIds,
+      ];
+      Map<String, List<String>> shape(Board board) => {
+        for (final section in board.sections) section.title: section.placeIds,
+      };
+
+      test('moves the place off the source (pruning its emptied section) '
+          'onto the target, in the category section; every emit is already '
+          'the final state and the repository gets one change', () async {
+        final repository = LocalBoardRepository();
+        final store = BoardStore.instance..bindRepository(repository);
+        await Future<void>.delayed(Duration.zero);
+        final nightlife = MockData.placeById('p5').category.labelEn;
+
+        final repoEvents = <List<Board>>[];
+        final sub = repository.watch().skip(1).listen(repoEvents.add);
+        final snapshots = <List<Board>>[];
+        void record() => snapshots.add(store.boards.value);
+        store.boards.addListener(record);
+
+        final move = await store.movePlace(
+          placeId: 'p5',
+          fromBoardId: 'b1',
+          toBoardId: 'b2',
+        );
+        await Future<void>.delayed(Duration.zero);
+        store.boards.removeListener(record);
+        await sub.cancel();
+
+        expect(move, isNotNull);
+        expect(move!.from.id, 'b1');
+        expect(move.to.id, 'b2');
+        expect(store.containsPlace('b1', 'p5'), isFalse);
+        expect(
+          store.byIdOrNull('b1')!.sections.map((s) => s.title),
+          isNot(contains('Nightlife')),
+        );
+        expect(shape(store.byIdOrNull('b2')!)[nightlife], ['p5']);
+
+        // No intermediate frame with p5 on both boards or on neither.
+        expect(snapshots, isNotEmpty);
+        for (final snapshot in snapshots) {
+          final b1 = snapshot.firstWhere((b) => b.id == 'b1');
+          final b2 = snapshot.firstWhere((b) => b.id == 'b2');
+          expect(ids(b1), isNot(contains('p5')));
+          expect(ids(b2), contains('p5'));
+        }
+        // Optimistic update + the repository's single echo.
+        expect(snapshots, hasLength(2));
+        expect(repoEvents, hasLength(1));
+      });
+
+      test('undoMove restores both boards exactly, in one emit', () async {
+        final store = BoardStore.instance;
+        final b1Before = shape(store.byIdOrNull('b1')!);
+        final b2Before = shape(store.byIdOrNull('b2')!);
+
+        final move = await store.movePlace(
+          placeId: 'p5',
+          fromBoardId: 'b1',
+          toBoardId: 'b2',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        var emits = 0;
+        void count() => emits++;
+        store.boards.addListener(count);
+        await store.undoMove(move!);
+        store.boards.removeListener(count);
+        // Optimistic restore only — the echo lands on the next hop.
+        expect(emits, 1);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(shape(store.byIdOrNull('b1')!), b1Before);
+        expect(store.byIdOrNull('b1')!.sections.map((s) => s.title).toList(), [
+          'Food',
+          'Sightseeing',
+          'Nightlife',
+          'Stay',
+        ]);
+        expect(shape(store.byIdOrNull('b2')!), b2Before);
+      });
+
+      test('a target already holding the place just loses the source copy '
+          '(no duplicate)', () async {
+        final store = BoardStore.instance;
+        // p3 is seeded into both b1 (Food) and b2 (Cafés).
+        final move = await store.movePlace(
+          placeId: 'p3',
+          fromBoardId: 'b1',
+          toBoardId: 'b2',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(move, isNotNull);
+        expect(store.containsPlace('b1', 'p3'), isFalse);
+        expect(
+          ids(store.byIdOrNull('b2')!).where((id) => id == 'p3'),
+          hasLength(1),
+        );
+      });
+
+      test('same board, unknown board or a place not on the source is a '
+          'no-op returning null with no emit', () async {
+        final store = BoardStore.instance;
+        var emits = 0;
+        void count() => emits++;
+        store.boards.addListener(count);
+
+        expect(
+          await store.movePlace(
+            placeId: 'p5',
+            fromBoardId: 'b1',
+            toBoardId: 'b1',
+          ),
+          isNull,
+        );
+        expect(
+          await store.movePlace(
+            placeId: 'p5',
+            fromBoardId: 'b1',
+            toBoardId: 'nope',
+          ),
+          isNull,
+        );
+        expect(
+          await store.movePlace(
+            placeId: 'p1',
+            fromBoardId: 'b2',
+            toBoardId: 'b1',
+          ),
+          isNull,
+        );
+        await Future<void>.delayed(Duration.zero);
+        store.boards.removeListener(count);
+        expect(emits, 0);
+      });
     });
   });
 }

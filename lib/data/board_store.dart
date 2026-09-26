@@ -262,6 +262,82 @@ class BoardStore {
     await _repository.upsert(updated);
   }
 
+  /// Moves [placeId] off board [fromBoardId] (every section it sits in,
+  /// pruning emptied sections — same rule as [removePlaceFromBoard]) and
+  /// onto board [toBoardId], in the section titled by the place's
+  /// `category.labelEn` (falling back to the first source section's title
+  /// if the place isn't known) — same default as "Add to board". If the
+  /// target already holds the place it is only taken off the source.
+  ///
+  /// Both boards change in one optimistic [boards] update and one
+  /// [BoardRepository.upsertAll] (an atomic batch on Firestore), so no
+  /// listener ever sees the place on both boards or on neither. Returns a
+  /// [BoardMove] for [undoMove], or null (nothing changed) when the boards
+  /// are the same, either is missing, or the source doesn't hold the place.
+  Future<BoardMove?> movePlace({
+    required String placeId,
+    required String fromBoardId,
+    required String toBoardId,
+  }) async {
+    if (fromBoardId == toBoardId) return null;
+    final from = byIdOrNull(fromBoardId);
+    final to = byIdOrNull(toBoardId);
+    if (from == null || to == null) return null;
+    final sourceTitles = [
+      for (final section in from.sections)
+        if (section.placeIds.contains(placeId)) section.title,
+    ];
+    if (sourceTitles.isEmpty) return null;
+
+    final title =
+        PlaceStore.instance.byIdOrNull(placeId)?.category.labelEn ??
+        sourceTitles.first;
+    final movedFrom = from.copyWith(
+      sections: sectionsWithChanges(
+        from.sections,
+        remove: {placeId},
+        sectionTitleFor: (_) => title,
+      ),
+    );
+    final movedTo = to.copyWith(
+      sections: sectionsWithChanges(
+        to.sections,
+        add: [placeId],
+        sectionTitleFor: (_) => title,
+      ),
+    );
+    await _replaceAll([movedFrom, movedTo]);
+    return BoardMove(placeId: placeId, from: from, to: to);
+  }
+
+  /// Reverts [move] by putting both boards back exactly as they were
+  /// before it (so the place returns to its old section and position) — one
+  /// update, one write. Like [restoreBoard], this snapshot restore
+  /// overwrites any other edit made to either board since the move; boards
+  /// deleted since then are left deleted.
+  Future<void> undoMove(BoardMove move) => restoreBoards([move.from, move.to]);
+
+  /// Writes back [snapshots] (earlier versions of boards that still exist)
+  /// in one optimistic update and one repository write — the exact-position
+  /// undo for a move or a place removal. Snapshots of boards no longer in
+  /// [boards] are skipped.
+  Future<void> restoreBoards(List<Board> snapshots) {
+    final live = [
+      for (final board in snapshots)
+        if (byIdOrNull(board.id) != null) board,
+    ];
+    return _replaceAll(live);
+  }
+
+  /// Replaces every board in [updated] (by id) in a single [boards] emit,
+  /// then persists them together.
+  Future<void> _replaceAll(List<Board> updated) async {
+    if (updated.isEmpty) return;
+    final byId = {for (final board in updated) board.id: board};
+    boards.value = [for (final b in boards.value) byId[b.id] ?? b];
+    await _repository.upsertAll(updated);
+  }
+
   /// True if board [boardId] has any section containing [placeId].
   bool containsPlace(String boardId, String placeId) {
     final board = byIdOrNull(boardId);
@@ -276,4 +352,22 @@ class BoardStore {
         .where((board) => containsPlace(board.id, placeId))
         .toList();
   }
+}
+
+/// Result of [BoardStore.movePlace]: the moved place and both boards as
+/// they were just before the move, for [BoardStore.undoMove].
+class BoardMove {
+  const BoardMove({
+    required this.placeId,
+    required this.from,
+    required this.to,
+  });
+
+  final String placeId;
+
+  /// Source board, pre-move.
+  final Board from;
+
+  /// Target board, pre-move.
+  final Board to;
 }

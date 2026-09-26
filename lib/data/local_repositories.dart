@@ -77,6 +77,10 @@ class LocalBoardRepository implements BoardRepository {
   @override
   Future<void> upsert(Board board) => _collection.upsertAll([board]);
 
+  /// Same as [upsert] for several boards with a single change event.
+  @override
+  Future<void> upsertAll(List<Board> boards) => _collection.upsertAll(boards);
+
   @override
   Future<void> delete(String id) => _collection.delete(id);
 

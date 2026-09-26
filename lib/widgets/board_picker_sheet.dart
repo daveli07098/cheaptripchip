@@ -21,14 +21,45 @@ String addToBoardLabel(List<Board> containing) {
   return 'In ${containing.length} boards';
 }
 
+/// Shows a "Moved to …" SnackBar whose UNDO puts both boards back as they
+/// were (see [BoardStore.undoMove]). Callers grab [messenger] before
+/// awaiting anything, from a context whose messenger is visible once the
+/// picker has closed (the Boards tab's Scaffold, or the place sheet's own).
+void showMovedSnackBar(ScaffoldMessengerState messenger, BoardMove move) {
+  final target = BoardStore.instance.byIdOrNull(move.to.id) ?? move.to;
+  messenger.removeCurrentSnackBar();
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text('Moved to ${target.name}'),
+      action: SnackBarAction(
+        label: 'UNDO',
+        onPressed: () => BoardStore.instance.undoMove(move),
+      ),
+    ),
+  );
+}
+
 /// "Add to board" picker: a Google-Maps-"Save to list"-style sheet listing
 /// every stored board with a checkbox toggled by [BoardStore.containsPlace],
 /// plus "New board…" at the bottom. Tapping a row toggles membership
 /// immediately and the sheet stays open so several boards can be picked.
+///
+/// With [moveFromBoardId] set (see [pickMoveTarget]) it is a single-choice
+/// "Move to board" picker instead: the source board is shown disabled as
+/// "Current", tapping another board (or creating one) closes the sheet and
+/// returns it — the caller performs the move, so it can animate the row out
+/// first and show the SnackBar where it is visible.
 class BoardPickerSheet extends StatelessWidget {
-  const BoardPickerSheet({super.key, required this.place});
+  const BoardPickerSheet({
+    super.key,
+    required this.place,
+    this.moveFromBoardId,
+  });
 
   final Place place;
+
+  /// Board the place is being moved off; null for the add/remove picker.
+  final String? moveFromBoardId;
 
   static Future<void> show(BuildContext context, Place place) {
     return showModalBottomSheet(
@@ -36,6 +67,23 @@ class BoardPickerSheet extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => BoardPickerSheet(place: place),
+    );
+  }
+
+  /// Opens the picker in move mode; resolves to the chosen target board, or
+  /// null if dismissed. Personal boards only — shared boards keep the
+  /// add/remove flow.
+  static Future<Board?> pickMoveTarget(
+    BuildContext context,
+    Place place, {
+    required String fromBoardId,
+  }) {
+    return showModalBottomSheet<Board>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) =>
+          BoardPickerSheet(place: place, moveFromBoardId: fromBoardId),
     );
   }
 
@@ -58,7 +106,11 @@ class BoardPickerSheet extends StatelessWidget {
           child: Scaffold(
             backgroundColor: Colors.transparent,
             resizeToAvoidBottomInset: false,
-            body: _PickerBody(place: place, controller: controller),
+            body: _PickerBody(
+              place: place,
+              controller: controller,
+              moveFromBoardId: moveFromBoardId,
+            ),
           ),
         );
       },
@@ -67,10 +119,15 @@ class BoardPickerSheet extends StatelessWidget {
 }
 
 class _PickerBody extends StatefulWidget {
-  const _PickerBody({required this.place, required this.controller});
+  const _PickerBody({
+    required this.place,
+    required this.controller,
+    required this.moveFromBoardId,
+  });
 
   final Place place;
   final ScrollController controller;
+  final String? moveFromBoardId;
 
   @override
   State<_PickerBody> createState() => _PickerBodyState();
@@ -80,6 +137,8 @@ class _PickerBodyState extends State<_PickerBody> {
   final _nameController = TextEditingController();
   bool _creatingNew = false;
   bool _busy = false;
+
+  bool get _moving => widget.moveFromBoardId != null;
 
   @override
   void dispose() {
@@ -103,24 +162,19 @@ class _PickerBodyState extends State<_PickerBody> {
 
   Future<void> _toggle(Board board, bool alreadyIn) async {
     if (alreadyIn) {
+      // Snapshot first: UNDO writes it back, so the place returns to its
+      // old section and position in one update.
+      final before = BoardStore.instance.byIdOrNull(board.id);
       final removedFrom = await BoardStore.instance.removePlaceFromBoard(
         boardId: board.id,
         placeId: widget.place.id,
       );
-      if (removedFrom.isEmpty || !mounted) return;
+      if (removedFrom.isEmpty || before == null || !mounted) return;
       _notify(
         'Removed from ${board.name}',
         action: SnackBarAction(
           label: 'UNDO',
-          onPressed: () async {
-            for (final title in removedFrom) {
-              await BoardStore.instance.addPlaceToBoard(
-                boardId: board.id,
-                placeId: widget.place.id,
-                sectionTitle: title,
-              );
-            }
-          },
+          onPressed: () => BoardStore.instance.restoreBoards([before]),
         ),
       );
     } else {
@@ -138,6 +192,13 @@ class _PickerBodyState extends State<_PickerBody> {
     if (name.isEmpty) return;
     setState(() => _busy = true);
     try {
+      if (_moving) {
+        // Move mode: create an empty board and hand it back — the caller's
+        // move puts the place in it and takes it off the source together.
+        final board = await BoardStore.instance.createBoard(name);
+        if (mounted) Navigator.pop(context, board);
+        return;
+      }
       // One upsert with the section pre-filled, rather than createBoard +
       // addPlaceToBoard — the latter reads back `boards` in between and can
       // race the repository's asynchronous echo (see board_store.dart).
@@ -162,6 +223,29 @@ class _PickerBodyState extends State<_PickerBody> {
     }
   }
 
+  /// Move-mode row: the source board is disabled and tagged "Current";
+  /// any other board closes the sheet with it as the target.
+  Widget _moveTile(BuildContext context, Board board) {
+    final isCurrent = board.id == widget.moveFromBoardId;
+    final alreadyThere =
+        !isCurrent &&
+        BoardStore.instance.containsPlace(board.id, widget.place.id);
+    final count =
+        '${board.itemCount} ${board.itemCount == 1 ? 'place' : 'places'}';
+    return ListTile(
+      enabled: !isCurrent && !_busy,
+      leading: ExcludeSemantics(
+        child: Text(board.emoji, style: const TextStyle(fontSize: 22)),
+      ),
+      title: Text(board.name),
+      subtitle: Text(alreadyThere ? '$count · already here' : count),
+      trailing: isCurrent
+          ? const Text('Current', style: TextStyle(fontWeight: FontWeight.w600))
+          : const Icon(Icons.drive_file_move_outline),
+      onTap: isCurrent ? null : () => Navigator.pop(context, board),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -177,11 +261,14 @@ class _PickerBodyState extends State<_PickerBody> {
           controller: widget.controller,
           padding: EdgeInsets.zero,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Text(
-                'Add to board',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                _moving ? 'Move to board' : 'Add to board',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             ValueListenableBuilder<List<Board>>(
@@ -193,32 +280,35 @@ class _PickerBodyState extends State<_PickerBody> {
                 return Column(
                   children: [
                     for (final board in storedBoards)
-                      CheckboxListTile(
-                        value: BoardStore.instance.containsPlace(
-                          board.id,
-                          widget.place.id,
-                        ),
-                        // onChanged carries the *new* value the tap wants;
-                        // false means it was checked (in the board) and is
-                        // being unchecked, i.e. a removal.
-                        onChanged: (newValue) =>
-                            _toggle(board, newValue == false),
-                        controlAffinity: ListTileControlAffinity.trailing,
-                        // The tile's own title already carries the board
-                        // name for screen readers — just hide the raw emoji
-                        // glyph rather than re-labelling it (WCAG 1.4.1).
-                        secondary: ExcludeSemantics(
-                          child: Text(
-                            board.emoji,
-                            style: const TextStyle(fontSize: 22),
+                      if (_moving)
+                        _moveTile(context, board)
+                      else
+                        CheckboxListTile(
+                          value: BoardStore.instance.containsPlace(
+                            board.id,
+                            widget.place.id,
+                          ),
+                          // onChanged carries the *new* value the tap wants;
+                          // false means it was checked (in the board) and is
+                          // being unchecked, i.e. a removal.
+                          onChanged: (newValue) =>
+                              _toggle(board, newValue == false),
+                          controlAffinity: ListTileControlAffinity.trailing,
+                          // The tile's own title already carries the board
+                          // name for screen readers — just hide the raw emoji
+                          // glyph rather than re-labelling it (WCAG 1.4.1).
+                          secondary: ExcludeSemantics(
+                            child: Text(
+                              board.emoji,
+                              style: const TextStyle(fontSize: 22),
+                            ),
+                          ),
+                          title: Text(board.name),
+                          subtitle: Text(
+                            '${board.itemCount} '
+                            '${board.itemCount == 1 ? 'place' : 'places'}',
                           ),
                         ),
-                        title: Text(board.name),
-                        subtitle: Text(
-                          '${board.itemCount} '
-                          '${board.itemCount == 1 ? 'place' : 'places'}',
-                        ),
-                      ),
                   ],
                 );
               },
@@ -265,7 +355,7 @@ class _PickerBodyState extends State<_PickerBody> {
                 alignment: Alignment.centerRight,
                 child: FilledButton.tonal(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Done'),
+                  child: Text(_moving ? 'Cancel' : 'Done'),
                 ),
               ),
             ),
