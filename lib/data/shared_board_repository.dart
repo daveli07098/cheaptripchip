@@ -65,6 +65,16 @@ abstract class SharedBoardRepository {
   /// Owner removing [uid], or a member removing themself (leave).
   Future<void> removeMember(String boardId, String uid);
 
+  /// Owner removing [uid] and resetting the invite code in the same write,
+  /// so the removed member's old link stops working immediately. Not used
+  /// for self-leave — [isSelfLeave] in firestore.rules doesn't allow the
+  /// invite code to change.
+  Future<void> removeMemberResetLink(
+    String boardId,
+    String uid, {
+    required String inviteCode,
+  });
+
   /// Blind self-join with an invite [code], claiming [role] — must equal the
   /// board's `linkRole` for the rules to accept it.
   Future<JoinOutcome> join(

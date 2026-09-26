@@ -324,7 +324,7 @@ class _BoardCardState extends State<_BoardCard> {
                 placesById: placesById,
                 canRemove: _can.canEditPlaces,
                 canSaveCopies: _can.canSaveCopies,
-                shared: _shared != null,
+                sharedBoard: _shared,
               ),
           ],
         ),
@@ -574,7 +574,7 @@ class _SectionBlock extends StatefulWidget {
     required this.placesById,
     required this.canRemove,
     required this.canSaveCopies,
-    required this.shared,
+    required this.sharedBoard,
   });
 
   /// Board and board name the section belongs to — used to call
@@ -593,8 +593,10 @@ class _SectionBlock extends StatefulWidget {
   /// Rows offer "Save to my places" (shared boards, non-owners).
   final bool canSaveCopies;
 
-  /// The board is a shared board — removals go through SharedBoardStore.
-  final bool shared;
+  /// Set for a shared board (removals go through SharedBoardStore, and rows
+  /// open [PlaceDetailSheet] in [PlaceDetailSource.sharedBoard] mode); null
+  /// for a personal board.
+  final SharedBoard? sharedBoard;
 
   @override
   State<_SectionBlock> createState() => _SectionBlockState();
@@ -689,7 +691,16 @@ class _SectionBlockState extends State<_SectionBlock> {
               onPressed: () => _saveToMyPlaces(context, place),
             )
           : const Icon(Icons.chevron_right, size: 20),
-      onTap: () => PlaceDetailSheet.show(context, place),
+      onTap: () => PlaceDetailSheet.show(
+        context,
+        place,
+        source: widget.sharedBoard == null
+            ? PlaceDetailSource.mine
+            : PlaceDetailSource.sharedBoard(
+                widget.sharedBoard!,
+                widget.sharedBoard!.roleOf(SharedBoardStore.instance.uid),
+              ),
+      ),
     );
     if (!widget.canRemove) return tile;
 
@@ -749,7 +760,7 @@ class _SectionBlockState extends State<_SectionBlock> {
     // Grabbed before the store mutation optimistically rebuilds this row's
     // ancestors without it.
     final messenger = ScaffoldMessenger.of(context);
-    if (widget.shared) {
+    if (widget.sharedBoard != null) {
       final removed = await SharedBoardStore.instance.removePlace(
         boardId,
         place.id,

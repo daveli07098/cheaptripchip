@@ -342,13 +342,20 @@ class SharedBoardStore {
     await _repository!.setMemberRole(boardId, memberUid, role);
   }
 
-  /// Owner: remove [memberUid] from the board.
+  /// Owner: remove [memberUid] from the board, resetting the invite code in
+  /// the same write — the removed member's old link stops working right
+  /// away instead of only after a separate "Reset link".
   Future<void> removeMember(String boardId, String memberUid) async {
     final board = byIdOrNull(boardId);
     if (board == null || _repository == null) return;
     if (memberUid == board.ownerId) return;
-    _replace(board.withoutMember(memberUid));
-    await _repository!.removeMember(boardId, memberUid);
+    final code = BoardInviteLink.generateCode();
+    _replace(board.withoutMember(memberUid).copyWith(inviteCode: code));
+    await _repository!.removeMemberResetLink(
+      boardId,
+      memberUid,
+      inviteCode: code,
+    );
   }
 
   /// Non-owner: leave the board (it disappears from the Boards tab).
@@ -398,16 +405,26 @@ class SharedBoardStore {
     return result.board;
   }
 
+  /// Whether [place] (or an equivalent — [ImportService.isDuplicate]) is
+  /// already in [placeStore]'s Saved list. Shared by [saveToMyPlaces] and
+  /// the shared-board place detail sheet's "Save to my places" button, so
+  /// both agree on what counts as a duplicate.
+  bool isSaved(Place place, {PlaceStore? placeStore}) {
+    final store = placeStore ?? PlaceStore.instance;
+    for (final saved in store.places.value) {
+      if (saved.id == place.id || ImportService.isDuplicate(saved, place)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Copies a board place into the user's own Saved list with a fresh id
   /// and no one else's notes. Returns false when an equivalent place
   /// ([ImportService.isDuplicate]) is already saved.
   Future<bool> saveToMyPlaces(Place place, {PlaceStore? placeStore}) async {
+    if (isSaved(place, placeStore: placeStore)) return false;
     final store = placeStore ?? PlaceStore.instance;
-    for (final saved in store.places.value) {
-      if (saved.id == place.id || ImportService.isDuplicate(saved, place)) {
-        return false;
-      }
-    }
     final id =
         'shared-${DateTime.now().millisecondsSinceEpoch}-'
         '${_idRandom.nextInt(10000).toString().padLeft(4, '0')}';

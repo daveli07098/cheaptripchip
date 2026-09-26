@@ -327,13 +327,16 @@ class SharingSheet extends StatelessWidget {
     String uid,
     String name,
   ) async {
+    // Removing a member also resets the invite link (SharedBoardStore.
+    // removeMember) so their old link can't be used to rejoin — the link is
+    // only worth mentioning here when it was actually on.
     final confirmed = await _confirm(
       context,
       title: 'Remove $name?',
       body: board.linkRole == null
           ? 'They lose access to “${board.name}”.'
-          : 'They lose access to “${board.name}”. The invite link is on — '
-                'reset it too, or they can rejoin with it.',
+          : "They'll lose access and the current link stops working — "
+                'share the new link with anyone else who still needs it.',
       action: 'Remove',
     );
     if (confirmed) await _store.removeMember(board.id, uid);

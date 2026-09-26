@@ -160,6 +160,21 @@ class FirestoreSharedBoardRepository implements SharedBoardRepository {
   }
 
   @override
+  Future<void> removeMemberResetLink(
+    String boardId,
+    String uid, {
+    required String inviteCode,
+  }) {
+    return _boards.doc(boardId).update({
+      FieldPath(['members', uid]): FieldValue.delete(),
+      FieldPath(['memberNames', uid]): FieldValue.delete(),
+      'memberIds': FieldValue.arrayRemove([uid]),
+      'inviteCode': inviteCode,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
   Future<JoinOutcome> join(
     String boardId, {
     required String code,

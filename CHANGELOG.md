@@ -222,6 +222,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `PlaceDetailSheet` — it's itself the topmost modal route (over the detail
   sheet, which now stays open underneath it), so its "Added"/"Removed"
   SnackBars would otherwise render under its own modal barrier.
+- Removing a member from a shared board now resets the invite code in the
+  same Firestore write (`SharedBoardRepository.removeMemberResetLink`) —
+  their copy of the link stops working immediately instead of only after a
+  separate "Reset link". The remove dialog says so when the link is on.
+- `PlaceDetailSheet` takes a `PlaceDetailSource` (`.mine` or
+  `.sharedBoard(board, role)`, set on `PlaceDetailSheet.show`). Opening a
+  place from a shared board — any role, including the owner — now shows a
+  read-only view (header photo from `photoUrls` only, name, category/
+  sub-type, area, description, the owner's score/notes as plain text only
+  when the board includes them, "Open in Google Maps") with "Save to my
+  places" instead of favourite/My review/photo controls/area+type edit/
+  "Add to board", which all act on the user's own Saved store and would
+  otherwise read or write the wrong person's data — a shared copy keeps the
+  owner's place id, so the personal widgets' usual `PlaceStore`/`PhotoStore`
+  lookups by id would leak the owner's own photo, score, and notes.
 ### Fixed
 - Detail sheet's "Add to board" button gave no feedback on success and no
   indication a place was already saved anywhere, so a re-tap silently

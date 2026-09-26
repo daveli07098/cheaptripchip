@@ -16,6 +16,11 @@ class FakeSharedBoardRepository implements SharedBoardRepository {
   /// Every join attempt as (boardId, role), for assertions.
   final List<(String, BoardRole)> joinAttempts = [];
 
+  /// Every method invoked, for assertions on which write path a store
+  /// method took (e.g. that `removeMember` uses the combined write, not a
+  /// separate `updateLink`).
+  final List<String> calls = [];
+
   void _changed() => _changes.add(null);
 
   /// Seeds a board as if another user created it.
@@ -88,6 +93,7 @@ class FakeSharedBoardRepository implements SharedBoardRepository {
     required BoardRole? linkRole,
     required String inviteCode,
   }) async {
+    calls.add('updateLink');
     boards[boardId] = boards[boardId]!.copyWith(
       linkRole: linkRole,
       clearLinkRole: linkRole == null,
@@ -117,7 +123,21 @@ class FakeSharedBoardRepository implements SharedBoardRepository {
 
   @override
   Future<void> removeMember(String boardId, String uid) async {
+    calls.add('removeMember');
     boards[boardId] = boards[boardId]!.withoutMember(uid);
+    _changed();
+  }
+
+  @override
+  Future<void> removeMemberResetLink(
+    String boardId,
+    String uid, {
+    required String inviteCode,
+  }) async {
+    calls.add('removeMemberResetLink');
+    boards[boardId] = boards[boardId]!
+        .withoutMember(uid)
+        .copyWith(inviteCode: inviteCode);
     _changed();
   }
 

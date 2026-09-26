@@ -2,13 +2,14 @@
 // (see ../firestore.rules). Run from this directory with the emulator:
 //   JAVA_HOME=... npm run test:emulator
 import { readFileSync } from 'node:fs';
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertFails,
   assertSucceeds,
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
+  arrayRemove,
   arrayUnion,
   deleteDoc,
   deleteField,
@@ -185,6 +186,43 @@ describe('owner updates', () => {
     await assertFails(deleteDoc(boardRef('eddie')));
     await assertFails(deleteDoc(boardRef('vera')));
     await assertSucceeds(deleteDoc(boardRef('alice')));
+  });
+});
+
+describe('remove member + reset link (lib/data/shared_board_store.dart removeMember)', () => {
+  const NEW_CODE = 'z'.repeat(24);
+
+  function removeAndReset(uid, inviteCode = NEW_CODE) {
+    return updateDoc(boardRef('alice'), {
+      [`members.${uid}`]: deleteField(),
+      [`memberNames.${uid}`]: deleteField(),
+      memberIds: arrayRemove(uid),
+      inviteCode,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  it('owner removes a member and changes the invite code in one write', async () => {
+    await assertSucceeds(removeAndReset('vera'));
+    let after;
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      after = (await getDoc(doc(ctx.firestore(), 'sharedBoards', BOARD))).data();
+    });
+    expect(after.memberIds).not.toContain('vera');
+    expect(after.inviteCode).toBe(NEW_CODE);
+  });
+
+  it("the removed member's old link stops working; the new one lets them rejoin", async () => {
+    await removeAndReset('vera');
+    await assertFails(updateDoc(boardRef('vera'), joinUpdate('vera', 'viewer', CODE)));
+    await assertSucceeds(updateDoc(boardRef('vera'), joinUpdate('vera', 'viewer', NEW_CODE)));
+  });
+
+  it('rejoining with the new code still fails while the link is off', async () => {
+    await env.clearFirestore();
+    await seed(baseBoard({ linkRole: null }));
+    await removeAndReset('vera');
+    await assertFails(updateDoc(boardRef('vera'), joinUpdate('vera', 'viewer', NEW_CODE)));
   });
 });
 

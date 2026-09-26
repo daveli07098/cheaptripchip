@@ -203,14 +203,44 @@ void main() {
     expect(repo.boards['sb']!.memberIds, ['alice']);
   });
 
+  test(
+    'removeMember removes the member and resets the invite link in one write',
+    () async {
+      repo.seed(
+        _aliceBoard(
+          linkRole: BoardRole.editor,
+        ).withMember('bob', BoardRole.viewer, name: 'Bob'),
+      );
+      store.bindRepository(repo, _alice);
+      await _settle();
+      final codeBefore = repo.boards['sb']!.inviteCode;
+
+      await store.removeMember('sb', 'bob');
+      await _settle();
+
+      final board = repo.boards['sb']!;
+      expect(board.memberIds, ['alice']);
+      expect(board.memberNames.containsKey('bob'), isFalse);
+      expect(board.inviteCode, isNot(codeBefore));
+      expect(board.inviteCode.length, greaterThanOrEqualTo(22));
+      expect(store.byIdOrNull('sb')!.inviteCode, board.inviteCode);
+      // One combined write, not a member removal plus a separate link reset.
+      expect(repo.calls, ['removeMemberResetLink']);
+      expect(repo.calls, isNot(contains('updateLink')));
+    },
+  );
+
   test('leave removes the board locally and remotely', () async {
     repo.seed(_aliceBoard().withMember('bob', BoardRole.viewer));
     store.bindRepository(repo, _bob);
     await _settle();
+    final codeBefore = repo.boards['sb']!.inviteCode;
     await store.leave('sb');
     await _settle();
     expect(store.boards.value, isEmpty);
     expect(repo.boards['sb']!.members.containsKey('bob'), isFalse);
+    // Self-leave never resets the link — only the owner's removeMember does.
+    expect(repo.boards['sb']!.inviteCode, codeBefore);
   });
 
   test(

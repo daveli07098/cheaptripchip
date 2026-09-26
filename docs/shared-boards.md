@@ -27,8 +27,10 @@ the rules accept only `members.<uid> == linkRole` with `joinCode == inviteCode`.
 
 Known trade-off: every member can read `inviteCode`, so anyone on the board can forward a
 working link (and with an editor link, a viewer could leave and rejoin as editor). "Reset link"
-invalidates all earlier links. Removing a member doesn't revoke the link either — while it's on
-they can rejoin, so the remove dialog tells the owner to reset it.
+invalidates all earlier links. Removing a member also resets the invite code in the same write
+(`SharedBoardStore.removeMember` → `SharedBoardRepository.removeMemberResetLink`), so the
+removed member's copy of the link stops working immediately — anyone else still on the board
+needs the new link.
 
 ## Rules tests
 
@@ -51,10 +53,25 @@ at `~/.npm-global/bin/firebase`; needs Java 21 — Android Studio's JBR works).
 `assetlinks.json` lists only the **debug** keystore's SHA-256 — add the release key's
 fingerprint before shipping a release build. iOS universal links need an Apple team id.
 
+## Place detail
+
+Opening a place from a shared board (any role, including the owner) shows
+`PlaceDetailSheet` in read-only mode (`PlaceDetailSource.sharedBoard(board, role)`,
+set by `lib/screens/boards_screen.dart`'s row `onTap`): header photo from `photoUrls`
+only, name, category/sub-type, area, description, the owner's score/notes as plain
+text only when the board carries them (`includeOwnerNotes`), "Open in Google Maps",
+and "Save to my places" (same dedupe as the Boards tab's row action,
+`SharedBoardStore.isSaved`/`saveToMyPlaces`). No favourite toggle, My review editor,
+photo controls, area/type edit, or "Add to board" — those act on the user's own
+Saved/Photo stores, and a shared copy keeps the owner's own place id, so the personal
+widgets' usual store lookups by id would leak the owner's private data to every
+member. Editing the shared copy's fields themselves (for owner/editor) is still out
+of scope.
+
 ## Follow-ups
 
 - Shared boards' places don't appear on the map (only your own Saved places do).
 - The owner's later edits to their own Saved place don't sync to the shared copy.
-- Place detail editing (score/notes/type) only affects your own Saved places; editors can't
-  edit a shared place's fields yet. The board picker (add place → board) lists personal
+- Editors can't edit a shared place's own fields (name/score/notes/type) yet — only
+  add/remove places and sections. The board picker (add place → board) lists personal
   boards only.

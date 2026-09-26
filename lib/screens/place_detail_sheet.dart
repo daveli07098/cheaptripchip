@@ -7,14 +7,41 @@ import 'package:url_launcher/url_launcher.dart';
 import '../data/board_store.dart';
 import '../data/photo_store.dart';
 import '../data/place_store.dart';
+import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/shared_board.dart';
 import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/place_photo.dart';
 import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
+
+/// Where a [PlaceDetailSheet] was opened from. [mine] (the default) is the
+/// user's own Saved place (or the auto "New finds" board) — every personal
+/// control (favourite, my review, photo, area/type edit, add to board) is
+/// available. [sharedBoard] is a place copy on someone else's — or the
+/// user's own — shared board: those controls act on the *user's own* Saved
+/// store, so they'd either be meaningless (editing a copy nobody else sees)
+/// or dangerous (reading/writing the wrong person's `users/{uid}/photos`).
+/// Shared-board places are always shown read-only, whatever the [role] —
+/// see docs/shared-boards.md's place-detail follow-up.
+class PlaceDetailSource {
+  const PlaceDetailSource._({this.board, this.role});
+
+  /// The default: the place is the user's own.
+  static const mine = PlaceDetailSource._();
+
+  /// Opened from [board]'s place list, as [role] (owner/editor/viewer).
+  factory PlaceDetailSource.sharedBoard(SharedBoard board, BoardRole? role) =>
+      PlaceDetailSource._(board: board, role: role);
+
+  final SharedBoard? board;
+  final BoardRole? role;
+
+  bool get isSharedBoard => board != null;
+}
 
 /// Detail card (ANALYSIS.md §4): photo header, location badge, AI description,
 /// original caption, source attribution, address + hours, "Open in Google Maps"
@@ -22,16 +49,28 @@ import '../widgets/score_stars.dart';
 ///
 /// Presented as a draggable bottom sheet so it works over the map or the feed.
 class PlaceDetailSheet extends StatelessWidget {
-  const PlaceDetailSheet({super.key, required this.place});
+  const PlaceDetailSheet({
+    super.key,
+    required this.place,
+    this.source = PlaceDetailSource.mine,
+  });
 
   final Place place;
 
-  static Future<void> show(BuildContext context, Place place) {
+  /// See [PlaceDetailSource]. Governs whether this shows the personal edit
+  /// controls or a read-only view with "Save to my places".
+  final PlaceDetailSource source;
+
+  static Future<void> show(
+    BuildContext context,
+    Place place, {
+    PlaceDetailSource source = PlaceDetailSource.mine,
+  }) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => PlaceDetailSheet(place: place),
+      builder: (_) => PlaceDetailSheet(place: place, source: source),
     );
   }
 
@@ -81,13 +120,17 @@ class PlaceDetailSheet extends StatelessWidget {
         controller: controller,
         padding: EdgeInsets.zero,
         children: [
-          _PhotoHeader(place: place, color: color),
+          _PhotoHeader(place: place, color: color, source: source),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _AreaBadge(place: place, color: color),
+                _AreaBadge(
+                  place: place,
+                  color: color,
+                  editable: !source.isSharedBoard,
+                ),
                 const SizedBox(height: 12),
                 Text(
                   place.name,
@@ -102,10 +145,15 @@ class PlaceDetailSheet extends StatelessWidget {
                 ],
                 if (place.category == PlaceCategory.restaurant) ...[
                   const SizedBox(height: 8),
-                  _RestaurantTypeChip(place: place),
+                  _RestaurantTypeChip(
+                    place: place,
+                    editable: !source.isSharedBoard,
+                  ),
                 ],
                 const SizedBox(height: 18),
-                _ActionRow(place: place),
+                source.isSharedBoard
+                    ? _SharedActionRow(place: place)
+                    : _ActionRow(place: place),
                 const SizedBox(height: 20),
                 _SectionLabel('About / 簡介'),
                 const SizedBox(height: 6),
@@ -114,7 +162,10 @@ class PlaceDetailSheet extends StatelessWidget {
                   style: const TextStyle(fontSize: 15, height: 1.5),
                 ),
                 const SizedBox(height: 18),
-                _MyReviewSection(place: place),
+                if (source.isSharedBoard)
+                  _OwnerReviewSection(place: place, board: source.board!)
+                else
+                  _MyReviewSection(place: place),
                 const SizedBox(height: 18),
                 _SectionLabel('Original caption / 原文'),
                 const SizedBox(height: 6),
@@ -157,13 +208,23 @@ class PlaceDetailSheet extends StatelessWidget {
 }
 
 class _PhotoHeader extends StatelessWidget {
-  const _PhotoHeader({required this.place, required this.color});
+  const _PhotoHeader({
+    required this.place,
+    required this.color,
+    required this.source,
+  });
 
   final Place place;
   final Color color;
+  final PlaceDetailSource source;
 
   @override
   Widget build(BuildContext context) {
+    // A shared-board copy shares its id with the owner's own Saved place —
+    // re-reading PlaceStore/PhotoStore by that id here would leak the
+    // owner's personal photo to every other member. Render the static copy
+    // (photoUrls only, no photo buttons) instead of re-looking-up "current".
+    if (source.isSharedBoard) return _buildHeader(context, place);
     // Re-read the current copy so PhotoStore sees an up-to-date
     // `myPhotoAt` marker (it gates the Firestore read on it).
     return ValueListenableBuilder<List<Place>>(
@@ -200,15 +261,20 @@ class _PhotoHeader extends StatelessWidget {
         ),
       ),
     );
+    final photo = source.isSharedBoard
+        ? (current.photoUrls.isEmpty
+              ? gradient
+              : Image.network(
+                  current.photoUrls.first,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => gradient,
+                ))
+        : PlacePhoto(place: current, fallback: gradient);
     return Stack(
       children: [
         ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          child: SizedBox(
-            height: 180,
-            width: double.infinity,
-            child: PlacePhoto(place: current, fallback: gradient),
-          ),
+          child: SizedBox(height: 180, width: double.infinity, child: photo),
         ),
         Positioned(
           top: 12,
@@ -229,7 +295,12 @@ class _PhotoHeader extends StatelessWidget {
             ),
           ),
         ),
-        Positioned(right: 12, bottom: 12, child: _PhotoButtons(place: current)),
+        if (!source.isSharedBoard)
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: _PhotoButtons(place: current),
+          ),
       ],
     );
   }
@@ -288,59 +359,78 @@ class _PhotoButtons extends StatelessWidget {
 /// background area backfill or a manual edit shows up immediately. Tap to
 /// correct the city/district by hand via [_AreaDialog].
 class _AreaBadge extends StatelessWidget {
-  const _AreaBadge({required this.place, required this.color});
+  const _AreaBadge({
+    required this.place,
+    required this.color,
+    this.editable = true,
+  });
 
   final Place place;
   final Color color;
 
+  /// False for a shared-board place: no edit affordance, and the label
+  /// comes straight from the passed [place] rather than re-reading
+  /// PlaceStore (whose entry for this id, if any, is the owner's own).
+  final bool editable;
+
   @override
   Widget build(BuildContext context) {
+    if (!editable) return _badge(context, place);
     return ValueListenableBuilder<List<Place>>(
       valueListenable: PlaceStore.instance.places,
       builder: (context, _, _) {
         final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
-        final display = current.areaDisplay.isNotEmpty
-            ? current.areaDisplay
-            : current.areaLabel.trim();
-        final label = display.isEmpty ? 'Add area' : display;
         return Semantics(
           button: true,
-          label: 'Area: $label. Tap to edit.',
+          label: 'Area: ${_label(current)}. Tap to edit.',
           child: InkWell(
             borderRadius: BorderRadius.circular(20),
             onTap: () => _edit(context, current),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: ExcludeSemantics(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.place, size: 14, color: color),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        label,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: color,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(Icons.edit_outlined, size: 13, color: color),
-                  ],
-                ),
-              ),
+            child: ExcludeSemantics(
+              child: _badge(context, current, icon: true),
             ),
           ),
         );
       },
+    );
+  }
+
+  String _label(Place current) {
+    final display = current.areaDisplay.isNotEmpty
+        ? current.areaDisplay
+        : current.areaLabel.trim();
+    return display.isEmpty ? 'Add area' : display;
+  }
+
+  Widget _badge(BuildContext context, Place current, {bool icon = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.place, size: 14, color: color),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              _label(current),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          if (icon) ...[
+            const SizedBox(width: 2),
+            Icon(Icons.edit_outlined, size: 13, color: color),
+          ],
+        ],
+      ),
     );
   }
 
@@ -477,60 +567,82 @@ class _AwardChip extends StatelessWidget {
 /// current copy from the store, same as [_MyReviewSection]/[_ActionRow]'s
 /// favourite toggle, so it reflects a save immediately.
 class _RestaurantTypeChip extends StatelessWidget {
-  const _RestaurantTypeChip({required this.place});
+  const _RestaurantTypeChip({required this.place, this.editable = true});
 
   final Place place;
 
+  /// False for a shared-board place: no picker, no re-reading PlaceStore
+  /// (see [_AreaBadge.editable]).
+  final bool editable;
+
   @override
   Widget build(BuildContext context) {
+    if (!editable) {
+      final color = AppTheme.categoryColor(
+        PlaceCategory.restaurant,
+        Theme.of(context).brightness,
+      );
+      final type = place.effectiveRestaurantType ?? RestaurantType.other;
+      // The chip's emoji isn't an accessible label — same WCAG 1.4.1 note
+      // as the editable branch below, just without "Tap to change".
+      return Semantics(
+        label: 'Cuisine: ${type.labelEn}',
+        child: ExcludeSemantics(child: _chip(context, place, color)),
+      );
+    }
     return ValueListenableBuilder<List<Place>>(
       valueListenable: PlaceStore.instance.places,
       builder: (context, _, _) {
         final current = PlaceStore.instance.byIdOrNull(place.id) ?? place;
-        final type = current.effectiveRestaurantType ?? RestaurantType.other;
         final color = AppTheme.categoryColor(
           PlaceCategory.restaurant,
           Theme.of(context).brightness,
         );
+        final type = current.effectiveRestaurantType ?? RestaurantType.other;
         return Semantics(
           button: true,
           label: 'Cuisine: ${type.labelEn}. Tap to change.',
           child: InkWell(
             borderRadius: BorderRadius.circular(20),
             onTap: () => _pickType(context, current),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ExcludeSemantics(
-                    child: Text(
-                      type.emoji,
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  ExcludeSemantics(
-                    child: Text(
-                      type.labelEn,
-                      style: TextStyle(
-                        color: color,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ),
-                  Icon(Icons.expand_more, size: 16, color: color),
-                ],
-              ),
+            child: ExcludeSemantics(
+              child: _chip(context, current, color, expandIcon: true),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _chip(
+    BuildContext context,
+    Place current,
+    Color color, {
+    bool expandIcon = false,
+  }) {
+    final type = current.effectiveRestaurantType ?? RestaurantType.other;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(type.emoji, style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 6),
+          Text(
+            type.labelEn,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+            ),
+          ),
+          if (expandIcon) Icon(Icons.expand_more, size: 16, color: color),
+        ],
+      ),
     );
   }
 
@@ -669,6 +781,125 @@ class _ActionRow extends StatelessWidget {
     } catch (e) {
       debugPrint('Share failed: $e');
     }
+  }
+}
+
+/// [_ActionRow]'s equivalent for a shared-board place: no favourite toggle
+/// and no "Add to board" (those act on the user's own Saved store, and this
+/// place isn't necessarily theirs) — "Save to my places" instead, which
+/// copies it in ([SharedBoardStore.saveToMyPlaces], deduped the same way as
+/// the Boards tab's row action). Share stays: it's just the public link.
+class _SharedActionRow extends StatelessWidget {
+  const _SharedActionRow({required this.place});
+
+  final Place place;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: ValueListenableBuilder<List<Place>>(
+            valueListenable: PlaceStore.instance.places,
+            builder: (context, _, _) {
+              final saved = SharedBoardStore.instance.isSaved(place);
+              return Semantics(
+                label: saved ? '✓ In your places' : 'Save to my places',
+                child: FilledButton.icon(
+                  onPressed: saved ? null : () => _save(context),
+                  icon: Icon(
+                    saved ? Icons.check : Icons.bookmark_add,
+                    size: 18,
+                  ),
+                  label: Text(saved ? '✓ In your places' : 'Save to my places'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.coral,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 10),
+        _IconAction(icon: Icons.ios_share, tooltip: 'Share', onTap: _share),
+      ],
+    );
+  }
+
+  Future<void> _save(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final added = await SharedBoardStore.instance.saveToMyPlaces(place);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          added
+              ? 'Saved “${place.name}” to your places'
+              : '“${place.name}” is already in your Saved list',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _share() async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text:
+              '${place.name} — ${place.areaLabel}, ${place.region}\n'
+              '${place.googleMapsUrl}',
+        ),
+      );
+    } catch (e) {
+      debugPrint('Share failed: $e');
+    }
+  }
+}
+
+/// Read-only "{owner}'s review" section on a shared-board place — shown
+/// only when the copy actually carries a score or notes (the owner only
+/// rides those along when [SharedBoard.includeOwnerNotes] is on; see
+/// `sharedCopyOf`). Never reads [PlaceStore] or checks for duplicates —
+/// just the passed shared copy, unlike [_MyReviewSection].
+class _OwnerReviewSection extends StatelessWidget {
+  const _OwnerReviewSection({required this.place, required this.board});
+
+  final Place place;
+  final SharedBoard board;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = place.myScore;
+    final notes = place.myNotes.trim();
+    if (score == null && notes.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionLabel("${board.ownerName}’s review"),
+        const SizedBox(height: 8),
+        if (score != null) ScoreBadge(score: score),
+        if (score != null && notes.isNotEmpty) const SizedBox(height: 10),
+        if (notes.isNotEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              notes,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.5,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
 
