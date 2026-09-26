@@ -6,6 +6,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Shared-board ratings: on a shared board's place page every member (owner,
+  editor or viewer) rates the place — "Ratings / 評分" shows "Your rating"
+  (editable stars + remark box) with every other current member's rating
+  read-only below it (avatar/initial, name, "Owner" tag, score badge,
+  remark), an "Avg 7.5 · 3 ratings" line at 2+ ratings, and "No one else
+  has rated this yet" when alone. The owner's score/notes baked into the
+  shared copy (`includeOwnerNotes`) stand in as their entry (for other
+  members, not the owner themself) until they rate.
+  Stored at `sharedBoards/{id}/places/{placeId}/ratings/{uid}`
+  (`PlaceRating`, `SharedBoardRepository.watchRatings/setRating/
+  deleteRating`, `SharedBoardStore.setMyRating`); a score is required, so
+  clearing your stars deletes your rating and the remark box stays disabled
+  until you rate. Replaces the owner-only review section.
+- firestore.rules: ratings — any member reads a board's ratings; each user
+  creates/updates/deletes only `ratings/{their uid}` with an allow-listed
+  body (`uid`/`placeId` matching the path, int score 1..10, notes ≤ 1000,
+  name ≤ 100); non-members and removed members get nothing. 6 new emulator
+  tests (34 total). Not deployed yet.
+- Category chip on the place page ("🍽️ Restaurant ▾"): tap to pick any
+  category from a bottom sheet (`PlaceStore.updateCategory`); the cuisine
+  sub-type chip sits next to it for restaurants. Switching away keeps the
+  saved cuisine pick (the chip just hides) and switching back restores it
+  or the keyword guess. Read-only chip on shared boards.
 - Collaborative shared boards with roles (signed-in only). ⋮ → "Share
   board…" MOVES a personal board to top-level `sharedBoards/{id}` (board +
   place copies in `sharedBoards/{id}/places`, same place ids; your own

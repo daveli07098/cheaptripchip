@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cheaptripchip/data/shared_board_repository.dart';
 import 'package:cheaptripchip/models/board.dart';
 import 'package:cheaptripchip/models/place.dart';
+import 'package:cheaptripchip/models/place_rating.dart';
 import 'package:cheaptripchip/models/shared_board.dart';
 
 /// In-memory [SharedBoardRepository] that mimics the firestore.rules
@@ -10,6 +11,9 @@ import 'package:cheaptripchip/models/shared_board.dart';
 class FakeSharedBoardRepository implements SharedBoardRepository {
   final Map<String, SharedBoard> boards = {};
   final Map<String, Map<String, Place>> places = {};
+
+  /// Ratings keyed by board id, then `placeId/uid` (the Firestore path tail).
+  final Map<String, Map<String, PlaceRating>> ratings = {};
   final _changes = StreamController<void>.broadcast();
   int _nextId = 0;
 
@@ -167,6 +171,42 @@ class FakeSharedBoardRepository implements SharedBoardRepository {
   Future<void> delete(String boardId) async {
     boards.remove(boardId);
     places.remove(boardId);
+    _changed();
+  }
+
+  /// Seeds [rating] on [boardId] as if its author wrote it.
+  void seedRating(String boardId, PlaceRating rating) {
+    ratings.putIfAbsent(boardId, () => {})['${rating.placeId}/${rating.uid}'] =
+        rating;
+    _changed();
+  }
+
+  List<PlaceRating> _ratingsOf(String boardId, String placeId) => [
+    for (final r in ratings[boardId]?.values ?? const <PlaceRating>[])
+      if (r.placeId == placeId) r,
+  ];
+
+  @override
+  Stream<List<PlaceRating>> watchRatings(String boardId, String placeId) {
+    return Stream.multi((controller) {
+      controller.add(_ratingsOf(boardId, placeId));
+      final sub = _changes.stream.listen(
+        (_) => controller.add(_ratingsOf(boardId, placeId)),
+      );
+      controller.onCancel = sub.cancel;
+    });
+  }
+
+  @override
+  Future<void> setRating(String boardId, PlaceRating rating) async {
+    calls.add('setRating');
+    seedRating(boardId, rating);
+  }
+
+  @override
+  Future<void> deleteRating(String boardId, String placeId, String uid) async {
+    calls.add('deleteRating');
+    ratings[boardId]?.remove('$placeId/$uid');
     _changed();
   }
 }

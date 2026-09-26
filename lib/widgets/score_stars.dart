@@ -139,15 +139,19 @@ class _Star extends StatelessWidget {
 /// glyph (matches the repo convention of not relying on emoji glyphs for
 /// meaning — see PlaceCard's `_MatchBadge`).
 class ScoreBadge extends StatelessWidget {
-  const ScoreBadge({super.key, required this.score});
+  const ScoreBadge({super.key, required this.score, this.semanticsLabel});
 
   /// The place's `myScore`, 1..10. Callers only build this when non-null.
   final int score;
 
+  /// Screen-reader label; defaults to "Your score N out of 10". Shared-board
+  /// ratings pass the rater's name instead (e.g. "Alice rated 8 out of 10").
+  final String? semanticsLabel;
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Your score $score out of 10',
+      label: semanticsLabel ?? 'Your score $score out of 10',
       child: ExcludeSemantics(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),

@@ -4,6 +4,7 @@ import 'package:cheaptripchip/data/place_store.dart';
 import 'package:cheaptripchip/data/shared_board_store.dart';
 import 'package:cheaptripchip/models/board.dart';
 import 'package:cheaptripchip/models/place.dart';
+import 'package:cheaptripchip/models/place_rating.dart';
 import 'package:cheaptripchip/models/shared_board.dart';
 import 'package:cheaptripchip/services/auth_service.dart';
 import 'package:cheaptripchip/services/board_invite_link.dart';
@@ -284,5 +285,87 @@ void main() {
     expect(saved.myScore, isNull);
     expect(saved.myNotes, '');
     expect(await store.saveToMyPlaces(theirs), isFalse);
+  });
+
+  group('ratings', () {
+    SharedBoard withBob() =>
+        _aliceBoard().withMember('bob', BoardRole.viewer, name: 'Bob');
+
+    test(
+      'any member (viewer too) sets, updates and deletes their own',
+      () async {
+        repo.seed(withBob(), [_place('p1')]);
+        store.bindRepository(repo, _bob);
+        await _settle();
+
+        final seen = <List<PlaceRating>>[];
+        final sub = store.watchRatings('sb', 'p1').listen(seen.add);
+        await _settle();
+        expect(seen.last, isEmpty);
+
+        await store.setMyRating('sb', 'p1', score: 7, notes: '  Nice  ');
+        await _settle();
+        final mine = seen.last.single;
+        expect(mine.uid, 'bob');
+        expect(mine.placeId, 'p1');
+        expect(mine.displayName, 'Bob');
+        expect(mine.score, 7);
+        expect(mine.notes, 'Nice');
+
+        await store.setMyRating('sb', 'p1', score: 9, notes: 'x' * 1200);
+        await _settle();
+        expect(seen.last.single.score, 9);
+        expect(seen.last.single.notes, hasLength(PlaceRating.maxNotesLength));
+
+        await store.setMyRating('sb', 'p1', score: null);
+        await _settle();
+        expect(seen.last, isEmpty);
+        expect(repo.calls, ['setRating', 'setRating', 'deleteRating']);
+        await sub.cancel();
+      },
+    );
+
+    test("sees other members' ratings of the same place only", () async {
+      repo.seed(withBob(), [_place('p1'), _place('p2')]);
+      repo.seedRating(
+        'sb',
+        const PlaceRating(
+          uid: 'alice',
+          placeId: 'p1',
+          displayName: 'Alice',
+          score: 8,
+        ),
+      );
+      repo.seedRating(
+        'sb',
+        const PlaceRating(
+          uid: 'alice',
+          placeId: 'p2',
+          displayName: 'Alice',
+          score: 2,
+        ),
+      );
+      store.bindRepository(repo, _bob);
+      await _settle();
+      final first = await store.watchRatings('sb', 'p1').first;
+      expect(first.single.score, 8);
+    });
+
+    test('a removed member writes nothing', () async {
+      repo.seed(_aliceBoard(), [_place('p1')]);
+      store.bindRepository(repo, _bob);
+      await _settle();
+      // Bob isn't on the board the store knows about.
+      repo.seed(withBob().withoutMember('bob'));
+      await _settle();
+      await store.setMyRating('sb', 'p1', score: 5);
+      expect(repo.calls, isEmpty);
+    });
+
+    test('signed out: empty stream, no writes', () async {
+      expect(await store.watchRatings('sb', 'p1').first, isEmpty);
+      await store.setMyRating('sb', 'p1', score: 5);
+      expect(repo.calls, isEmpty);
+    });
   });
 }

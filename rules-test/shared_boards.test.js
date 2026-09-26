@@ -328,6 +328,89 @@ describe('leave', () => {
   });
 });
 
+describe('ratings (places/{placeId}/ratings/{uid})', () => {
+  const ratingRef = (uid, raterUid, placeId = 'p1') =>
+    doc(db(uid), 'sharedBoards', BOARD, 'places', placeId, 'ratings', raterUid);
+
+  function rating(uid, overrides = {}) {
+    return {
+      uid,
+      placeId: 'p1',
+      displayName: uid,
+      score: 8,
+      notes: 'Great broth',
+      updatedAt: serverTimestamp(),
+      ...overrides,
+    };
+  }
+
+  it('a member writes, updates and deletes their own rating', async () => {
+    await assertSucceeds(setDoc(ratingRef('eddie', 'eddie'), rating('eddie')));
+    await assertSucceeds(setDoc(ratingRef('eddie', 'eddie'), rating('eddie', { score: 3, notes: '' })));
+    await assertSucceeds(setDoc(ratingRef('alice', 'alice'), rating('alice', { photoUrl: 'https://x/a.png' })));
+    await assertSucceeds(deleteDoc(ratingRef('eddie', 'eddie')));
+  });
+
+  it('a viewer can rate, and every member reads all ratings', async () => {
+    await assertSucceeds(setDoc(ratingRef('vera', 'vera'), rating('vera')));
+    const { notes: _noNotes, ...withoutNotes } = rating('alice', { score: 10 });
+    await assertSucceeds(setDoc(ratingRef('alice', 'alice'), withoutNotes));
+    for (const uid of ['alice', 'eddie', 'vera']) {
+      await assertSucceeds(getDocs(collection(db(uid), 'sharedBoards', BOARD, 'places', 'p1', 'ratings')));
+      await assertSucceeds(getDoc(ratingRef(uid, 'vera')));
+    }
+  });
+
+  it("cannot write or delete someone else's rating", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'sharedBoards', BOARD, 'places', 'p1', 'ratings', 'eddie'), rating('eddie'));
+    });
+    await assertFails(setDoc(ratingRef('vera', 'eddie'), rating('eddie')));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('eddie')));
+    await assertFails(deleteDoc(ratingRef('vera', 'eddie')));
+    // Not even the owner.
+    await assertFails(setDoc(ratingRef('alice', 'eddie'), rating('eddie', { score: 1 })));
+    await assertFails(deleteDoc(ratingRef('alice', 'eddie')));
+  });
+
+  it('non-members and signed-out users can neither read nor write', async () => {
+    await assertSucceeds(setDoc(ratingRef('vera', 'vera'), rating('vera')));
+    await assertFails(getDoc(ratingRef('mallory', 'vera')));
+    await assertFails(getDocs(collection(db('mallory'), 'sharedBoards', BOARD, 'places', 'p1', 'ratings')));
+    await assertFails(getDoc(ratingRef(null, 'vera')));
+    await assertFails(setDoc(ratingRef('mallory', 'mallory'), rating('mallory')));
+  });
+
+  it('rejects bad scores, long notes, unknown keys and a mismatched placeId', async () => {
+    for (const score of [0, 11, 7.5, '8', null]) {
+      await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { score })));
+    }
+    const { score: _omit, ...noScore } = rating('vera');
+    await assertFails(setDoc(ratingRef('vera', 'vera'), noScore));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { notes: 'x'.repeat(1001) })));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { notes: 5 })));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { role: 'owner' })));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { placeId: 'p2' })));
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { displayName: 'x'.repeat(101) })));
+    await assertSucceeds(setDoc(ratingRef('vera', 'vera'), rating('vera', { notes: 'x'.repeat(1000), score: 1 })));
+  });
+
+  it('a removed member can no longer write, delete or read', async () => {
+    await assertSucceeds(setDoc(ratingRef('vera', 'vera'), rating('vera')));
+    await assertSucceeds(
+      updateDoc(boardRef('alice'), {
+        'members.vera': deleteField(),
+        'memberNames.vera': deleteField(),
+        memberIds: arrayRemove('vera'),
+        inviteCode: 'z'.repeat(24),
+      }),
+    );
+    await assertFails(setDoc(ratingRef('vera', 'vera'), rating('vera', { score: 2 })));
+    await assertFails(deleteDoc(ratingRef('vera', 'vera')));
+    await assertFails(getDoc(ratingRef('vera', 'vera')));
+  });
+});
+
 describe('existing personal data rules', () => {
   it('still scope users/{uid} to the user', async () => {
     await assertSucceeds(setDoc(doc(db('alice'), 'users', 'alice', 'boards', 'b'), { id: 'b' }));

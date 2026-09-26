@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/board.dart';
 import '../models/place.dart';
+import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 import 'shared_board_repository.dart';
 
@@ -24,6 +25,11 @@ class FirestoreSharedBoardRepository implements SharedBoardRepository {
 
   CollectionReference<Map<String, dynamic>> _places(String boardId) =>
       _boards.doc(boardId).collection('places');
+
+  CollectionReference<Map<String, dynamic>> _ratings(
+    String boardId,
+    String placeId,
+  ) => _places(boardId).doc(placeId).collection('ratings');
 
   @override
   Stream<List<SharedBoard>> watchBoards(String uid) {
@@ -204,6 +210,28 @@ class FirestoreSharedBoardRepository implements SharedBoardRepository {
     final existing = await _places(boardId).get();
     await _writePlaces(boardId, delete: {for (final d in existing.docs) d.id});
     await _boards.doc(boardId).delete();
+  }
+
+  @override
+  Stream<List<PlaceRating>> watchRatings(String boardId, String placeId) {
+    return _ratings(boardId, placeId).snapshots().map(
+      (snapshot) => [
+        for (final doc in snapshot.docs) ?PlaceRating.fromJson(doc.data()),
+      ],
+    );
+  }
+
+  @override
+  Future<void> setRating(String boardId, PlaceRating rating) {
+    return _ratings(boardId, rating.placeId).doc(rating.uid).set({
+      ...rating.toJson(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
+  Future<void> deleteRating(String boardId, String placeId, String uid) {
+    return _ratings(boardId, placeId).doc(uid).delete();
   }
 
   Future<void> _writePlaces(

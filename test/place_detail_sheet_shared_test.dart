@@ -10,9 +10,11 @@ import 'package:cheaptripchip/data/place_store.dart';
 import 'package:cheaptripchip/data/shared_board_store.dart';
 import 'package:cheaptripchip/models/board.dart';
 import 'package:cheaptripchip/models/place.dart';
+import 'package:cheaptripchip/models/place_rating.dart';
 import 'package:cheaptripchip/models/shared_board.dart';
 import 'package:cheaptripchip/screens/place_detail_sheet.dart';
 import 'package:cheaptripchip/services/auth_service.dart';
+import 'package:cheaptripchip/widgets/score_stars.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -55,10 +57,16 @@ final _board = SharedBoard(
   sections: const [
     BoardSection(title: 'Food', placeIds: ['sbtest-1']),
   ],
-  members: const {'alice': BoardRole.owner, 'bob': BoardRole.viewer},
-  memberNames: const {'alice': 'Alice', 'bob': 'Bob'},
+  members: const {
+    'alice': BoardRole.owner,
+    'bob': BoardRole.viewer,
+    'carol': BoardRole.editor,
+  },
+  memberNames: const {'alice': 'Alice', 'bob': 'Bob', 'carol': 'Carol'},
   inviteCode: 'abcdefghijklmnopqrstuvwx',
 );
+
+const _bob = AppUser(uid: 'bob', displayName: 'Bob');
 
 Future<void> _pump(WidgetTester tester, Place place) async {
   await tester.pumpWidget(
@@ -75,13 +83,13 @@ Future<void> _pump(WidgetTester tester, Place place) async {
 }
 
 void main() {
+  late FakeSharedBoardRepository repo;
+
   setUp(() {
     PlaceStore.instance.bindRepository(LocalPlaceRepository());
     BoardStore.instance.bindRepository(LocalBoardRepository());
-    SharedBoardStore.instance.bindRepository(
-      FakeSharedBoardRepository(),
-      const AppUser(uid: 'bob'),
-    );
+    repo = FakeSharedBoardRepository();
+    SharedBoardStore.instance.bindRepository(repo, _bob);
   });
 
   tearDown(() => SharedBoardStore.instance.bind(null));
@@ -109,19 +117,121 @@ void main() {
     expect(find.text('Save to my places'), findsNothing);
   });
 
-  testWidgets("shows the owner's review only when the board includes it", (
+  testWidgets(
+    "shows the owner's baked review only when the board includes it",
+    (tester) async {
+      final owners = _place(id: 'sbtest-2', score: 7, notes: "Owner's pick");
+
+      await _pump(tester, sharedCopyOf(owners));
+      expect(find.text('RATINGS / 評分'), findsOneWidget);
+      expect(find.text("Owner's pick"), findsNothing);
+      expect(find.text('No one else has rated this yet'), findsOneWidget);
+
+      await _pump(tester, sharedCopyOf(owners, includeOwnerNotes: true));
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Owner'), findsOneWidget);
+      expect(find.text('7/10'), findsOneWidget);
+      expect(find.text("Owner's pick"), findsOneWidget);
+      expect(find.text('No one else has rated this yet'), findsNothing);
+    },
+  );
+
+  testWidgets('your rating is editable above; others are read-only below', (
     tester,
   ) async {
-    final owners = _place(id: 'sbtest-2', score: 7, notes: "Owner's pick");
+    final place = _place(id: 'sbtest-5', score: 4, notes: 'Baked, stale');
+    repo.seed(_board, [place]);
+    repo.seedRating(
+      'sb',
+      const PlaceRating(
+        uid: 'alice',
+        placeId: 'sbtest-5',
+        displayName: 'Alice',
+        score: 8,
+        notes: 'Best broth in town',
+      ),
+    );
+    repo.seedRating(
+      'sb',
+      const PlaceRating(
+        uid: 'carol',
+        placeId: 'sbtest-5',
+        displayName: 'Carol',
+        score: 6,
+      ),
+    );
+    // A former member's rating lingers in Firestore — never shown.
+    repo.seedRating(
+      'sb',
+      const PlaceRating(
+        uid: 'mallory',
+        placeId: 'sbtest-5',
+        displayName: 'Mallory',
+        score: 1,
+      ),
+    );
+    // Re-bind inside the test's fake-async zone: setUp's subscriptions
+    // deliver on real microtasks, which tester.pump() doesn't flush.
+    SharedBoardStore.instance.bindRepository(repo, _bob);
+    await tester.pump();
+    expect(SharedBoardStore.instance.roleOn('sb'), BoardRole.viewer);
+    await _pump(tester, sharedCopyOf(place, includeOwnerNotes: true));
 
-    await _pump(tester, sharedCopyOf(owners));
-    expect(find.textContaining('review'), findsNothing);
-    expect(find.text("Owner's pick"), findsNothing);
+    expect(find.text('Your rating'), findsOneWidget);
+    expect(find.text('Tap to rate'), findsOneWidget);
+    expect(find.text('Rate first to add a remark / 先評分再加備註'), findsOneWidget);
+    // Alice rated for real, so her baked copy isn't duplicated.
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('Owner'), findsOneWidget);
+    expect(find.text('8/10'), findsOneWidget);
+    expect(find.text('Best broth in town'), findsOneWidget);
+    expect(find.text('Baked, stale'), findsNothing);
+    expect(find.text('Carol'), findsOneWidget);
+    expect(find.text('6/10'), findsOneWidget);
+    expect(find.text('Mallory'), findsNothing);
+    expect(find.text('Avg 7 · 2 ratings'), findsOneWidget);
+    // Others' ratings sit below yours.
+    expect(
+      tester.getTopLeft(find.text('Alice')).dy,
+      greaterThan(tester.getTopLeft(find.byType(ScoreStars)).dy),
+    );
 
-    await _pump(tester, sharedCopyOf(owners, includeOwnerNotes: true));
-    expect(find.text('ALICE’S REVIEW'), findsOneWidget);
-    expect(find.text('7/10'), findsOneWidget);
-    expect(find.text("Owner's pick"), findsOneWidget);
+    // Rate 9 (left half of the 5th star), then add a remark.
+    await tester.ensureVisible(find.byType(ScoreStars));
+    await tester.pumpAndSettle();
+    final fifth = find.descendant(
+      of: find.byType(ScoreStars),
+      matching: find.byIcon(Icons.star_border),
+    );
+    final ninePoint = tester.getCenter(fifth.last) + const Offset(-10, 0);
+    await tester.tapAt(ninePoint);
+    await tester.pump();
+    await tester.pump();
+    expect(repo.ratings['sb']!['sbtest-5/bob']!.score, 9);
+    expect(find.text('9/10'), findsOneWidget);
+    expect(find.text('Avg 7.7 · 3 ratings'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Add a remark… / 加備註'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add a remark… / 加備註'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '  Worth the queue ');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    final mine = repo.ratings['sb']!['sbtest-5/bob']!;
+    expect(mine.notes, 'Worth the queue');
+    expect(mine.displayName, 'Bob');
+    expect(find.text('Worth the queue'), findsOneWidget);
+
+    // Clearing your stars (tapping the current half again) deletes it.
+    await tester.ensureVisible(find.byType(ScoreStars));
+    await tester.pumpAndSettle();
+    await tester.tapAt(
+      tester.getCenter(find.byIcon(Icons.star_half)) + const Offset(-10, 0),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(repo.ratings['sb']!.containsKey('sbtest-5/bob'), isFalse);
   });
 
   testWidgets('Save to my places adds a copy with a fresh id', (tester) async {

@@ -183,6 +183,34 @@ service cloud.firestore {
         allow create, update: if canEditPlaces(boardData())
           && validPlace(request.resource.data);
         allow delete: if canEditPlaces(boardData());
+
+        // Per-member ratings (lib/models/place_rating.dart): {uid, placeId,
+        // displayName, photoUrl?, score: 1..10 int, notes?, updatedAt}. The
+        // doc id is the rater's uid. Any member — viewers too, rating
+        // doesn't change board content — reads all of a board's ratings
+        // and writes only their own. A removed member loses both.
+        function validRating(r, ratingUid) {
+          return r.keys().hasOnly([
+              'uid', 'placeId', 'displayName', 'photoUrl', 'score', 'notes',
+              'updatedAt'])
+            && r.uid == ratingUid
+            && r.placeId == placeId
+            && r.displayName is string && r.displayName.size() <= 100
+            && r.score is int && r.score >= 1 && r.score <= 10
+            && (!('notes' in r) || (r.notes is string && r.notes.size() <= 1000))
+            && (!('photoUrl' in r) || r.photoUrl == null
+              || (r.photoUrl is string && r.photoUrl.size() <= 2000))
+            && (!('updatedAt' in r) || r.updatedAt is timestamp);
+        }
+
+        match /ratings/{ratingUid} {
+          allow read: if isMemberOf(boardData());
+          allow create, update: if isMemberOf(boardData())
+            && ratingUid == request.auth.uid
+            && validRating(request.resource.data, ratingUid);
+          allow delete: if isMemberOf(boardData())
+            && ratingUid == request.auth.uid;
+        }
       }
     }
 

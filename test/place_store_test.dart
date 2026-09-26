@@ -115,6 +115,33 @@ void main() {
       expect(store.places.value.length, beforeCount);
     });
 
+    test('updateCategory switches category and keeps restaurantType', () async {
+      final store = PlaceStore.instance;
+      final target = MockData.places.first; // p1, category restaurant
+      await store.setRestaurantType(target.id, RestaurantType.izakaya);
+
+      await store.updateCategory(target.id, PlaceCategory.cafe);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.byId(target.id).category, PlaceCategory.cafe);
+      // Kept, just not shown off restaurants.
+      expect(store.byId(target.id).restaurantType, RestaurantType.izakaya);
+      expect(store.byId(target.id).effectiveRestaurantType, isNull);
+
+      await store.updateCategory(target.id, PlaceCategory.restaurant);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        store.byId(target.id).effectiveRestaurantType,
+        RestaurantType.izakaya,
+      );
+    });
+
+    test('updateCategory does nothing for an unknown id', () async {
+      final store = PlaceStore.instance;
+      final before = store.places.value;
+      await store.updateCategory('does-not-exist', PlaceCategory.stay);
+      expect(store.places.value, same(before));
+    });
+
     test('binding a second repository replaces the list', () async {
       final store = PlaceStore.instance;
 

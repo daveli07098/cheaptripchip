@@ -1,5 +1,6 @@
 import '../models/board.dart';
 import '../models/place.dart';
+import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 
 /// Outcome of [SharedBoardRepository.join].
@@ -87,4 +88,14 @@ abstract class SharedBoardRepository {
 
   /// Owner: deletes every place copy, then the board.
   Future<void> delete(String boardId);
+
+  /// Every member's rating of place [placeId] on board [boardId]
+  /// (`places/{placeId}/ratings/{uid}`). Any member may read them.
+  Stream<List<PlaceRating>> watchRatings(String boardId, String placeId);
+
+  /// Writes [rating] as the signed-in member's own (doc id = its uid).
+  Future<void> setRating(String boardId, PlaceRating rating);
+
+  /// Deletes [uid]'s rating of [placeId] — the rules allow only your own.
+  Future<void> deleteRating(String boardId, String placeId, String uid);
 }

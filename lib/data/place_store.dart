@@ -195,4 +195,21 @@ class PlaceStore {
     ];
     await _repository.upsert(updated);
   }
+
+  /// Changes [Place.category] for the place with the given [id] — the
+  /// detail sheet's category chip. [Place.restaurantType] is kept as is:
+  /// switching away just hides the cuisine chip
+  /// ([Place.effectiveRestaurantType] is null off restaurants), and switching
+  /// (back) to restaurant shows the earlier pick or the keyword-detected
+  /// guess. Optimistic, like [setRestaurantType].
+  Future<void> updateCategory(String id, PlaceCategory category) async {
+    final current = byIdOrNull(id);
+    if (current == null || current.category == category) return;
+    final updated = current.copyWith(category: category);
+    places.value = [
+      for (final place in places.value)
+        if (place.id == id) updated else place,
+    ];
+    await _repository.upsert(updated);
+  }
 }

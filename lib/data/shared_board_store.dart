@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/board.dart';
 import '../models/place.dart';
+import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 import '../services/auth_service.dart';
 import '../services/board_invite_link.dart';
@@ -438,6 +439,57 @@ class SharedBoardStore {
       ),
     );
     return true;
+  }
+
+  /// Every member's rating of [placeId] on [boardId], live. Empty when
+  /// signed out/unbound; a read error (e.g. rules not deployed, removed
+  /// from the board) also reads as "no ratings" rather than breaking the
+  /// place page.
+  Stream<List<PlaceRating>> watchRatings(String boardId, String placeId) {
+    final repository = _repository;
+    if (repository == null) return Stream.value(const []);
+    return repository.watchRatings(boardId, placeId).handleError((
+      Object error,
+    ) {
+      debugPrint('SharedBoardStore: ratings unavailable: $error');
+    });
+  }
+
+  /// Sets the signed-in member's own rating of [placeId] on [boardId] —
+  /// any role may rate. A null [score] deletes the rating (remark included):
+  /// the rules require a score on every rating doc. [notes] is trimmed and
+  /// capped at [PlaceRating.maxNotesLength].
+  Future<void> setMyRating(
+    String boardId,
+    String placeId, {
+    required int? score,
+    String notes = '',
+  }) async {
+    final repository = _repository;
+    final user = _user;
+    if (repository == null || user == null) return;
+    // Not (or no longer) a member — the rules would deny it anyway.
+    if (roleOn(boardId) == null) return;
+    if (score == null) {
+      await repository.deleteRating(boardId, placeId, user.uid);
+      return;
+    }
+    var trimmed = notes.trim();
+    if (trimmed.length > PlaceRating.maxNotesLength) {
+      trimmed = trimmed.substring(0, PlaceRating.maxNotesLength);
+    }
+    final photoUrl = user.photoUrl;
+    await repository.setRating(
+      boardId,
+      PlaceRating(
+        uid: user.uid,
+        placeId: placeId,
+        displayName: _displayName(user),
+        photoUrl: photoUrl != null && photoUrl.length <= 2000 ? photoUrl : null,
+        score: score.clamp(1, 10),
+        notes: trimmed,
+      ),
+    );
   }
 
   /// Joins board [invite.boardId] with its invite code. Already a member →

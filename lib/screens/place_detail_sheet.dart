@@ -11,6 +11,7 @@ import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/place_rating.dart';
 import '../models/shared_board.dart';
 import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
@@ -26,7 +27,9 @@ import '../widgets/score_stars.dart';
 /// store, so they'd either be meaningless (editing a copy nobody else sees)
 /// or dangerous (reading/writing the wrong person's `users/{uid}/photos`).
 /// Shared-board places are always shown read-only, whatever the [role] —
-/// see docs/shared-boards.md's place-detail follow-up.
+/// see docs/shared-boards.md's place-detail follow-up — except the
+/// member's own rating (`_SharedRatingsSection`), which lives in the
+/// board's `ratings` subcollection, not in anyone's Saved store.
 class PlaceDetailSource {
   const PlaceDetailSource._({this.board, this.role});
 
@@ -74,13 +77,11 @@ class PlaceDetailSheet extends StatelessWidget {
     );
   }
 
+  Color _categoryColor(BuildContext context, PlaceCategory category) =>
+      AppTheme.categoryColor(category, Theme.of(context).brightness);
+
   @override
   Widget build(BuildContext context) {
-    final color = AppTheme.categoryColor(
-      place.category,
-      Theme.of(context).brightness,
-    );
-
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       minChildSize: 0.4,
@@ -99,7 +100,28 @@ class PlaceDetailSheet extends StatelessWidget {
             // Dialogs/pickers raising the keyboard over this sheet shouldn't
             // shrink it (the pre-Scaffold Container ignored viewInsets too).
             resizeToAvoidBottomInset: false,
-            body: _sheetBody(context, controller, color),
+            // The accent (header gradient, area badge) follows the place's
+            // current category, so a category-chip change recolours it
+            // live. Shared-board copies never read PlaceStore (their id is
+            // the owner's own place id — see PlaceDetailSource).
+            body: source.isSharedBoard
+                ? _sheetBody(
+                    context,
+                    controller,
+                    _categoryColor(context, place.category),
+                  )
+                : ValueListenableBuilder<List<Place>>(
+                    valueListenable: PlaceStore.instance.places,
+                    builder: (context, _, _) => _sheetBody(
+                      context,
+                      controller,
+                      _categoryColor(
+                        context,
+                        (PlaceStore.instance.byIdOrNull(place.id) ?? place)
+                            .category,
+                      ),
+                    ),
+                  ),
           ),
         );
       },
@@ -143,13 +165,8 @@ class PlaceDetailSheet extends StatelessWidget {
                   const SizedBox(height: 8),
                   _AwardChip(label: place.award!),
                 ],
-                if (place.category == PlaceCategory.restaurant) ...[
-                  const SizedBox(height: 8),
-                  _RestaurantTypeChip(
-                    place: place,
-                    editable: !source.isSharedBoard,
-                  ),
-                ],
+                const SizedBox(height: 8),
+                _CategoryChips(place: place, editable: !source.isSharedBoard),
                 const SizedBox(height: 18),
                 source.isSharedBoard
                     ? _SharedActionRow(place: place)
@@ -163,7 +180,7 @@ class PlaceDetailSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 if (source.isSharedBoard)
-                  _OwnerReviewSection(place: place, board: source.board!)
+                  _SharedRatingsSection(place: place, board: source.board!)
                 else
                   _MyReviewSection(place: place),
                 const SizedBox(height: 18),
@@ -560,6 +577,157 @@ class _AwardChip extends StatelessWidget {
   }
 }
 
+/// The category chip ("🍽️ Restaurant ▾") with the restaurant sub-type chip
+/// right next to it when the place is a restaurant. Re-reads the current
+/// copy from [PlaceStore] (like [_RestaurantTypeChip]) so a category change
+/// shows or hides the sub-type chip immediately; map pins, the feed and
+/// filters follow on their own since they read [PlaceStore] too. Not
+/// [editable] on a shared-board place: plain chips, no store lookups (see
+/// [_AreaBadge.editable]).
+class _CategoryChips extends StatelessWidget {
+  const _CategoryChips({required this.place, this.editable = true});
+
+  final Place place;
+  final bool editable;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!editable) return _chips(context, place);
+    return ValueListenableBuilder<List<Place>>(
+      valueListenable: PlaceStore.instance.places,
+      builder: (context, _, _) =>
+          _chips(context, PlaceStore.instance.byIdOrNull(place.id) ?? place),
+    );
+  }
+
+  Widget _chips(BuildContext context, Place current) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _CategoryChip(place: current, editable: editable),
+        if (current.category == PlaceCategory.restaurant)
+          _RestaurantTypeChip(place: current, editable: editable),
+      ],
+    );
+  }
+}
+
+/// "☕ Cafe ▾" chip for [Place.category]. Tapping opens [_CategoryPicker] and
+/// saves via [PlaceStore.updateCategory]; read-only (no ▾, no tap) when not
+/// [editable].
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({required this.place, required this.editable});
+
+  final Place place;
+  final bool editable;
+
+  @override
+  Widget build(BuildContext context) {
+    final category = place.category;
+    final color = AppTheme.categoryColor(
+      category,
+      Theme.of(context).brightness,
+    );
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(category.emoji, style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 6),
+          Text(
+            category.labelEn,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+            ),
+          ),
+          if (editable) Icon(Icons.expand_more, size: 16, color: color),
+        ],
+      ),
+    );
+    // The emoji alone isn't an accessible label — the Semantics carries the
+    // category name instead (same as the cuisine chip).
+    if (!editable) {
+      return Semantics(
+        label: 'Category: ${category.labelEn}',
+        child: ExcludeSemantics(child: chip),
+      );
+    }
+    return Semantics(
+      button: true,
+      label: 'Category: ${category.labelEn}. Tap to change.',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _pickCategory(context),
+        child: ExcludeSemantics(child: chip),
+      ),
+    );
+  }
+
+  Future<void> _pickCategory(BuildContext context) async {
+    final picked = await showModalBottomSheet<PlaceCategory>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CategoryPicker(selected: place.category),
+    );
+    if (picked == null) return;
+    await PlaceStore.instance.updateCategory(place.id, picked);
+  }
+}
+
+/// Bottom sheet list of every [PlaceCategory], opened by [_CategoryChip] —
+/// same shape (and same no-controller reasoning) as [_RestaurantTypePicker].
+class _CategoryPicker extends StatelessWidget {
+  const _CategoryPicker({required this.selected});
+
+  final PlaceCategory selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'Category / 類別',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final category in PlaceCategory.values)
+              ListTile(
+                leading: ExcludeSemantics(
+                  child: Text(
+                    category.emoji,
+                    style: const TextStyle(fontSize: 20),
+                  ),
+                ),
+                title: Text(category.labelEn),
+                subtitle: Text(category.labelZh),
+                trailing: category == selected ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, category),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Tappable "🍜 Ramen ▾" chip for a restaurant's cuisine sub-type
 /// ([Place.effectiveRestaurantType] — the user's own pick if set, else a
 /// keyword-detected guess, else "Other"). Tapping opens [_RestaurantTypePicker]
@@ -856,49 +1024,286 @@ class _SharedActionRow extends StatelessWidget {
   }
 }
 
-/// Read-only "{owner}'s review" section on a shared-board place — shown
-/// only when the copy actually carries a score or notes (the owner only
-/// rides those along when [SharedBoard.includeOwnerNotes] is on; see
-/// `sharedCopyOf`). Never reads [PlaceStore] or checks for duplicates —
-/// just the passed shared copy, unlike [_MyReviewSection].
-class _OwnerReviewSection extends StatelessWidget {
-  const _OwnerReviewSection({required this.place, required this.board});
+/// "Ratings / 評分" on a shared-board place: the signed-in member's own
+/// editable rating ([ScoreStars] + remark box, saved to
+/// `places/{placeId}/ratings/{uid}` via [SharedBoardStore.setMyRating]),
+/// then every other current member's rating, read-only, with who rated it.
+///
+/// The owner's score/notes baked into the shared copy (only there when
+/// [SharedBoard.includeOwnerNotes] is on; see `sharedCopyOf`) stand in as
+/// the owner's entry until the owner saves a real rating — shown to other
+/// members only, never to the owner themself. Never reads [PlaceStore]: a
+/// shared copy keeps the owner's place id, so a store lookup by id would
+/// leak the owner's private fields to every member.
+class _SharedRatingsSection extends StatefulWidget {
+  const _SharedRatingsSection({required this.place, required this.board});
 
   final Place place;
   final SharedBoard board;
 
   @override
+  State<_SharedRatingsSection> createState() => _SharedRatingsSectionState();
+}
+
+class _SharedRatingsSectionState extends State<_SharedRatingsSection> {
+  // Subscribed once — a StreamBuilder given a fresh stream on every build
+  // would re-subscribe (and flash empty) each time.
+  late final Stream<List<PlaceRating>> _ratings = SharedBoardStore.instance
+      .watchRatings(widget.board.id, widget.place.id);
+
+  Future<void> _save(int? score, String notes) async {
+    try {
+      await SharedBoardStore.instance.setMyRating(
+        widget.board.id,
+        widget.place.id,
+        score: score,
+        notes: notes,
+      );
+    } catch (error) {
+      debugPrint('PlaceDetailSheet: rating not saved: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't save your rating")),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final score = place.myScore;
-    final notes = place.myNotes.trim();
-    if (score == null && notes.isEmpty) return const SizedBox.shrink();
+    return ValueListenableBuilder<List<SharedBoard>>(
+      valueListenable: SharedBoardStore.instance.boards,
+      builder: (context, _, _) {
+        // The source board is a snapshot from when the sheet opened; the
+        // store's copy has the current members and names.
+        final board =
+            SharedBoardStore.instance.byIdOrNull(widget.board.id) ??
+            widget.board;
+        return StreamBuilder<List<PlaceRating>>(
+          stream: _ratings,
+          builder: (context, snapshot) =>
+              _buildRatings(context, board, snapshot.data ?? const []),
+        );
+      },
+    );
+  }
+
+  Widget _buildRatings(
+    BuildContext context,
+    SharedBoard board,
+    List<PlaceRating> ratings,
+  ) {
+    final me = SharedBoardStore.instance.uid;
+    PlaceRating? mine;
+    final others = <PlaceRating>[];
+    for (final rating in ratings) {
+      if (rating.uid == me) {
+        mine = rating;
+      } else if (board.members.containsKey(rating.uid)) {
+        // A removed member's rating lingers (they can't delete it any
+        // more) — hide it.
+        others.add(rating);
+      }
+    }
+    final ownerRated = ratings.any((r) => r.uid == board.ownerId);
+    final baked = widget.place.myScore;
+    final bakedNotes = widget.place.myNotes.trim();
+    if (!ownerRated &&
+        me != board.ownerId &&
+        (baked != null || bakedNotes.isNotEmpty)) {
+      others.add(
+        PlaceRating(
+          uid: board.ownerId,
+          placeId: widget.place.id,
+          displayName: board.ownerName,
+          // 0 = notes only, no score (never written — display only).
+          score: baked ?? 0,
+          notes: bakedNotes,
+        ),
+      );
+    }
+    String nameOf(PlaceRating r) {
+      final live = board.memberNames[r.uid]?.trim();
+      if (live != null && live.isNotEmpty) return live;
+      if (r.displayName.trim().isNotEmpty) return r.displayName.trim();
+      return r.uid == board.ownerId ? board.ownerName : 'Member';
+    }
+
+    others.sort((a, b) {
+      if (a.uid == board.ownerId) return -1;
+      if (b.uid == board.ownerId) return 1;
+      return nameOf(a).toLowerCase().compareTo(nameOf(b).toLowerCase());
+    });
+
+    final scores = [
+      ?mine?.score,
+      for (final r in others)
+        if (r.score > 0) r.score,
+    ];
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionLabel("${board.ownerName}’s review"),
-        const SizedBox(height: 8),
-        if (score != null) ScoreBadge(score: score),
-        if (score != null && notes.isNotEmpty) const SizedBox(height: 10),
-        if (notes.isNotEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(14),
+        _SectionLabel('Ratings / 評分'),
+        if (scores.length >= 2) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Avg ${_formatAverage(scores)} · ${scores.length} ratings',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurfaceVariant,
             ),
-            child: Text(
-              notes,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.5,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Text(
+          'Your rating',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        ScoreStars(
+          value: mine?.score,
+          onChanged: (score) => _save(score, mine?.notes ?? ''),
+        ),
+        const SizedBox(height: 10),
+        _RemarkBox(
+          text: mine?.notes ?? '',
+          // Every rating doc needs a score (firestore.rules validRating).
+          enabled: mine != null,
+          disabledHint: 'Rate first to add a remark / 先評分再加備註',
+          onSave: (notes) => _save(mine?.score, notes),
+        ),
+        const SizedBox(height: 16),
+        if (others.isEmpty)
+          Text(
+            'No one else has rated this yet',
+            style: TextStyle(
+              fontSize: 14,
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+            ),
+          )
+        else
+          for (final rating in others)
+            _MemberRatingTile(
+              rating: rating,
+              name: nameOf(rating),
+              isOwner: rating.uid == board.ownerId,
+            ),
+      ],
+    );
+  }
+
+  static String _formatAverage(List<int> scores) {
+    final avg = scores.reduce((a, b) => a + b) / scores.length;
+    final rounded = (avg * 10).round() / 10;
+    return rounded == rounded.roundToDouble()
+        ? rounded.toStringAsFixed(0)
+        : rounded.toStringAsFixed(1);
+  }
+}
+
+/// One other member's rating, read-only: avatar (photo or initial), name,
+/// an "Owner" tag for the board owner, their score and remark.
+class _MemberRatingTile extends StatelessWidget {
+  const _MemberRatingTile({
+    required this.rating,
+    required this.name,
+    required this.isOwner,
+  });
+
+  final PlaceRating rating;
+  final String name;
+  final bool isOwner;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final photoUrl = rating.photoUrl;
+    final initial = name.isEmpty ? '?' : name.characters.first.toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ExcludeSemantics(
+            child: CircleAvatar(
+              radius: 16,
+              backgroundColor: scheme.primaryContainer,
+              foregroundImage: photoUrl == null ? null : NetworkImage(photoUrl),
+              onForegroundImageError: photoUrl == null ? null : (_, _) {},
+              child: Text(
+                initial,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onPrimaryContainer,
+                ),
               ),
             ),
           ),
-      ],
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (isOwner)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Owner',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSecondaryContainer,
+                          ),
+                        ),
+                      ),
+                    if (rating.score > 0)
+                      ScoreBadge(
+                        score: rating.score,
+                        semanticsLabel: '$name rated ${rating.score} out of 10',
+                      ),
+                  ],
+                ),
+                if (rating.notes.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    rating.notes,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -950,16 +1355,51 @@ class _MyNotes extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _RemarkBox(
+      text: place.myNotes,
+      onSave: (notes) => PlaceStore.instance.updateReview(
+        place.id,
+        score: place.myScore,
+        notes: notes,
+      ),
+    );
+  }
+}
+
+/// The remark box under a [ScoreStars] picker — "My review"'s [_MyNotes]
+/// and a shared board's "Your rating". Tapping opens [_NotesDialog];
+/// [onSave] gets the trimmed text on Save (nothing on Cancel). When not
+/// [enabled], shows [disabledHint] and ignores taps.
+class _RemarkBox extends StatelessWidget {
+  const _RemarkBox({
+    required this.text,
+    required this.onSave,
+    this.enabled = true,
+    this.disabledHint,
+  });
+
+  final String text;
+  final Future<void> Function(String notes) onSave;
+  final bool enabled;
+  final String? disabledHint;
+
+  @override
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final empty = place.myNotes.isEmpty;
+    final empty = text.isEmpty;
     // Always a visible box under the stars — the old "Add notes" text button
     // was easy to miss. Tapping opens [_NotesDialog]; the sheet itself
     // ignores keyboard insets, so an inline TextField would sit under it.
     return Semantics(
-      button: true,
-      label: empty ? 'Add a remark' : 'Edit remark',
+      button: enabled,
+      enabled: enabled,
+      label: !enabled
+          ? (disabledHint ?? 'Remark')
+          : empty
+          ? 'Add a remark'
+          : 'Edit remark',
       child: InkWell(
-        onTap: () => _editNotes(context),
+        onTap: enabled ? () => _editNotes(context) : null,
         borderRadius: BorderRadius.circular(14),
         child: Container(
           width: double.infinity,
@@ -975,22 +1415,28 @@ class _MyNotes extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  empty ? 'Add a remark… / 加備註' : place.myNotes,
+                  !enabled
+                      ? (disabledHint ?? '')
+                      : empty
+                      ? 'Add a remark… / 加備註'
+                      : text,
                   style: TextStyle(
                     fontSize: 14,
                     height: 1.5,
-                    color: empty
+                    color: empty || !enabled
                         ? scheme.onSurfaceVariant.withValues(alpha: 0.6)
                         : scheme.onSurfaceVariant.withValues(alpha: 0.85),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Icon(
-                empty ? Icons.edit_note : Icons.edit_outlined,
-                size: 18,
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
-              ),
+              if (enabled) ...[
+                const SizedBox(width: 8),
+                Icon(
+                  empty ? Icons.edit_note : Icons.edit_outlined,
+                  size: 18,
+                  color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ],
             ],
           ),
         ),
@@ -1001,20 +1447,16 @@ class _MyNotes extends StatelessWidget {
   Future<void> _editNotes(BuildContext context) async {
     final result = await showDialog<String>(
       context: context,
-      builder: (_) => _NotesDialog(initialText: place.myNotes),
+      builder: (_) => _NotesDialog(initialText: text),
     );
     // The dialog already popped itself before returning — no BuildContext
     // use after this await, so no `mounted` check is needed here.
     if (result == null) return;
-    await PlaceStore.instance.updateReview(
-      place.id,
-      score: place.myScore,
-      notes: result,
-    );
+    await onSave(result);
   }
 }
 
-/// Multiline notes editor, opened by [_MyNotes]. Pops with the trimmed text
+/// Multiline notes editor, opened by [_RemarkBox]. Pops with the trimmed text
 /// on Save, or `null` on Cancel/dismiss — the caller decides what to persist.
 /// Owns its controller: disposing it as soon as `showDialog` returned crashed,
 /// because the exit animation still rebuilds the TextField.
