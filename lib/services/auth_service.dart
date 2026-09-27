@@ -46,6 +46,13 @@ class AuthService {
   final ValueNotifier<AppUser?> user = ValueNotifier<AppUser?>(null);
 
   StreamSubscription<fb.User?>? _authSubscription;
+  final Completer<void> _firstAuthState = Completer<void>();
+
+  /// Completes once the persisted session (if any) has been restored — the
+  /// first userChanges() event — or immediately when Firebase isn't
+  /// configured. Await it before writing to a store at startup so the write
+  /// doesn't land in guest storage just before a signed-in user is restored.
+  Future<void> get ready => _firstAuthState.future;
   bool _googleSignInInitialized = false;
 
   /// Call once after Firebase init (or its failure) to start mirroring
@@ -56,11 +63,13 @@ class AuthService {
     }
     if (!isConfigured) {
       user.value = null;
+      if (!_firstAuthState.isCompleted) _firstAuthState.complete();
       return;
     }
     _authSubscription = fb.FirebaseAuth.instance.userChanges().listen((
       fb.User? firebaseUser,
     ) {
+      if (!_firstAuthState.isCompleted) _firstAuthState.complete();
       user.value = firebaseUser == null
           ? null
           : AppUser(
@@ -70,7 +79,27 @@ class AuthService {
               photoUrl: firebaseUser.photoURL,
             );
     });
+    if (kIsWeb) {
+      // Completes a signInWithRedirect started on a previous page load (see
+      // [_useRedirectSignIn]). Success arrives through userChanges() above;
+      // this only surfaces errors that would otherwise vanish silently.
+      unawaited(
+        fb.FirebaseAuth.instance.getRedirectResult().then<void>(
+          (_) {},
+          onError: (Object e) =>
+              debugPrint('AuthService.getRedirectResult error: $e'),
+        ),
+      );
+    }
   }
+
+  /// On iOS browsers — Safari and, above all, a home-screen (standalone)
+  /// web app — Firebase's popup flow can't hand its result back to the page,
+  /// so sign in by full-page redirect instead. Everywhere else the popup
+  /// keeps the app state in place. On Flutter web [defaultTargetPlatform] is
+  /// derived from the browser's user agent.
+  bool get _useRedirectSignIn =>
+      kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   /// Signs in with Google via Firebase Auth. Throws [AuthException] with a
   /// friendly, user-facing message on failure (never the raw platform error).
@@ -82,9 +111,16 @@ class AuthService {
     }
     try {
       if (kIsWeb) {
-        // signInWithPopup drives the entire OAuth flow itself on web; no
-        // google_sign_in package interaction needed (see firebase_api_notes).
-        await fb.FirebaseAuth.instance.signInWithPopup(fb.GoogleAuthProvider());
+        // signInWithPopup/signInWithRedirect drive the entire OAuth flow
+        // themselves on web; no google_sign_in package interaction needed
+        // (see firebase_api_notes).
+        final provider = fb.GoogleAuthProvider();
+        if (_useRedirectSignIn) {
+          // Navigates away; the result is picked up in [start] on reload.
+          await fb.FirebaseAuth.instance.signInWithRedirect(provider);
+        } else {
+          await fb.FirebaseAuth.instance.signInWithPopup(provider);
+        }
         return;
       }
 

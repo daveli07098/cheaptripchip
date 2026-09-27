@@ -192,10 +192,60 @@ describe('handleProxy — rate limiting', () => {
 });
 
 describe('handleProxy — CORS / methods', () => {
-  it('answers OPTIONS preflight without checking auth', async () => {
-    const res = await handleProxy(makeReq({ method: 'OPTIONS', query: {} }), makeDeps());
+  it('answers OPTIONS preflight without checking auth, echoing the web app origin', async () => {
+    const res = await handleProxy(
+      makeReq({ method: 'OPTIONS', query: {}, headers: { origin: 'https://cheaptripchip.vercel.app' } }),
+      makeDeps(),
+    );
     expect(res.status).toBe(204);
-    expect(res.headers['Access-Control-Allow-Origin']).toBe('*');
+    expect(res.headers['Access-Control-Allow-Origin']).toBe('https://cheaptripchip.vercel.app');
+    expect(res.headers['Access-Control-Allow-Headers']).toContain('Content-Type');
+    expect(res.headers['Vary']).toBe('Origin');
+  });
+
+  it('allows localhost on any port for local web dev', async () => {
+    for (const origin of ['http://localhost:5555', 'http://127.0.0.1:8080', 'http://localhost']) {
+      const res = await handleProxy(makeReq({ headers: { origin } }), makeDeps());
+      expect(res.status).toBe(200);
+      expect(res.headers['Access-Control-Allow-Origin']).toBe(origin);
+    }
+  });
+
+  it('gives other origins no Access-Control-Allow-Origin', async () => {
+    for (const origin of ['https://evil.example', 'https://cheaptripchip.vercel.app.evil.example', 'http://localhost.evil.example']) {
+      const res = await handleProxy(
+        makeReq({ method: 'OPTIONS', query: {}, headers: { origin } }),
+        makeDeps(),
+      );
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
+    }
+  });
+
+  it('uses ALLOWED_ORIGINS instead of the default when set', async () => {
+    const env = { ...BASE_ENV, ALLOWED_ORIGINS: 'https://other.vercel.app/, https://x.example' };
+    const ok = await handleProxy(
+      makeReq({ headers: { origin: 'https://other.vercel.app' } }),
+      makeDeps({ env }),
+    );
+    expect(ok.headers['Access-Control-Allow-Origin']).toBe('https://other.vercel.app');
+    const old = await handleProxy(
+      makeReq({ headers: { origin: 'https://cheaptripchip.vercel.app' } }),
+      makeDeps({ env }),
+    );
+    expect(old.headers['Access-Control-Allow-Origin']).toBeUndefined();
+  });
+
+  it('keeps serving native (no Origin) requests unchanged, still gated by the app token', async () => {
+    const ok = await handleProxy(makeReq(), makeDeps());
+    expect(ok.status).toBe(200);
+    expect(ok.headers['Access-Control-Allow-Origin']).toBeUndefined();
+    const denied = await handleProxy(
+      makeReq({ query: { key: 'wrong' }, headers: { origin: 'https://cheaptripchip.vercel.app' } }),
+      makeDeps(),
+    );
+    expect(denied.status).toBe(401);
+    expect(denied.headers['Access-Control-Allow-Origin']).toBe('https://cheaptripchip.vercel.app');
   });
 
   it('rejects non-POST/OPTIONS methods', async () => {

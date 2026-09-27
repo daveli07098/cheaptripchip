@@ -10,13 +10,16 @@ import '../data/map_focus.dart';
 import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
+import '../services/auth_service.dart';
 import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
 import '../services/my_maps_import.dart';
 import '../services/place_extractor.dart';
 import '../services/trip_share.dart';
+import '../services/web_share_intake.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
+import '../utils/replace_browser_url.dart';
 import '../widgets/account_button.dart';
 import '../widgets/board_invite_flow.dart';
 import '../widgets/export_sheet.dart';
@@ -105,6 +108,27 @@ class _HomeShellState extends State<HomeShell> {
       _initShareIntake();
       _initAppLinks();
     }
+    if (kIsWeb) _initWebShareIntake();
+  }
+
+  /// Web stand-in for share intake: a start URL like `/?add=<post link>`
+  /// (Apple Shortcut) or `/?text=…&url=…` (Android Web Share Target) opens
+  /// "Add a find" with the link and starts extracting right away. The query
+  /// is removed from the address bar first, so a reload doesn't re-add it.
+  void _initWebShareIntake() {
+    final shared = sharedTextFromQuery(Uri.base.queryParameters);
+    if (shared == null) return;
+    replaceBrowserUrl(withoutShareParams(Uri.base));
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Let a signed-in session restore first, so the find is saved to the
+      // account rather than to guest storage. Guests proceed after the wait.
+      await AuthService.instance.ready.timeout(
+        const Duration(seconds: 4),
+        onTimeout: () {},
+      );
+      if (!mounted) return;
+      _openAddSheet(initialText: shared, autoExtract: true);
+    });
   }
 
   /// `cheaptripchip://import?...` links (see [TripShare.toAppLink]) and
@@ -461,7 +485,7 @@ class _HomeShellState extends State<HomeShell> {
   /// share-intake flow above).
   void _openAddFind() => _openAddSheet();
 
-  void _openAddSheet({String initialText = ''}) {
+  void _openAddSheet({String initialText = '', bool autoExtract = false}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -473,7 +497,7 @@ class _HomeShellState extends State<HomeShell> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: AddFindSheet(initialText: initialText),
+        child: AddFindSheet(initialText: initialText, autoExtract: autoExtract),
       ),
     );
   }
@@ -482,9 +506,17 @@ class _HomeShellState extends State<HomeShell> {
 /// The "Add a find" sheet: paste a link or caption → Gemini extraction →
 /// geocode → saved to the store and shown on the map/feed.
 class AddFindSheet extends StatefulWidget {
-  const AddFindSheet({super.key, this.initialText = ''});
+  const AddFindSheet({
+    super.key,
+    this.initialText = '',
+    this.autoExtract = false,
+  });
 
   final String initialText;
+
+  /// Starts extracting [initialText] as soon as the sheet opens (web link
+  /// intake), instead of waiting for the user to tap the button.
+  final bool autoExtract;
 
   @override
   State<AddFindSheet> createState() => _AddFindSheetState();
@@ -497,6 +529,16 @@ class _AddFindSheetState extends State<AddFindSheet> {
   final _extractor = PlaceExtractor();
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoExtract && widget.initialText.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _extract();
+      });
+    }
+  }
 
   @override
   void dispose() {

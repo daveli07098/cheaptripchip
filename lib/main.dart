@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'data/board_store.dart';
@@ -19,9 +20,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ThemeController.instance.load();
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    await Firebase.initializeApp(options: _firebaseOptions());
   } catch (e) {
     debugPrint('Firebase not configured, running as guest: $e');
   }
@@ -32,6 +31,21 @@ Future<void> main() async {
   // background once the app has been idle a few seconds (see AreaResolver).
   AreaResolver.instance.start();
   runApp(const CheapTripChipApp());
+}
+
+/// On a deployed web build, serves Firebase's auth handler from the app's own
+/// host (proxied to `<project>.firebaseapp.com/__/auth/*` by the rewrite in
+/// web_deploy/vercel.json). Safari blocks the third-party storage the default
+/// cross-domain handler needs, so without this Google sign-in silently fails
+/// on iPhones. Local dev (localhost) keeps the default authDomain.
+FirebaseOptions _firebaseOptions() {
+  final options = DefaultFirebaseOptions.currentPlatform;
+  if (!kIsWeb) return options;
+  final host = Uri.base.host;
+  if (host.isEmpty || host == 'localhost' || host == '127.0.0.1') {
+    return options;
+  }
+  return options.copyWith(authDomain: host);
 }
 
 /// Rebinds [PlaceStore], [BoardStore] and [PhotoStore] to the current user

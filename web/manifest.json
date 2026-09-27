@@ -1,11 +1,11 @@
 {
     "name": "cheaptripchip",
     "short_name": "cheaptripchip",
-    "start_url": ".",
+    "start_url": "/",
     "display": "standalone",
     "background_color": "#FF5A6E",
     "theme_color": "#FF5A6E",
-    "description": "A new Flutter project.",
+    "description": "Save Instagram and TikTok travel finds onto one map.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
@@ -31,5 +31,17 @@
             "type": "image/png",
             "purpose": "maskable"
         }
-    ]
+    ],
+    "id": "/",
+    "scope": "/",
+    "share_target": {
+        "action": "/",
+        "method": "GET",
+        "enctype": "application/x-www-form-urlencoded",
+        "params": {
+            "title": "title",
+            "text": "text",
+            "url": "url"
+        }
+    }
 }

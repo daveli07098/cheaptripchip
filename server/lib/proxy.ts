@@ -28,11 +28,43 @@ export const UPSTREAM_TIMEOUT_MS = 25_000;
 
 const UPSTREAM_BASE = 'https://generativelanguage.googleapis.com';
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-goog-api-key',
-};
+/** Web-app origins allowed to call the proxy from a browser, unless overridden by ALLOWED_ORIGINS. */
+export const DEFAULT_ALLOWED_ORIGINS = ['https://cheaptripchip.vercel.app'];
+
+/** Local `flutter run -d chrome` / `flutter build web` + static server, any port. */
+const LOCAL_DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+function allowedOrigins(env: ProxyDeps['env']): string[] {
+  const raw = env.ALLOWED_ORIGINS;
+  if (!raw) return DEFAULT_ALLOWED_ORIGINS;
+  return raw
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+/**
+ * CORS headers for this request. The Origin is echoed only when it's the web
+ * app (or local dev); other sites get no Access-Control-Allow-Origin, so
+ * browsers refuse to hand them the response. Native apps send no Origin and
+ * are unaffected — CORS is a browser rule, the APP_TOKEN check is the real gate.
+ */
+export function corsHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  env: ProxyDeps['env'],
+): Record<string, string> {
+  const cors: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, x-goog-api-key',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+  const origin = headerValue(headers, 'origin');
+  if (origin && (LOCAL_DEV_ORIGIN.test(origin) || allowedOrigins(env).includes(origin))) {
+    cors['Access-Control-Allow-Origin'] = origin;
+  }
+  return cors;
+}
 
 /** A Gemini-shaped error body, so the app's cascade / error parsing keeps working. */
 function geminiError(code: number, message: string, status: string) {
@@ -153,15 +185,16 @@ function bodySize(req: ProxyRequest): number {
 
 export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<ProxyResponse> {
   const started = deps.now();
+  const cors = corsHeaders(req.headers, deps.env);
 
   if (req.method === 'OPTIONS') {
-    return { status: 204, headers: { ...CORS_HEADERS }, body: undefined };
+    return { status: 204, headers: { ...cors }, body: undefined };
   }
 
   if (req.method !== 'POST') {
     return {
       status: 404,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(404, 'Not found.', 'NOT_FOUND'),
     };
   }
@@ -170,7 +203,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
   if (!parsed || parsed.action !== 'generateContent' || !allowedModels(deps.env).includes(parsed.model)) {
     return {
       status: 404,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(
         404,
         `models/${req.modelAction ?? ''} is not found or not allowed by this proxy`,
@@ -184,7 +217,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
   if (!expectedToken || !appToken || !safeEqual(appToken, expectedToken)) {
     return {
       status: 401,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(401, 'Invalid app token', 'UNAUTHENTICATED'),
     };
   }
@@ -192,7 +225,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
   if (bodySize(req) > MAX_BODY_BYTES) {
     return {
       status: 413,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(413, 'Request body too large', 'INVALID_ARGUMENT'),
     };
   }
@@ -200,7 +233,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
   if (!checkRateLimit(req.ip, deps.now())) {
     return {
       status: 429,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(
         429,
         'Rate limit exceeded, please try again later.',
@@ -213,7 +246,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
   if (!geminiApiKey) {
     return {
       status: 500,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(500, 'Proxy is missing GEMINI_API_KEY', 'INTERNAL'),
     };
   }
@@ -246,7 +279,7 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
       `[gemini-proxy] model=${parsed.model} status=${upstream.status} latencyMs=${deps.now() - started}`,
     );
 
-    return { status: upstream.status, headers: { ...CORS_HEADERS }, body };
+    return { status: upstream.status, headers: { ...cors }, body };
   } catch (e) {
     const isAbort = e instanceof Error && e.name === 'AbortError';
     console.log(
@@ -255,13 +288,13 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
     if (isAbort) {
       return {
         status: 504,
-        headers: { ...CORS_HEADERS },
+        headers: { ...cors },
         body: geminiError(504, 'Upstream Gemini request timed out', 'DEADLINE_EXCEEDED'),
       };
     }
     return {
       status: 502,
-      headers: { ...CORS_HEADERS },
+      headers: { ...cors },
       body: geminiError(502, 'Failed to reach upstream Gemini API', 'UNAVAILABLE'),
     };
   } finally {

@@ -7,10 +7,15 @@
 #   scripts/bump-build.sh --no-commit  bump + stage pubspec.yaml only
 #   scripts/bump-build.sh --build      bump + commit + build + install
 #   scripts/bump-build.sh --build-only build + install the current HEAD, no bump
+#   add --no-web to either build mode to skip the web deploy
 #
 # The build always uses the committed HEAD: if the working tree has other
 # uncommitted edits (e.g. work in progress), it builds from a temporary
 # git worktree so those edits never end up on the device.
+#
+# Every build also copies the Android APK to ~/Downloads/cheaptripchip-v<X>.apk
+# for sharing, and builds + deploys the web app from the same source dir and
+# commit via scripts/deploy-web.sh (https://cheaptripchip.vercel.app).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -18,12 +23,14 @@ cd "$(git rev-parse --show-toplevel)"
 commit=true
 build=false
 bump=true
+web=true
 for arg in "$@"; do
   case "$arg" in
     --no-commit) commit=false ;;
     --build) build=true ;;
     --build-only) build=true; bump=false; commit=false ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    --no-web) web=false ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -71,7 +78,9 @@ PY
 )
 
 sha="$(git rev-parse --short HEAD)"
-defines=(--dart-define=GIT_SHA="$sha" --dart-define=BUILD_TIME="$(date '+%Y-%m-%d %H:%M')")
+build_time="$(date '+%Y-%m-%d %H:%M')"
+defines=(--dart-define=GIT_SHA="$sha" --dart-define=BUILD_TIME="$build_time")
+repo="$PWD"
 [[ -f env/dev.json ]] && defines=(--dart-define-from-file=env/dev.json "${defines[@]}")
 
 src="$PWD"
@@ -84,15 +93,42 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 cd "$src"
+version="v${semver}.${buildno}"
+install_result="not installed"
+apk_copy="none"
+web_result="skipped (--no-web)"
 if [[ "$platform" == ios ]]; then
   "${flutter[@]}" install --release -d "$device_id" "${defines[@]}"
+  install_result="installed on iOS device $device_id"
 else
   "${flutter[@]}" build apk --release "${defines[@]}"
   apk=build/app/outputs/flutter-apk/app-release.apk
+  apk_copy="$HOME/Downloads/cheaptripchip-${version}.apk"
+  cp "$apk" "$apk_copy"
   if [[ -n "$device_id" ]]; then
     "$adb" -s "$device_id" install -r -d "$apk"
-    echo "Installed v${semver}.${buildno} ($sha) on $device_id"
+    install_result="installed on $device_id"
+    echo "Installed $version ($sha) on $device_id"
   else
+    install_result="no device connected (APK built only)"
     echo "No device connected — built $apk only"
   fi
 fi
+
+if $web; then
+  # Same source dir (the temp worktree when HEAD is built from one, with
+  # env/dev.json already copied in) and the same GIT_SHA/BUILD_TIME label.
+  if GIT_SHA="$sha" BUILD_TIME="$build_time" \
+      "$repo/scripts/deploy-web.sh" --no-clean --src "$src"; then
+    web_result="https://cheaptripchip.vercel.app"
+  else
+    web_result="FAILED (see output above)"
+  fi
+fi
+
+echo
+echo "Version: $version"
+echo "Commit:  $sha"
+echo "Device:  $install_result"
+echo "APK:     $apk_copy"
+echo "Web:     $web_result"

@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Web app for iPhone users at https://cheaptripchip.vercel.app ("Add to Home
+  Screen"): browser Google sign-in (redirect on iOS, popup elsewhere),
+  `?add=<link>` opens "Add a find" prefilled (Apple Shortcut / Android Web
+  Share Target), home-screen manifest; Gemini proxy allows the site's origin
+  (CORS allow-list); `scripts/deploy-web.sh`, and `bump-build.sh --build`
+  now also copies the APK to ~/Downloads and deploys the web app.
+
 ### Changed
 - UX cleanup across the app (duplicates removed, easier to use):
   - Map and Saved tab share one search bar and one "Filters" drawer
