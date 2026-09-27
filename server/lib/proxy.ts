@@ -52,9 +52,10 @@ function allowedOrigins(env: ProxyDeps['env']): string[] {
 export function corsHeaders(
   headers: Record<string, string | string[] | undefined>,
   env: ProxyDeps['env'],
+  methods = 'POST, OPTIONS',
 ): Record<string, string> {
   const cors: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': methods,
     'Access-Control-Allow-Headers': 'Content-Type, x-goog-api-key',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -109,7 +110,8 @@ export function resetRateLimiter(): void {
   rateLimitStore.clear();
 }
 
-function checkRateLimit(ip: string, now: number): boolean {
+/** Exported so `lib/meta.ts` shares the same in-memory limiter/store shape (with its own key prefix, so the two endpoints don't share a bucket). */
+export function checkRateLimit(ip: string, now: number): boolean {
   const entry = rateLimitStore.get(ip);
   if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
     rateLimitStore.set(ip, { count: 1, windowStart: now });
@@ -120,13 +122,13 @@ function checkRateLimit(ip: string, now: number): boolean {
 }
 
 /** Constant-time string compare (hash first so unequal lengths don't short-circuit). */
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ah = createHash('sha256').update(a).digest();
   const bh = createHash('sha256').update(b).digest();
   return timingSafeEqual(ah, bh);
 }
 
-function headerValue(
+export function headerValue(
   headers: Record<string, string | string[] | undefined>,
   name: string,
 ): string | undefined {
@@ -134,7 +136,7 @@ function headerValue(
   return Array.isArray(v) ? v[0] : v;
 }
 
-function queryValue(
+export function queryValue(
   query: Record<string, string | string[] | undefined>,
   name: string,
 ): string | undefined {

@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   poles, a tile-coloured backdrop shows while tiles load, and failed tiles
   are retried instead of staying blank.
 - Shared place text no longer reads "Unknown, Tokyo, Japan".
+- Web app: a bare Instagram/TikTok link no longer fails with "Couldn't read
+  this post's caption" — browsers can't fetch instagram.com/tiktok.com
+  themselves (CORS) or send a crawler User-Agent, so the web build now reads
+  the caption via the proxy's new `GET /api/meta`, which does that fetch
+  server-side (host allow-list, manual redirect following, same APP_TOKEN
+  and rate limit as the Gemini proxy). Native builds are unaffected.
 
 ### Added
 - Delete a find (swipe-to-delete is back): swipe a Saved card or a map-list

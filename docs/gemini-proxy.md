@@ -109,6 +109,59 @@ is only a thin request/response adapter.
 - **`GET /api/health`** → `{ ok: true, region: process.env.VERCEL_REGION }`
   — use this to confirm the deployed region is `hnd1`.
 
+## Caption fetch for the web build (`server/lib/meta.ts`, `GET /api/meta`)
+
+Native builds have `lib/services/post_metadata.dart` fetch a shared
+Instagram/TikTok link directly with a crawler User-Agent, to read its
+`og:title`/`og:description` as a caption for Gemini (see that file's doc
+comment). The web build can't do that itself — a browser can neither
+cross-origin-fetch `instagram.com`/`tiktok.com` (CORS) nor send a spoofed
+User-Agent — so it instead calls this proxy:
+
+```
+Flutter web (lib/services/post_metadata.dart, fetchPostMetadataViaProxy)
+  → GET $GEMINI_BASE_URL/api/meta?url=<post url>&key=<APP_TOKEN>
+  → server/ (lib/meta.ts, same Vercel function family, region hnd1)
+      - checks APP_TOKEN (same one as the Gemini proxy), CORS, per-IP rate
+        limit (own "meta:" bucket — a caption-fetch burst can't starve
+        Gemini calls or vice versa)
+      - only fetches https instagram.com/www.instagram.com/tiktok.com/
+        www.tiktok.com/vt.tiktok.com/vm.tiktok.com — anything else is a 400
+        before any request is made
+      - fetches with the crawler UA (`facebookexternalhit/1.1 ...`, same
+        string `post_metadata.dart` uses natively), following up to 3
+        redirects manually (each hop re-checked against the same host
+        allow-list — vm./vt.tiktok.com short links redirect to the real
+        video page), 8s timeout, response capped at 1.5 MB
+      - parses `og:title` / `og:description` (falling back to
+        `<meta name="description">`) / `og:image` the same way
+        `post_metadata.dart` parses them (ported regex + HTML-entity
+        unescaping, so native and web agree on the tags)
+  ← { title, description, image, finalUrl } (nulls when the page has no
+    usable tags, e.g. a login-wall shell)
+```
+
+`fetchPostMetadataViaProxy` maps that JSON straight into the same
+`PostMetadata` type the native fetch returns, so `place_extractor.dart`
+doesn't need to know which path was used. `GEMINI_BASE_URL` and
+`GEMINI_API_KEY` (the APP_TOKEN) are the exact same `env/dev.json` values the
+Gemini proxy already uses — no separate config for this endpoint.
+
+Tests: `server/test/meta.test.ts` (host allow-list including scheme/parse
+checks, auth via query/header, CORS + OPTIONS, redirect-following incl.
+blocking an off-allow-list redirect and giving up after `MAX_REDIRECTS`,
+body-size cap, og:tag/entity parsing, timeout → 504, network failure → 502)
+and `test/post_metadata_test.dart`'s `fetchPostMetadataViaProxy` group (Dart
+side, mocked `http.Client`).
+
+**Known limitation, not fixed here**: Instagram sometimes serves its
+login-wall shell (200, no usable `<meta>` tags) to datacenter IPs even with
+the crawler UA — Vercel's outbound IPs may hit this depending on the post and
+Instagram's mood. When that happens `/api/meta` correctly returns `200` with
+all-null fields, and the web build then throws the same
+`CaptionUnavailableException` a private/deleted post would. TikTok links were
+not observed to have this problem in manual testing.
+
 ## Tests
 
 ```
@@ -116,14 +169,15 @@ cd server && npm install && npm test
 ```
 
 Used `npm` (found at `~/.nix-profile/bin/npm`, v10.9.7) — `npx`/`pnpm` also
-work, nothing is npm-specific. 23 vitest cases in `test/proxy.test.ts` cover:
-model allow-list (default + `ALLOWED_MODELS` override + disallowed
-action), token check (query + header, missing/wrong), body size cap at/over
-the limit, rate limiting (per-IP isolation, 429 after the cap, window reset),
-OPTIONS/CORS, non-POST rejection, and upstream passthrough (mocked
-`fetch`) for 200/400/503/timeout/network-failure — including a check that
-the *app token* never appears in the URL sent upstream, only the real key in
-a header.
+work, nothing is npm-specific. `test/proxy.test.ts` covers: model allow-list
+(default + `ALLOWED_MODELS` override + disallowed action), token check
+(query + header, missing/wrong), body size cap at/over the limit, rate
+limiting (per-IP isolation, 429 after the cap, window reset), OPTIONS/CORS,
+non-POST rejection, and upstream passthrough (mocked `fetch`) for
+200/400/503/timeout/network-failure — including a check that the *app token*
+never appears in the URL sent upstream, only the real key in a header.
+`test/meta.test.ts` covers `/api/meta` per the section above. `test/board_page.test.ts`
+covers the `/b/:id` invite-link landing page.
 
 `npx tsc --noEmit` also passes clean.
 
@@ -153,6 +207,13 @@ a header.
      -H 'Content-Type: application/json' \
      -d '{"contents":[{"parts":[{"text":"Say hi in one word."}]}],"generationConfig":{"maxOutputTokens":16}}'
    # → 200 with candidates[0].content.parts[0].text
+
+   curl -s -o /dev/null -w '%{http_code}\n' "https://<project>.vercel.app/api/meta?url=https://www.instagram.com/p/x/"
+   # → 401 (no token)
+   curl -s -o /dev/null -w '%{http_code}\n' -H "x-goog-api-key: <APP_TOKEN>" "https://<project>.vercel.app/api/meta?url=https://example.com/"
+   # → 400 (host not allowed)
+   curl -s -H "x-goog-api-key: <APP_TOKEN>" "https://<project>.vercel.app/api/meta?url=<a real public IG/TikTok post url>"
+   # → 200 {"title":...,"description":...,"image":...,"finalUrl":...}
    ```
 9. Update `env/dev.json` (git-ignored, never commit it):
    ```json

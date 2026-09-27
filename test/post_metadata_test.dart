@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cheaptripchip/services/post_metadata.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -276,6 +278,133 @@ void main() {
       );
       expect(meta, isNull);
       expect(called, isFalse);
+    });
+  });
+
+  group('fetchPostMetadataViaProxy', () {
+    const postUrl = 'https://www.instagram.com/p/abc123/';
+
+    test(
+      'calls /api/meta with the post url and token, maps the JSON',
+      () async {
+        Uri? captured;
+        final client = MockClient((req) async {
+          captured = req.url;
+          return http.Response(
+            jsonEncode({
+              'title': 'Name on Instagram: "caption text"',
+              'description': '123 likes - name on Jan 1, 2024: "trunc caption"',
+              'image': 'https://example.com/img.jpg',
+              'finalUrl': postUrl,
+            }),
+            200,
+          );
+        });
+        final meta = await fetchPostMetadataViaProxy(
+          Uri.parse(postUrl),
+          client: client,
+          baseUrl: 'https://cheaptripchip-api.vercel.app',
+          token: 'app-token',
+        );
+        expect(captured?.path, '/api/meta');
+        expect(captured?.queryParameters['url'], postUrl);
+        expect(captured?.queryParameters['key'], 'app-token');
+        expect(meta, isNotNull);
+        expect(meta!.title, 'Name on Instagram: "caption text"');
+        expect(meta.caption, 'caption text');
+        expect(meta.author, '@name');
+      },
+    );
+
+    test('strips a trailing slash from baseUrl', () async {
+      Uri? captured;
+      final client = MockClient((req) async {
+        captured = req.url;
+        return http.Response(jsonEncode({'title': 't'}), 200);
+      });
+      await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: 'https://cheaptripchip-api.vercel.app/',
+        token: 'app-token',
+      );
+      expect(
+        captured.toString(),
+        startsWith('https://cheaptripchip-api.vercel.app/api/meta?'),
+      );
+    });
+
+    test('returns null when baseUrl is empty (proxy not configured)', () async {
+      var called = false;
+      final client = MockClient((req) async {
+        called = true;
+        return http.Response(jsonEncode({'title': 't'}), 200);
+      });
+      final meta = await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: '',
+        token: 'app-token',
+      );
+      expect(meta, isNull);
+      expect(called, isFalse);
+    });
+
+    test('returns null when token is empty', () async {
+      final client = MockClient((req) async {
+        return http.Response(jsonEncode({'title': 't'}), 200);
+      });
+      final meta = await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: 'https://cheaptripchip-api.vercel.app',
+        token: '',
+      );
+      expect(meta, isNull);
+    });
+
+    test('returns null on a non-200 response', () async {
+      final client = MockClient((req) async {
+        return http.Response('unauthorized', 401);
+      });
+      final meta = await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: 'https://cheaptripchip-api.vercel.app',
+        token: 'wrong',
+      );
+      expect(meta, isNull);
+    });
+
+    test('returns null when the proxy has no title/description', () async {
+      final client = MockClient((req) async {
+        return http.Response(
+          jsonEncode({'title': null, 'description': null, 'image': null}),
+          200,
+        );
+      });
+      final meta = await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: 'https://cheaptripchip-api.vercel.app',
+        token: 'app-token',
+      );
+      expect(meta, isNull);
+    });
+
+    test('returns null on a request timeout', () async {
+      final client = MockClient((req) async {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        return http.Response(jsonEncode({'title': 't'}), 200);
+      });
+      final meta = await fetchPostMetadataViaProxy(
+        Uri.parse(postUrl),
+        client: client,
+        baseUrl: 'https://cheaptripchip-api.vercel.app',
+        token: 'app-token',
+        timeout: const Duration(milliseconds: 50),
+      );
+      expect(meta, isNull);
     });
   });
 }

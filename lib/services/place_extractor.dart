@@ -10,16 +10,18 @@ import 'post_metadata.dart';
 /// Turns a shared caption / link into a structured [Place] (ANALYSIS.md §2).
 ///
 /// Pipeline: for a bare IG/TikTok URL, [fetchPostMetadata] first scrapes the
-/// post page's og:meta tags for a caption (crawler-UA fetch — CORS blocks
-/// this on web, see [fetchPostMetadata]'s doc); that caption feeds Gemini
-/// alongside the original input. Gemini extracts the structured fields from
-/// text → Nominatim resolves the address to coordinates. The AI-extraction
-/// half mirrors event-calendar's JSON-mode prompt + lenient parse.
+/// post page's og:meta tags for a caption (crawler-UA fetch — native does
+/// this directly, web routes it through the server-side proxy's `/api/meta`
+/// since a browser can't do the fetch itself, see [fetchPostMetadata]'s
+/// doc); that caption feeds Gemini alongside the original input. Gemini
+/// extracts the structured fields from text → Nominatim resolves the address
+/// to coordinates. The AI-extraction half mirrors event-calendar's JSON-mode
+/// prompt + lenient parse.
 ///
-/// NOTE: on web, or when the metadata fetch fails (private account, deleted
-/// post, rate-limited), a bare URL with no caption text throws
-/// [CaptionUnavailableException] rather than sending Gemini a link it can
-/// only guess from.
+/// NOTE: when the metadata fetch fails (private account, deleted post,
+/// rate-limited, or — on web — the proxy not configured), a bare URL with no
+/// caption text throws [CaptionUnavailableException] rather than sending
+/// Gemini a link it can only guess from.
 class PlaceExtractor {
   PlaceExtractor({
     GeminiService? gemini,
@@ -257,8 +259,8 @@ AUTHOR: ${meta.author ?? '(unknown)'}
 
 /// Thrown when [PlaceExtractor.extract]'s input is nothing but a bare
 /// Instagram/TikTok URL and [fetchPostMetadata] couldn't read a caption for
-/// it (private account, deleted post, rate-limited, or running on web where
-/// the fetch is CORS-blocked) — sending Gemini just the raw link produces a
+/// it (private account, deleted post, rate-limited, or — on web — the proxy
+/// not configured/reachable) — sending Gemini just the raw link produces a
 /// guess, not an extraction.
 class CaptionUnavailableException implements Exception {
   const CaptionUnavailableException(this.url);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -7,15 +8,27 @@ import 'package:http/http.dart' as http;
 /// compiler defines that library, for both dart2js/dartdevc and dart2wasm),
 /// duplicated here so this file stays pure Dart with no Flutter import. That
 /// matters twice: [fetchPostMetadata] is called from web builds too (where it
-/// must no-op, see below) and this file needs to be plain-`dart run`-able for
-/// manual checks against real posts.
+/// routes through the proxy's `/api/meta` instead, see below) and this file
+/// needs to be plain-`dart run`-able for manual checks against real posts.
 const bool _isWeb = bool.fromEnvironment('dart.library.js_interop');
 
 /// Crawler UA that Instagram/TikTok serve public og:meta tags to, instead of
 /// the login-wall shell a normal browser UA gets. Verified with curl against
-/// public IG posts (see place_extractor.dart doc comment).
+/// public IG posts (see place_extractor.dart doc comment). Also sent by the
+/// server-side proxy's `/api/meta` (server/lib/meta.ts), which is what does
+/// this fetch on web — browsers can neither cross-origin-fetch instagram.com/
+/// tiktok.com (CORS) nor set a custom User-Agent themselves.
 const _crawlerUserAgent =
     'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+
+/// Same config the app's Gemini calls use (`gemini_service.dart`): on web,
+/// `GEMINI_BASE_URL` is the deployed proxy and `GEMINI_API_KEY` is its
+/// APP_TOKEN — reused here so `/api/meta` shares that one auth token.
+const String _proxyBaseUrl = String.fromEnvironment(
+  'GEMINI_BASE_URL',
+  defaultValue: 'https://generativelanguage.googleapis.com',
+);
+const String _proxyToken = String.fromEnvironment('GEMINI_API_KEY');
 
 /// Metadata scraped from an Instagram/TikTok post's `<meta>` tags.
 class PostMetadata {
@@ -174,20 +187,34 @@ String _unescapeHtml(String s) {
   });
 }
 
-/// Fetches [url]'s og:meta tags via a crawler User-Agent and returns the
-/// parsed [PostMetadata], or null when the page has no usable tags — a
-/// non-200 status, a request timeout, a network error, or (on web) always,
-/// since browsers can't fetch these cross-origin pages at all (CORS).
+/// Fetches [url]'s og:meta tags and returns the parsed [PostMetadata], or
+/// null when there's nothing usable — a non-200 status, a request timeout, a
+/// network error, or a page with no matching `<meta>` tags.
 ///
 /// Only meaningful for [isSupportedPostUrl] URLs; returns null for anything
 /// else without making a request.
+///
+/// On native, this fetches [url] directly with a crawler User-Agent. On web
+/// ([_isWeb]), a direct fetch isn't possible — browsers block a cross-origin
+/// request to instagram.com/tiktok.com (CORS) and can't set a custom
+/// User-Agent anyway — so this instead calls the server-side proxy's
+/// `/api/meta`, which does the same crawler-UA fetch for us (see
+/// [fetchPostMetadataViaProxy]).
 Future<PostMetadata?> fetchPostMetadata(
   Uri url, {
   http.Client? client,
   Duration timeout = const Duration(seconds: 10),
 }) async {
-  if (_isWeb) return null;
   if (!isSupportedPostUrl(url)) return null;
+  if (_isWeb) {
+    return fetchPostMetadataViaProxy(
+      url,
+      client: client,
+      timeout: timeout,
+      baseUrl: _proxyBaseUrl,
+      token: _proxyToken,
+    );
+  }
 
   final ownsClient = client == null;
   final c = client ?? http.Client();
@@ -199,6 +226,54 @@ Future<PostMetadata?> fetchPostMetadata(
     final tags = _parseMetaTags(res.body);
     final title = tags['og:title'];
     final description = tags['og:description'] ?? tags['description'];
+    if (title == null && description == null) return null;
+    return PostMetadata(
+      title: title,
+      description: description,
+      author: _authorFromDescription(description),
+    );
+  } on Exception {
+    // Timeout, socket error, malformed response — caller proceeds without
+    // a caption rather than failing the whole extraction.
+    return null;
+  } finally {
+    if (ownsClient) c.close();
+  }
+}
+
+/// Web path for [fetchPostMetadata]: calls the proxy's `GET /api/meta` (see
+/// `server/lib/meta.ts`) instead of fetching [url] directly, and maps its
+/// `{title, description, image, finalUrl}` JSON into a [PostMetadata].
+///
+/// Split out from [fetchPostMetadata] (rather than inlined behind the
+/// `_isWeb` check) so it's directly unit-testable: [_isWeb] is always false
+/// under `flutter test`, so the web branch of [fetchPostMetadata] itself
+/// can't be exercised there.
+///
+/// Returns null when [baseUrl] or [token] is unset (nothing configured to
+/// call), on a non-200 response, when the proxy returns no title/description,
+/// or on any network error/timeout — same "proceed without a caption"
+/// contract as the native path.
+Future<PostMetadata?> fetchPostMetadataViaProxy(
+  Uri url, {
+  http.Client? client,
+  Duration timeout = const Duration(seconds: 10),
+  required String baseUrl,
+  required String token,
+}) async {
+  if (baseUrl.isEmpty || token.isEmpty) return null;
+
+  final ownsClient = client == null;
+  final c = client ?? http.Client();
+  try {
+    final metaUri = Uri.parse(
+      '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/api/meta',
+    ).replace(queryParameters: {'url': url.toString(), 'key': token});
+    final res = await c.get(metaUri).timeout(timeout);
+    if (res.statusCode != 200) return null;
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    final title = json['title'] as String?;
+    final description = json['description'] as String?;
     if (title == null && description == null) return null;
     return PostMetadata(
       title: title,
