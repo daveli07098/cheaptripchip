@@ -11,9 +11,11 @@ import '../data/shared_board_store.dart';
 import '../models/board.dart';
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/place_details.dart';
 import '../models/place_note.dart';
 import '../models/place_rating.dart';
 import '../models/shared_board.dart';
+import '../services/place_enricher.dart';
 import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/confirm_dialog.dart';
@@ -196,6 +198,7 @@ class PlaceDetailSheet extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                _NativeName(place: place, shared: source.isSharedBoard),
                 if (place.award case final award?) ...[
                   const SizedBox(height: 8),
                   _Pill(
@@ -227,6 +230,10 @@ class PlaceDetailSheet extends StatelessWidget {
                   builder: (context) => Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      _DetailsSection(
+                        place: place,
+                        shared: source.isSharedBoard,
+                      ),
                       const SizedBox(height: 18),
                       if (source.isSharedBoard)
                         _SharedRatingsSection(
@@ -238,24 +245,9 @@ class PlaceDetailSheet extends StatelessWidget {
                       const SizedBox(height: 18),
                       _SectionLabel('Original caption / 原文'),
                       const SizedBox(height: 6),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surface,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Text(
-                          place.originalCaption,
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.6,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant
-                                .withValues(alpha: 0.85),
-                          ),
-                        ),
+                      _OriginalCaption(
+                        place: place,
+                        shared: source.isSharedBoard,
                       ),
                       const SizedBox(height: 18),
                       _InfoRow(icon: Icons.location_on, text: place.address),
@@ -1925,6 +1917,299 @@ class _DeleteFindButton extends StatelessWidget {
         minimumSize: const Size(double.infinity, 0),
       ),
     );
+  }
+}
+
+/// [builder] with the current [place] — live from [PlaceStore] for the
+/// user's own place (details arrive in the background), the given copy as
+/// is for a [shared]-board place (never reads PlaceStore, see
+/// [PlaceDetailSource]).
+Widget _liveOrShared(
+  Place place,
+  bool shared,
+  Widget Function(BuildContext context, Place current) builder,
+) => shared
+    ? Builder(builder: (context) => builder(context, place))
+    : _LivePlace(place: place, builder: builder);
+
+/// [PlaceDetails.nativeName] under the title, when the enricher found one.
+class _NativeName extends StatelessWidget {
+  const _NativeName({required this.place, required this.shared});
+
+  final Place place;
+  final bool shared;
+
+  @override
+  Widget build(BuildContext context) {
+    return _liveOrShared(place, shared, (context, current) {
+      final native = current.details?.nativeName;
+      if (native == null || native == current.name.trim()) {
+        return const SizedBox.shrink();
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
+          native,
+          style: TextStyle(
+            fontSize: 16,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    });
+  }
+}
+
+/// "Details / 詳情": the AI-filled [Place.details] — price level (¥¥ / $$
+/// by country), opening hours, must-try chips and tag chips — with a small
+/// "✨ AI" marker. On the user's own place there's a "Refresh details"
+/// action (re-runs [PlaceEnricher.refresh]); a shared-board copy shows the
+/// copied details read-only and hides the section when there are none.
+class _DetailsSection extends StatefulWidget {
+  const _DetailsSection({required this.place, required this.shared});
+
+  final Place place;
+  final bool shared;
+
+  @override
+  State<_DetailsSection> createState() => _DetailsSectionState();
+}
+
+class _DetailsSectionState extends State<_DetailsSection> {
+  bool _refreshing = false;
+
+  static const _priceLabels = ['Cheap', 'Moderate', 'Pricey', 'Splurge'];
+
+  Future<void> _refresh(Place current) async {
+    setState(() => _refreshing = true);
+    try {
+      await PlaceEnricher.instance.refresh(current);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't refresh details")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _liveOrShared(widget.place, widget.shared, (context, current) {
+      final details = current.details;
+      final canRefresh = !widget.shared && PlaceEnricher.instance.isConfigured;
+      if ((details == null || details.isEmpty) && !canRefresh) {
+        return const SizedBox.shrink();
+      }
+      final scheme = Theme.of(context).colorScheme;
+      return Padding(
+        padding: const EdgeInsets.only(top: 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _SectionLabel('Details / 詳情'),
+                const SizedBox(width: 8),
+                Semantics(
+                  label: 'AI generated',
+                  child: ExcludeSemantics(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '✨ AI',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                if (canRefresh)
+                  TextButton.icon(
+                    onPressed: _refreshing ? null : () => _refresh(current),
+                    icon: _refreshing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 16),
+                    label: const Text('Refresh details'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+              ],
+            ),
+            if (details == null || details.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  details == null
+                      ? 'Not filled in yet / 尚未填寫'
+                      : 'Nothing found / 沒有資料',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else ...[
+              if (details.priceLevel case final level?)
+                _InfoRow(
+                  icon: Icons.payments_outlined,
+                  text:
+                      '${priceSymbolFor(level, current.countryCode)} · '
+                      '${_priceLabels[level - 1]}',
+                ),
+              if (details.openingHours case final hours?)
+                _InfoRow(icon: Icons.schedule, text: hours),
+              if (details.mustTry.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                const _SubLabel('Must try / 必試'),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final item in details.mustTry)
+                      _Pill(color: scheme.primary, label: item),
+                  ],
+                ),
+              ],
+              if (details.tags.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final tag in details.tags)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: scheme.outlineVariant),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '#$tag',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ],
+        ),
+      );
+    });
+  }
+}
+
+/// Whether [text] is mostly CJK (Han, kana, Hangul) — then the caption's
+/// useful translation is English, otherwise Chinese.
+bool _looksCjk(String text) {
+  var cjk = 0;
+  var letters = 0;
+  for (final rune in text.runes) {
+    final isCjk =
+        (rune >= 0x3040 && rune <= 0x30FF) || // kana
+        (rune >= 0x3400 && rune <= 0x9FFF) || // Han
+        (rune >= 0xAC00 && rune <= 0xD7AF); // Hangul
+    if (isCjk) {
+      cjk++;
+      letters++;
+    } else if ((rune >= 0x41 && rune <= 0x5A) ||
+        (rune >= 0x61 && rune <= 0x7A)) {
+      letters++;
+    }
+  }
+  return letters > 0 && cjk * 3 >= letters;
+}
+
+/// "Original caption / 原文" box with a "Translate caption / 翻譯" toggle
+/// when [PlaceDetails] has a translation in the other language — English
+/// for a CJK caption, Traditional Chinese otherwise.
+class _OriginalCaption extends StatefulWidget {
+  const _OriginalCaption({required this.place, required this.shared});
+
+  final Place place;
+  final bool shared;
+
+  @override
+  State<_OriginalCaption> createState() => _OriginalCaptionState();
+}
+
+class _OriginalCaptionState extends State<_OriginalCaption> {
+  bool _translated = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return _liveOrShared(widget.place, widget.shared, (context, current) {
+      final caption = current.originalCaption;
+      final details = current.details;
+      final translation = details == null || caption.trim().isEmpty
+          ? null
+          : (_looksCjk(caption) ? details.captionEn : details.captionZh);
+      final showTranslation = _translated && translation != null;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              showTranslation ? translation : caption,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+          if (translation != null)
+            TextButton.icon(
+              onPressed: () => setState(() => _translated = !_translated),
+              icon: const Icon(Icons.translate, size: 16),
+              label: Text(
+                showTranslation
+                    ? 'Show original / 顯示原文'
+                    : 'Translate caption / 翻譯',
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 12.5),
+              ),
+            ),
+        ],
+      );
+    });
   }
 }
 

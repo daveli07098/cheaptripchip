@@ -88,7 +88,19 @@ is only a thin request/response adapter.
   hashes of both sides (so unequal-length inputs don't short-circuit the
   comparison) → else 401.
 - **Body size cap**: 64 KB (via `Content-Length`, falling back to the
-  serialized body) → 413.
+  serialized body) → 413. Requests carrying inline images
+  (`inline_data`/`inlineData` parts with an `image/*` mime type — the app's
+  "Add from screenshot" flow) get **4 MB** instead (under Vercel's ~4.5 MB
+  function body limit), with at most 4 images per request. The app downscales
+  to ≤1280 px first (`lib/services/image_prep.dart`).
+- **Response cache**: deterministic requests (`generationConfig.temperature
+  === 0`, which every app extraction call sends) are cached in memory by
+  sha256(model + body) for 24 h, LRU-capped at 200 entries, 200-responses
+  only. Hits skip the rate limiter and Gemini and carry `X-Cache: HIT`
+  (misses `X-Cache: MISS`). Per instance, reset on cold start — a cost saver,
+  not a guarantee. Sampled requests (no/non-zero temperature) are never
+  cached. The app also caches per post URL on device
+  (`lib/services/extraction_cache.dart`).
 - **Rate limit**: best-effort, 30 requests / 5 minutes per client IP
   (`x-forwarded-for`, first entry), **in-memory only** — it resets on cold
   start and is not shared across concurrent Vercel instances. It's an abuse

@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- AI smarter saving: one post with several spots → tick-list; "Add from
+  screenshot" (Gemini vision, also the workaround for Instagram's login wall
+  on web); "Which one?" picker for low-confidence guesses or ambiguous
+  geocodes; duplicate check (open / save anyway / merge); proxy response
+  cache (24 h, temperature-0 only) and an on-device per-link cache.
+- AI auto-filled details per place: price level, opening hours, must-try,
+  tags, native name, caption translation (EN/中文), background backfill and
+  "Refresh details"; shown read-only on shared boards.
+- Ask your places ✨: natural-language search on Map and Saved (Gemini over a
+  compact index, offline keyword fallback in EN/中文/日本語), AI results chip
+  with explanation, suggestion chips.
+- AI trip planner: board ⋮ → "Plan a trip ✨" — days, pace, start point;
+  day tabs with mini maps, drag to reorder, move between days, open each day
+  in Google Maps (split past 11 stops), saved with personal boards; local
+  distance-based fallback.
+
+### Added
 - Web app for iPhone users at https://cheaptripchip.vercel.app ("Add to Home
   Screen"): browser Google sign-in (redirect on iOS, popup elsewhere),
   `?add=<link>` opens "Add a find" prefilled (Apple Shortcut / Android Web

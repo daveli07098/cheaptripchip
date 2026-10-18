@@ -1,5 +1,6 @@
 import 'package:latlong2/latlong.dart';
 
+import 'place_details.dart';
 import 'place_note.dart';
 import 'restaurant_type_detect.dart';
 
@@ -35,6 +36,7 @@ class Place {
     this.restaurantTypeManual = false,
     this.countryCode = '',
     this.extraNotes = const [],
+    this.details,
   });
 
   final String id;
@@ -138,6 +140,13 @@ class Place {
   /// shared-board flows expose.
   final List<PlaceNote> extraNotes;
 
+  /// AI-filled extras (must-try, price level, tags, translations…) from
+  /// PlaceEnricher (lib/services/place_enricher.dart). Null means not
+  /// enriched yet — the enrichment queue picks those up. Separate from the
+  /// user-editable fields above, so a refresh never overwrites a user edit.
+  /// See [copyWith]'s `clearDetails`.
+  final PlaceDetails? details;
+
   /// The city part of [region] ("Tokyo, Japan" → "Tokyo"); empty when
   /// [region] is empty or the extractor's "Unknown" placeholder.
   String get city {
@@ -237,6 +246,10 @@ class Place {
     bool? restaurantTypeManual,
     String? countryCode,
     List<PlaceNote>? extraNotes,
+    PlaceDetails? details,
+
+    /// Same as `clearMyScore`, for [Place.details].
+    bool clearDetails = false,
   }) {
     return Place(
       id: id ?? this.id,
@@ -267,6 +280,7 @@ class Place {
       restaurantTypeManual: restaurantTypeManual ?? this.restaurantTypeManual,
       countryCode: countryCode ?? this.countryCode,
       extraNotes: extraNotes ?? this.extraNotes,
+      details: clearDetails ? null : (details ?? this.details),
     );
   }
 
@@ -305,6 +319,10 @@ class Place {
       // Always emitted (even empty) so a merge write can clear a deleted
       // note — see the `savedAt`/merge note on FirestorePlaceRepository.upsert.
       'extraNotes': extraNotes.map((n) => n.toJson()).toList(),
+      // Only emitted once enriched: older firestore.rules (shared-board
+      // validPlace allow-list) reject an unknown key, and a refresh always
+      // replaces the whole map, so there is nothing to clear.
+      if (details != null) 'details': details!.toJson(),
     };
   }
 
@@ -355,6 +373,7 @@ class Place {
           ? (json['countryCode'] as String).toUpperCase()
           : '',
       extraNotes: _parseExtraNotes(json['extraNotes']),
+      details: PlaceDetails.fromJson(json['details']),
     );
   }
 

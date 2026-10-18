@@ -52,6 +52,7 @@ class MapFilter {
     this.query = '',
     this.boards = const {},
     this.favoritesOnly = false,
+    this.aiPlaceIds,
   });
 
   /// null = "All".
@@ -76,6 +77,14 @@ class MapFilter {
 
   /// Only places marked [Place.isFavorite].
   final bool favoritesOnly;
+
+  /// "Ask your places" results, ranked best-first; null = not asking. When
+  /// set it replaces the free-text [query] match (the query is then the
+  /// question, which would match nothing word-by-word) and is ANDed with
+  /// the chip filters. Not counted in [activeCount] — it has its own chip.
+  final Set<String>? aiPlaceIds;
+
+  bool get hasAiResults => aiPlaceIds != null;
 
   /// How many chip-style filters are on (search [query] not counted) —
   /// the chip row offers "Clear all" from two up.
@@ -105,6 +114,7 @@ class MapFilter {
         return false;
       }
     }
+    if (aiPlaceIds case final ids?) return ids.contains(p.id);
     return placeMatches(p, query);
   }
 
@@ -117,7 +127,9 @@ class MapFilter {
       other.district == district &&
       other.query == query &&
       other.favoritesOnly == favoritesOnly &&
-      setEquals(other.boards, boards);
+      setEquals(other.boards, boards) &&
+      // Ordered: the same ids re-ranked is a different result.
+      listEquals(other.aiPlaceIds?.toList(), aiPlaceIds?.toList());
 
   @override
   int get hashCode => Object.hash(
@@ -128,7 +140,28 @@ class MapFilter {
     query,
     favoritesOnly,
     Object.hashAllUnordered(boards),
+    aiPlaceIds == null ? null : Object.hashAll(aiPlaceIds!),
   );
+}
+
+/// [places] in [MapFilter.aiPlaceIds] rank order when AI results are on
+/// (places not in the ranking keep their relative order, last); else
+/// [places] itself.
+List<Place> rankedForFilter(List<Place> places, MapFilter filter) {
+  final ids = filter.aiPlaceIds;
+  if (ids == null || places.length < 2) return places;
+  final rank = <String, int>{};
+  for (final id in ids) {
+    rank[id] = rank.length;
+  }
+  final indexed = [for (var i = 0; i < places.length; i++) (i, places[i])]
+    ..sort((a, b) {
+      final byRank = (rank[a.$2.id] ?? rank.length).compareTo(
+        rank[b.$2.id] ?? rank.length,
+      );
+      return byRank != 0 ? byRank : a.$1.compareTo(b.$1);
+    });
+  return [for (final (_, p) in indexed) p].toList(growable: false);
 }
 
 /// One board as the map sees it: the drawer's Boards rows, the chips, and
@@ -510,8 +543,11 @@ class MapFilterCache {
     }
     _filter = filter;
     _visibleBoards = boards;
-    return _visible = index.all
-        .where((p) => filter.matches(p, boardIndex: boards))
-        .toList(growable: false);
+    return _visible = rankedForFilter(
+      index.all
+          .where((p) => filter.matches(p, boardIndex: boards))
+          .toList(growable: false),
+      filter,
+    );
   }
 }

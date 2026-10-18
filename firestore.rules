@@ -168,7 +168,8 @@ service cloud.firestore {
             'sourceHandle', 'sourcePlatform', 'award', 'matchConfident',
             'rating', 'reviewCount', 'priceRange', 'photoUrls', 'isFavorite',
             'myScore', 'myNotes', 'myPhotoAt', 'restaurantType',
-            'restaurantTypeManual', 'countryCode', 'extraNotes', 'updatedAt'])
+            'restaurantTypeManual', 'countryCode', 'extraNotes', 'details',
+            'updatedAt'])
           && p.name is string && p.name.size() <= 500
           && p.get('originalCaption', '').size() <= 10000
           && p.get('descriptionEn', '').size() <= 5000
@@ -180,7 +181,24 @@ service cloud.firestore {
           // sharedCopyOf always strips it to [] before writing here, so this
           // just guards the shape rather than allowing real content through.
           && p.get('extraNotes', []) is list
-          && p.get('extraNotes', []).size() == 0;
+          && p.get('extraNotes', []).size() == 0
+          // details (lib/models/place_details.dart) is AI-filled and not
+          // private, so shared copies keep it — guard shape and size only.
+          && validDetails(p.get('details', null));
+      }
+
+      function validDetails(d) {
+        return d == null || (d is map
+          && d.keys().hasOnly([
+              'mustTry', 'priceLevel', 'nativeName', 'tags', 'openingHours',
+              'summaryEn', 'summaryZh', 'captionEn', 'captionZh',
+              'enrichedAt'])
+          && (d.get('mustTry', []) is list && d.get('mustTry', []).size() <= 20)
+          && (d.get('tags', []) is list && d.get('tags', []).size() <= 20)
+          && (d.get('captionEn', '') == null
+            || d.get('captionEn', '').size() <= 10000)
+          && (d.get('captionZh', '') == null
+            || d.get('captionZh', '').size() <= 10000));
       }
 
       match /places/{placeId} {

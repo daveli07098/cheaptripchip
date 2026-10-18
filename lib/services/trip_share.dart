@@ -188,6 +188,49 @@ class TripShare {
     return Uri.https('www.google.com', '/maps/dir/', params);
   }
 
+  /// Like [googleMapsRouteUrl], but nothing is dropped: a route longer than
+  /// Google's 11-point limit is split into consecutive links, each starting
+  /// where the previous one ended (so every leg is covered). [origin] is an
+  /// optional free-text start (a hotel, a station) that begins the first
+  /// link only. Empty when there is nothing to route; a lone place with no
+  /// [origin] is a single [googleMapsPlaceUrl].
+  static List<Uri> googleMapsRouteUrls(List<Place> places, {String? origin}) {
+    final stops = [
+      if (origin != null && origin.trim().isNotEmpty) origin.trim(),
+      for (final place in places) place.googleMapsQuery,
+    ];
+    if (places.isEmpty) return const [];
+    if (stops.length == 1) return [googleMapsPlaceUrl(places.first)];
+
+    final urls = <Uri>[];
+    var start = 0;
+    while (start < stops.length - 1) {
+      final end = (start + _maxRoutePoints).clamp(0, stops.length);
+      urls.add(_routeUrl(stops.sublist(start, end)));
+      start = end - 1;
+    }
+    return urls;
+  }
+
+  /// Walking directions through [stops] (Google Maps search text), at most
+  /// [_maxRoutePoints] of them.
+  static Uri _routeUrl(List<String> stops) {
+    final params = <String, String>{
+      'api': '1',
+      'origin': stops.first,
+      'destination': stops.last,
+      'travelmode': 'walking',
+    };
+    if (stops.length > 2) {
+      // `|` separates waypoints, so strip it from the place text itself.
+      params['waypoints'] = stops
+          .sublist(1, stops.length - 1)
+          .map((s) => s.replaceAll('|', ' '))
+          .join('|');
+    }
+    return Uri.https('www.google.com', '/maps/dir/', params);
+  }
+
   // ---------------------------------------------------------------------
   // KML (imports into Google My Maps)
   // ---------------------------------------------------------------------

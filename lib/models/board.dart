@@ -1,3 +1,5 @@
+import 'trip_plan.dart';
+
 /// Board → Section → Item organization hierarchy (see ANALYSIS.md §5).
 ///
 /// A [Board] is a top-level trip/theme container. Each [BoardSection] groups
@@ -13,6 +15,7 @@ class Board {
     required this.name,
     required this.emoji,
     required this.sections,
+    this.tripPlan,
   });
 
   final String id;
@@ -20,15 +23,29 @@ class Board {
   final String emoji;
   final List<BoardSection> sections;
 
+  /// The saved "Plan a trip" itinerary (lib/screens/trip_plan_screen.dart);
+  /// null until the user saves one. Personal boards only — shared boards
+  /// keep their plan local.
+  final TripPlan? tripPlan;
+
   int get itemCount =>
       sections.fold(0, (sum, section) => sum + section.placeIds.length);
 
-  Board copyWith({String? name, String? emoji, List<BoardSection>? sections}) {
+  Board copyWith({
+    String? name,
+    String? emoji,
+    List<BoardSection>? sections,
+    TripPlan? tripPlan,
+
+    /// When true, clears [Board.tripPlan] regardless of [tripPlan].
+    bool clearTripPlan = false,
+  }) {
     return Board(
       id: id,
       name: name ?? this.name,
       emoji: emoji ?? this.emoji,
       sections: sections ?? this.sections,
+      tripPlan: clearTripPlan ? null : (tripPlan ?? this.tripPlan),
     );
   }
 
@@ -40,6 +57,8 @@ class Board {
       'name': name,
       'emoji': emoji,
       'sections': sections.map((section) => section.toJson()).toList(),
+      // Always emitted (even null) so a merge write clears a removed plan.
+      'tripPlan': tripPlan?.toJson(),
     };
   }
 
@@ -59,6 +78,7 @@ class Board {
               )
               .toList() ??
           const [],
+      tripPlan: TripPlan.fromJson(json['tripPlan']),
     );
   }
 }

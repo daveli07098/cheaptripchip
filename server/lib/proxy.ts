@@ -22,9 +22,23 @@ export const DEFAULT_ALLOWED_MODELS = [
 ];
 
 export const MAX_BODY_BYTES = 64 * 1024;
+/**
+ * Cap for requests carrying inline images (`inline_data` / `inlineData` parts
+ * with an `image/*` mime type) — the app's "Add from screenshot" flow sends one
+ * downscaled (≤1280 px) screenshot as base64. Stays under Vercel's own ~4.5 MB
+ * function request-body limit, so an oversized body gets this proxy's
+ * Gemini-shaped 413 rather than a platform error page.
+ */
+export const MAX_IMAGE_BODY_BYTES = 4 * 1024 * 1024;
+/** Max inline images per request — the app sends one; more is abuse, not a use case. */
+export const MAX_INLINE_IMAGES = 4;
 export const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 export const RATE_LIMIT_MAX_REQUESTS = 30;
 export const UPSTREAM_TIMEOUT_MS = 25_000;
+
+/** Response cache: identical requests within this window are served without calling Gemini. */
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const CACHE_MAX_ENTRIES = 200;
 
 const UPSTREAM_BASE = 'https://generativelanguage.googleapis.com';
 
@@ -174,6 +188,94 @@ function allowedModels(env: ProxyDeps['env']): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Number of inline image parts in a generateContent body (both the REST
+ * snake_case `inline_data`/`mime_type` and the camelCase `inlineData`/
+ * `mimeType` spellings Gemini accepts). Non-image inline data (audio, PDF…)
+ * doesn't count, so it stays under the small text cap.
+ */
+export function countInlineImages(body: unknown): number {
+  if (!body || typeof body !== 'object') return 0;
+  const contents = (body as { contents?: unknown }).contents;
+  if (!Array.isArray(contents)) return 0;
+  let count = 0;
+  for (const content of contents) {
+    const parts = (content as { parts?: unknown } | null)?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      const inline =
+        (part as Record<string, unknown>).inline_data ?? (part as Record<string, unknown>).inlineData;
+      if (!inline || typeof inline !== 'object') continue;
+      const mime =
+        (inline as Record<string, unknown>).mime_type ?? (inline as Record<string, unknown>).mimeType;
+      if (typeof mime === 'string' && mime.toLowerCase().startsWith('image/')) count += 1;
+    }
+  }
+  return count;
+}
+
+/** Body cap for this request: the image cap when it carries inline images, else the text cap. */
+export function bodyCap(body: unknown): number {
+  return countInlineImages(body) > 0 ? MAX_IMAGE_BODY_BYTES : MAX_BODY_BYTES;
+}
+
+// Per-instance, in-memory LRU response cache (Map keeps insertion order; a hit
+// is re-inserted to mark it most-recent). Like the rate limiter it resets on
+// cold start and isn't shared across instances — a cost/latency saver for
+// repeat extractions of the same post, not a guarantee.
+interface CacheEntry {
+  status: number;
+  body: unknown;
+  storedAt: number;
+}
+const responseCache = new Map<string, CacheEntry>();
+
+/** Test-only: clear the response cache between test cases. */
+export function resetResponseCache(): void {
+  responseCache.clear();
+}
+
+/**
+ * Only deterministic requests are cached: `generationConfig.temperature === 0`
+ * (what the app's JSON-extraction calls send). A sampled request (default or
+ * non-zero temperature) is expected to vary, so replaying one would change its
+ * meaning.
+ */
+export function isCacheable(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const config = (body as { generationConfig?: unknown }).generationConfig;
+  if (!config || typeof config !== 'object') return false;
+  return (config as { temperature?: unknown }).temperature === 0;
+}
+
+export function cacheKey(model: string, body: unknown): string {
+  return createHash('sha256')
+    .update(model)
+    .update('\n')
+    .update(JSON.stringify(body ?? {}))
+    .digest('hex');
+}
+
+function cacheGet(key: string, now: number): CacheEntry | undefined {
+  const entry = responseCache.get(key);
+  if (!entry) return undefined;
+  responseCache.delete(key);
+  if (now - entry.storedAt >= CACHE_TTL_MS) return undefined;
+  responseCache.set(key, entry); // bump to most-recent
+  return entry;
+}
+
+function cacheSet(key: string, entry: CacheEntry): void {
+  responseCache.delete(key);
+  responseCache.set(key, entry);
+  while (responseCache.size > CACHE_MAX_ENTRIES) {
+    const oldest = responseCache.keys().next().value;
+    if (oldest === undefined) break;
+    responseCache.delete(oldest);
+  }
+}
+
 function bodySize(req: ProxyRequest): number {
   if (typeof req.contentLength === 'number' && !Number.isNaN(req.contentLength)) {
     return req.contentLength;
@@ -224,12 +326,23 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
     };
   }
 
-  if (bodySize(req) > MAX_BODY_BYTES) {
+  if (bodySize(req) > bodyCap(req.body) || countInlineImages(req.body) > MAX_INLINE_IMAGES) {
     return {
       status: 413,
       headers: { ...cors },
       body: geminiError(413, 'Request body too large', 'INVALID_ARGUMENT'),
     };
+  }
+
+  // Cache hits are served before the rate limiter: they cost nothing upstream.
+  const cacheable = isCacheable(req.body);
+  const key = cacheable ? cacheKey(parsed.model, req.body) : undefined;
+  if (key) {
+    const hit = cacheGet(key, deps.now());
+    if (hit) {
+      console.log(`[gemini-proxy] model=${parsed.model} status=${hit.status} cache=hit`);
+      return { status: hit.status, headers: { ...cors, 'X-Cache': 'HIT' }, body: hit.body };
+    }
   }
 
   if (!checkRateLimit(req.ip, deps.now())) {
@@ -281,7 +394,14 @@ export async function handleProxy(req: ProxyRequest, deps: ProxyDeps): Promise<P
       `[gemini-proxy] model=${parsed.model} status=${upstream.status} latencyMs=${deps.now() - started}`,
     );
 
-    return { status: upstream.status, headers: { ...cors }, body };
+    if (key && upstream.status === 200) {
+      cacheSet(key, { status: upstream.status, body, storedAt: deps.now() });
+    }
+    return {
+      status: upstream.status,
+      headers: key ? { ...cors, 'X-Cache': 'MISS' } : { ...cors },
+      body,
+    };
   } catch (e) {
     const isAbort = e instanceof Error && e.name === 'AbortError';
     console.log(

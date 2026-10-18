@@ -7,7 +7,10 @@ import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
 import '../data/shared_board_store.dart';
 import '../models/place.dart';
+import '../services/ai_search.dart';
 import '../theme/app_theme.dart';
+import '../widgets/ai_results_chip.dart';
+import '../widgets/ask_suggestions.dart';
 import '../widgets/delete_find.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
@@ -64,9 +67,24 @@ class _FeedScreenState extends State<FeedScreen> {
     _loaded = loaded;
     _filter = filter;
     _boards = boards;
-    return _results = loaded
-        .where((p) => filter.matches(p, boardIndex: boards))
-        .toList(growable: false);
+    // AI results come back ranked best-first.
+    return _results = rankedForFilter(
+      loaded
+          .where((p) => filter.matches(p, boardIndex: boards))
+          .toList(growable: false),
+      filter,
+    );
+  }
+
+  /// "Ask your places" from the Saved tab: "near me" is the map's last
+  /// visible centre ([PlaceFilterController.mapCenter]).
+  void _ask(String question, BoardIndex boards) {
+    _searchFocusNode.unfocus();
+    _filters.ask(
+      question,
+      places: PlaceStore.instance.places.value,
+      boards: boards,
+    );
   }
 
   @override
@@ -126,13 +144,28 @@ class _FeedScreenState extends State<FeedScreen> {
                   activeFilters: filter.activeCount,
                   elevation: 1,
                   onOpenFilters: () => _scaffoldKey.currentState?.openDrawer(),
-                  onSubmitted: (_) => _searchFocusNode.unfocus(),
+                  onSubmitted: (text) => looksLikeQuestion(text)
+                      ? _ask(text, boardIndex)
+                      : _searchFocusNode.unfocus(),
+                  onAsk: () => _ask(filters.search.text, boardIndex),
+                  asking: filters.asking,
                 ),
+              ),
+              AskSuggestions(
+                controller: filters.search,
+                focusNode: _searchFocusNode,
+                suggestions: filters.suggestionsFor(loaded),
+                onAsk: (question) => _ask(question, boardIndex),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               ),
               ActiveFilterChips(
                 filters: filters,
                 index: index,
                 boardIndex: boardIndex,
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              ),
+              AiResultsChip(
+                filters: filters,
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               ),
               const SizedBox(height: 12),
@@ -142,7 +175,8 @@ class _FeedScreenState extends State<FeedScreen> {
                         narrowed:
                             loaded.isNotEmpty &&
                             (filter.query.trim().isNotEmpty ||
-                                filter.hasActiveFilters),
+                                filter.hasActiveFilters ||
+                                filter.hasAiResults),
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),

@@ -258,6 +258,28 @@ describe('places size limits', () => {
     await assertSucceeds(setDoc(ref, place('p3')));
   });
 
+  it('allows AI details (Place.details) but guards their shape', async () => {
+    const ref = doc(db('alice'), 'sharedBoards', BOARD, 'places', 'p5');
+    const details = {
+      mustTry: ['tonkotsu ramen'],
+      priceLevel: 2,
+      nativeName: '一蘭',
+      tags: ['late-night', 'solo-friendly'],
+      openingHours: 'Daily 24h',
+      summaryEn: 'Famous ramen.',
+      summaryZh: null,
+      captionEn: 'Best ramen',
+      captionZh: null,
+      enrichedAt: '2026-10-18T00:00:00.000Z',
+    };
+    await assertSucceeds(setDoc(ref, place('p5', { details })));
+    await assertSucceeds(setDoc(ref, place('p5', { details: null })));
+    await assertFails(setDoc(ref, place('p5', { details: { ...details, secret: 'x' } })));
+    await assertFails(setDoc(ref, place('p5', { details: 'x' })));
+    await assertFails(setDoc(ref, place('p5', { details: { ...details, captionEn: 'x'.repeat(10001) } })));
+    await assertFails(setDoc(ref, place('p5', { details: { ...details, tags: Array(21).fill('t') } })));
+  });
+
   it('non-members cannot write places', async () => {
     await assertFails(setDoc(doc(db('mallory'), 'sharedBoards', BOARD, 'places', 'p4'), place('p4')));
   });

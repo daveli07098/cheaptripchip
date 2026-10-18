@@ -12,6 +12,7 @@ import 'firebase_options.dart';
 import 'screens/home_shell.dart';
 import 'services/area_resolver.dart';
 import 'services/auth_service.dart';
+import 'services/place_enricher.dart';
 import 'services/restaurant_type_rescan.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
@@ -30,6 +31,9 @@ Future<void> main() async {
   // Reverse-geocodes city/district for places that lack them, in the
   // background once the app has been idle a few seconds (see AreaResolver).
   AreaResolver.instance.start();
+  // Auto-fills AI place details (must-try, price, tags, translations) for
+  // new and existing finds, throttled, in the background (see PlaceEnricher).
+  PlaceEnricher.instance.start();
   runApp(const CheapTripChipApp());
 }
 

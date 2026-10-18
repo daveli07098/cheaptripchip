@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../models/place.dart';
+import '../services/ai_search.dart';
 import 'map_filter.dart';
 
 /// The active [MapFilter] + search text, shared by the Explore (map) and
@@ -10,9 +12,23 @@ import 'map_filter.dart';
 ///
 /// [search] backs both tabs' search fields; its text is mirrored into
 /// [filter]'s `query`, so listeners only need to watch this controller.
+///
+/// It also runs "Ask your places" ([ask]): the answer's ranked ids become
+/// [MapFilter.aiPlaceIds] (the "AI results" chip on both tabs) and its
+/// explanation [aiResult]. Editing the question, its ✕, [clearAiResults],
+/// [showAll] and [showOnlyBoard] all drop them.
 class PlaceFilterController extends ChangeNotifier {
-  PlaceFilterController() {
+  /// [aiSearch] replaces the Gemini-backed default (tests).
+  PlaceFilterController({AiSearch? aiSearch}) : _aiSearch = aiSearch {
     search.addListener(_onSearchChanged);
+  }
+
+  AiSearch? _aiSearch;
+  bool _ownsAiSearch = false;
+  AiSearch get aiSearch {
+    if (_aiSearch case final given?) return given;
+    _ownsAiSearch = true;
+    return _aiSearch = AiSearch();
   }
 
   /// Shared by both search pills (each keeps its own [FocusNode]).
@@ -42,9 +58,97 @@ class PlaceFilterController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The last "Ask" answer while its results are shown; null otherwise.
+  AskResult? _aiResult;
+  AskResult? get aiResult => _aiResult;
+
+  /// Whether an [ask] is in flight (the pill shows a spinner).
+  bool _asking = false;
+  bool get asking => _asking;
+
+  /// Bumped per [ask] and whenever its answer must be discarded (the user
+  /// edited the question, cleared, or asked again).
+  int _askTicket = 0;
+  bool _disposed = false;
+
+  /// The map's visible centre, kept up to date by the map screen — what
+  /// "near me" means without a location permission (also when asking from
+  /// the Saved tab). Not a notifying field.
+  LatLng? mapCenter;
+
+  /// Grounded suggestion chips ([askSuggestionsFor]), memoized per loaded
+  /// list.
+  List<Place>? _suggestionsFor;
+  List<String> _suggestions = const [];
+  List<String> suggestionsFor(List<Place> loaded) {
+    if (identical(loaded, _suggestionsFor)) return _suggestions;
+    _suggestionsFor = loaded;
+    return _suggestions = askSuggestionsFor(loaded);
+  }
+
   void _onSearchChanged() {
     if (search.text == _filter.query) return;
+    if (_filter.hasAiResults || _asking) {
+      // Editing the question makes the shown answer (or the pending one)
+      // stale — back to plain search.
+      _dropAi();
+      _filter = _copy(query: search.text, aiPlaceIds: null);
+      notifyListeners();
+      return;
+    }
     _set(_copy(query: search.text));
+  }
+
+  /// Asks [question] over [places] ("near" = [near], else [mapCenter]) and
+  /// shows the answer as AI results; the question stays in the search
+  /// field. Returns null when superseded (edited, cleared, asked again).
+  Future<AskResult?> ask(
+    String question, {
+    required List<Place> places,
+    BoardIndex? boards,
+    LatLng? near,
+  }) async {
+    final q = question.trim();
+    if (q.isEmpty) return null;
+    final ticket = ++_askTicket;
+    _asking = true;
+    // Show the question as typed; set the query first so the search
+    // listener sees it as already applied.
+    if (search.text != q) {
+      _filter = _copy(query: q, aiPlaceIds: null);
+      _aiResult = null;
+      search.text = q;
+    }
+    notifyListeners();
+    final result = await aiSearch.ask(
+      q,
+      places: places,
+      boards: boards,
+      near: near ?? mapCenter,
+    );
+    if (_disposed || ticket != _askTicket) return null;
+    _asking = false;
+    _aiResult = result;
+    _filter = _copy(query: q, aiPlaceIds: {...result.placeIds});
+    notifyListeners();
+    return result;
+  }
+
+  /// The AI chip's ✕: drops the results and the question.
+  void clearAiResults() {
+    _askTicket++;
+    _asking = false;
+    _aiResult = null;
+    _filter = _copy(query: '', aiPlaceIds: null);
+    search.clear();
+    notifyListeners();
+  }
+
+  /// Forgets any shown or pending answer (no notify — callers do).
+  void _dropAi() {
+    _askTicket++;
+    _asking = false;
+    _aiResult = null;
   }
 
   void _set(MapFilter next) {
@@ -63,6 +167,7 @@ class PlaceFilterController extends ChangeNotifier {
     String? query,
     Set<String>? boards,
     bool? favoritesOnly,
+    Object? aiPlaceIds = _keep,
   }) {
     final f = _filter;
     return MapFilter(
@@ -77,6 +182,9 @@ class PlaceFilterController extends ChangeNotifier {
       query: query ?? f.query,
       boards: boards ?? f.boards,
       favoritesOnly: favoritesOnly ?? f.favoritesOnly,
+      aiPlaceIds: identical(aiPlaceIds, _keep)
+          ? f.aiPlaceIds
+          : aiPlaceIds as Set<String>?,
     );
   }
 
@@ -123,13 +231,15 @@ class PlaceFilterController extends ChangeNotifier {
   }
 
   /// Clears every chip filter (favourites, category, area, boards) but
-  /// keeps the search text — it has its own ✕.
-  void clearFilters() => _set(MapFilter(query: _filter.query));
+  /// keeps the search text and any AI results — each has its own ✕.
+  void clearFilters() =>
+      _set(MapFilter(query: _filter.query, aiPlaceIds: _filter.aiPlaceIds));
 
   /// "Show board X": only that board — every other filter and the search
   /// are cleared so none of its places stay hidden.
   void showOnlyBoard(String boardKey) {
     // Set first so the search listener sees an already-matching query.
+    _dropAi();
     _filter = MapFilter(boards: {boardKey});
     search.clear();
     notifyListeners();
@@ -138,6 +248,7 @@ class PlaceFilterController extends ChangeNotifier {
   /// Clears every filter and the search — "Show this place on the map"
   /// when the current filters hide it.
   void showAll() {
+    _dropAi();
     _filter = const MapFilter();
     search.clear();
     notifyListeners();
@@ -145,6 +256,8 @@ class PlaceFilterController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    if (_ownsAiSearch) _aiSearch?.dispose();
     search.removeListener(_onSearchChanged);
     search.dispose();
     super.dispose();

@@ -4,10 +4,14 @@ import 'package:flutter/material.dart';
 /// [placeMatches]), so it says exactly that.
 const String kPlaceSearchHint = 'Search saved places';
 
+/// Tooltip (and screen-reader name) of the pill's ✨ "Ask" button.
+const String kAskTooltip = 'Ask your places';
+
 /// Full-width search pill shared by the map and the Saved tab: leading ☰
 /// opens the Filters drawer (badged with the number of active filters), a
-/// free-text field, a clear ✕ once there's text, and an optional [trailing]
-/// (the map's account button).
+/// free-text field, an "Ask" ✨ button and a clear ✕ once there's text, and
+/// an optional [trailing] (the map's account button). ✨ sends the text to
+/// "Ask your places" ([onAsk]); a spinner replaces it while [asking].
 class PlaceSearchPill extends StatelessWidget {
   const PlaceSearchPill({
     super.key,
@@ -16,6 +20,8 @@ class PlaceSearchPill extends StatelessWidget {
     required this.onOpenFilters,
     this.activeFilters = 0,
     this.onSubmitted,
+    this.onAsk,
+    this.asking = false,
     this.trailing,
     this.elevation = 2,
   });
@@ -28,6 +34,10 @@ class PlaceSearchPill extends StatelessWidget {
   /// Chip filters on; > 0 shows a count badge on the ☰ button.
   final int activeFilters;
   final ValueChanged<String>? onSubmitted;
+
+  /// Ask the current text as a question; null hides the ✨ button.
+  final VoidCallback? onAsk;
+  final bool asking;
   final Widget? trailing;
   final double elevation;
 
@@ -70,11 +80,39 @@ class PlaceSearchPill extends StatelessWidget {
             ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
               builder: (context, value, _) {
-                if (value.text.isEmpty) return const SizedBox.shrink();
-                return IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  tooltip: 'Clear search',
-                  onPressed: controller.clear,
+                final onAsk = this.onAsk;
+                if (asking) {
+                  return const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        semanticsLabel: 'Asking your places',
+                      ),
+                    ),
+                  );
+                }
+                if (value.text.trim().isEmpty) return const SizedBox.shrink();
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onAsk != null)
+                      IconButton(
+                        icon: Icon(
+                          Icons.auto_awesome,
+                          size: 20,
+                          color: scheme.primary,
+                        ),
+                        tooltip: kAskTooltip,
+                        onPressed: onAsk,
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      tooltip: 'Clear search',
+                      onPressed: controller.clear,
+                    ),
+                  ],
                 );
               },
             ),

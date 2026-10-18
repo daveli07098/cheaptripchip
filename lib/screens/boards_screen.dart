@@ -21,6 +21,7 @@ import '../widgets/sharing_sheet.dart';
 import '../widgets/show_place_on_map.dart';
 import '../widgets/sign_in_gate.dart';
 import 'place_detail_sheet.dart';
+import 'trip_plan_screen.dart';
 
 export '../models/board.dart' show kNewFindsBoardId;
 
@@ -292,6 +293,7 @@ class _BoardCard extends StatefulWidget {
 
 enum _BoardMenuAction {
   showOnMap,
+  planTrip,
   sendCopy,
   shareBoard,
   sharing,
@@ -456,6 +458,8 @@ class _BoardCardState extends State<_BoardCard> {
     switch (action) {
       case _BoardMenuAction.showOnMap:
         _showOnMap();
+      case _BoardMenuAction.planTrip:
+        await _planTrip(context);
       case _BoardMenuAction.sendCopy:
         ExportSheet.show(context, _bundle());
       case _BoardMenuAction.shareBoard:
@@ -489,7 +493,7 @@ class _BoardCardState extends State<_BoardCard> {
   }
 
   /// ⋮ entries by role, in three groups split by dividers:
-  /// - View: Show on map, Add places…
+  /// - View: Show on map, Plan a trip, Add places…
   /// - Share: the live board (Share board… for a personal board, Sharing
   ///   settings…/info once shared) and Send a copy (a one-time snapshot).
   ///   Subtitles spell out the difference.
@@ -521,6 +525,15 @@ class _BoardCardState extends State<_BoardCard> {
       [
         if (widget.onShowOnMap != null)
           item(_BoardMenuAction.showOnMap, Icons.map_outlined, 'Show on map'),
+        if (widget.board.itemCount > 0)
+          PopupMenuItem(
+            value: _BoardMenuAction.planTrip,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.auto_awesome),
+              title: Text('Plan a trip ✨', semanticsLabel: 'Plan a trip'),
+            ),
+          ),
         if (!_isAuto && _can.canEditPlaces)
           item(_BoardMenuAction.addPlaces, Icons.playlist_add, 'Add places…'),
       ],
@@ -574,6 +587,20 @@ class _BoardCardState extends State<_BoardCard> {
       entries.addAll(group);
     }
     return entries;
+  }
+
+  /// Opens the AI trip planner. Only personal boards keep the plan (see
+  /// [Board.tripPlan]); for shared boards and "New finds" it stays local.
+  Future<void> _planTrip(BuildContext context) {
+    final board = widget.board;
+    return openTripPlanner(
+      context,
+      board: board,
+      placesById: widget.placesById,
+      onSave: _shared != null || _isAuto
+          ? null
+          : (plan) => BoardStore.instance.saveTripPlan(board.id, plan),
+    );
   }
 
   /// Personal → shared: guests are asked to sign in first; otherwise the

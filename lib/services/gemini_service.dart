@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -55,7 +56,28 @@ class GeminiService {
   /// Run a JSON-extraction prompt through the model cascade. Tries each model in
   /// order; transient failures (429/503/network) fall through to the next.
   /// Throws if nothing is configured or every model fails.
-  Future<Map<String, dynamic>> extractJson(String prompt) async {
+  Future<Map<String, dynamic>> extractJson(String prompt) => _cascade([
+    {'text': prompt},
+  ]);
+
+  /// [extractJson] with an image attached (Gemini vision): the prompt plus
+  /// one `inline_data` part carrying [imageBytes] base64-encoded. Keep the
+  /// image small (see image_prep.dart) — the proxy caps image requests at
+  /// 4 MB, and a 413 is a hard error, not a cascade fall-through.
+  Future<Map<String, dynamic>> extractJsonFromImage(
+    String prompt,
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) => _cascade([
+    {'text': prompt},
+    {
+      'inline_data': {'mime_type': mimeType, 'data': base64Encode(imageBytes)},
+    },
+  ]);
+
+  Future<Map<String, dynamic>> _cascade(
+    List<Map<String, Object?>> parts,
+  ) async {
     if (!isConfigured) {
       throw StateError(
         'No GEMINI_API_KEY configured. Pass it via --dart-define=GEMINI_API_KEY=...',
@@ -65,7 +87,7 @@ class GeminiService {
     final failures = <String>[];
     for (final model in models) {
       try {
-        return await _callJson(prompt, model);
+        return await _callJson(parts, model);
       } catch (e) {
         final msg = e.toString();
         failures.add(msg);
@@ -77,22 +99,24 @@ class GeminiService {
     throw Exception(unique.isEmpty ? 'All Gemini models failed' : unique);
   }
 
-  Future<Map<String, dynamic>> _callJson(String prompt, String model) async {
+  Future<Map<String, dynamic>> _callJson(
+    List<Map<String, Object?>> parts,
+    String model,
+  ) async {
     final uri = Uri.parse(
       '$baseUrl/v1beta/models/$model:generateContent?key=$apiKey',
     );
     final body = jsonEncode({
       'contents': [
-        {
-          'parts': [
-            {'text': prompt},
-          ],
-        },
+        {'parts': parts},
       ],
       // temperature 0 → deterministic extraction (same rationale as the TS client).
       'generationConfig': {
         'responseMimeType': 'application/json',
-        'maxOutputTokens': 2048,
+        // A ceiling, not a cost: a multi-place post (several places, each
+        // with alternatives) plus the model's thinking tokens overran 2048,
+        // and a truncated nested JSON can't be salvaged.
+        'maxOutputTokens': 8192,
         'temperature': 0,
       },
     });

@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_ALLOWED_MODELS,
+  CACHE_MAX_ENTRIES,
+  CACHE_TTL_MS,
   MAX_BODY_BYTES,
+  MAX_IMAGE_BODY_BYTES,
+  MAX_INLINE_IMAGES,
+  countInlineImages,
   RATE_LIMIT_MAX_REQUESTS,
   handleProxy,
   parseModelAction,
   resetRateLimiter,
+  resetResponseCache,
   type ProxyDeps,
   type ProxyRequest,
 } from '../lib/proxy.js';
@@ -48,6 +54,7 @@ function makeDeps(overrides: Partial<ProxyDeps> = {}): ProxyDeps {
 
 beforeEach(() => {
   resetRateLimiter();
+  resetResponseCache();
   vi.restoreAllMocks();
 });
 
@@ -314,5 +321,174 @@ describe('handleProxy — upstream passthrough', () => {
     const res = await handleProxy(makeReq(), makeDeps({ fetch: fetchMock }));
     expect(res.status).toBe(502);
     expect(res.body).toMatchObject({ error: { status: 'UNAVAILABLE' } });
+  });
+});
+
+function imageBody(mimeKey: 'inline_data' | 'inlineData' = 'inline_data', count = 1) {
+  const image =
+    mimeKey === 'inline_data'
+      ? { inline_data: { mime_type: 'image/jpeg', data: 'AAAA' } }
+      : { inlineData: { mimeType: 'image/png', data: 'AAAA' } };
+  return {
+    contents: [{ parts: [{ text: 'extract' }, ...Array.from({ length: count }, () => image)] }],
+    generationConfig: { temperature: 0 },
+  };
+}
+
+describe('image body cap', () => {
+  it('counts inline images in both spellings, ignoring non-image inline data', () => {
+    expect(countInlineImages(imageBody('inline_data'))).toBe(1);
+    expect(countInlineImages(imageBody('inlineData', 2))).toBe(2);
+    expect(
+      countInlineImages({
+        contents: [{ parts: [{ inline_data: { mime_type: 'application/pdf', data: 'x' } }] }],
+      }),
+    ).toBe(0);
+    expect(countInlineImages({ contents: [{ parts: [{ text: 'hi' }] }] })).toBe(0);
+    expect(countInlineImages(undefined)).toBe(0);
+  });
+
+  it('accepts an image request well above the text cap', async () => {
+    const res = await handleProxy(
+      makeReq({ body: imageBody(), contentLength: 3 * 1024 * 1024 }),
+      makeDeps(),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts an image request exactly at the image cap', async () => {
+    const res = await handleProxy(
+      makeReq({ body: imageBody(), contentLength: MAX_IMAGE_BODY_BYTES }),
+      makeDeps(),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an image request over the image cap with 413', async () => {
+    const deps = makeDeps();
+    const res = await handleProxy(
+      makeReq({ body: imageBody(), contentLength: MAX_IMAGE_BODY_BYTES + 1 }),
+      deps,
+    );
+    expect(res.status).toBe(413);
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the small cap for a text-only body', async () => {
+    const res = await handleProxy(makeReq({ contentLength: 65 * 1024 }), makeDeps());
+    expect(res.status).toBe(413);
+  });
+
+  it('rejects more than MAX_INLINE_IMAGES images', async () => {
+    const res = await handleProxy(
+      makeReq({ body: imageBody('inline_data', MAX_INLINE_IMAGES + 1) }),
+      makeDeps(),
+    );
+    expect(res.status).toBe(413);
+  });
+});
+
+describe('response cache', () => {
+  const deterministic = {
+    contents: [{ parts: [{ text: 'same prompt' }] }],
+    generationConfig: { temperature: 0 },
+  };
+
+  it('serves an identical deterministic request from cache without calling upstream', async () => {
+    const deps = makeDeps();
+    const first = await handleProxy(makeReq({ body: deterministic }), deps);
+    const second = await handleProxy(makeReq({ body: deterministic }), deps);
+    expect(first.status).toBe(200);
+    expect(first.headers['X-Cache']).toBe('MISS');
+    expect(second.status).toBe(200);
+    expect(second.headers['X-Cache']).toBe('HIT');
+    expect(second.body).toEqual(first.body);
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('misses for a different model or a different body', async () => {
+    const deps = makeDeps();
+    await handleProxy(makeReq({ body: deterministic }), deps);
+    await handleProxy(
+      makeReq({ body: deterministic, modelAction: 'gemini-3.8-flash:generateContent' }),
+      deps,
+    );
+    await handleProxy(
+      makeReq({
+        body: { ...deterministic, contents: [{ parts: [{ text: 'other prompt' }] }] },
+      }),
+      deps,
+    );
+    expect(deps.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('expires entries after the TTL', async () => {
+    let now = 1_000_000;
+    const deps = makeDeps({ now: () => now });
+    await handleProxy(makeReq({ body: deterministic }), deps);
+    now += CACHE_TTL_MS - 1;
+    const hit = await handleProxy(makeReq({ body: deterministic }), deps);
+    expect(hit.headers['X-Cache']).toBe('HIT');
+    now += 2;
+    const miss = await handleProxy(makeReq({ body: deterministic }), deps);
+    expect(miss.headers['X-Cache']).toBe('MISS');
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache non-200 responses', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { code: 503, message: 'busy' } }), { status: 503 }),
+    );
+    const deps = makeDeps({ fetch: fetchMock });
+    await handleProxy(makeReq({ body: deterministic }), deps);
+    const again = await handleProxy(makeReq({ body: deterministic }), deps);
+    expect(again.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache sampled (non-zero / default temperature) requests', async () => {
+    const deps = makeDeps();
+    const sampled = { ...deterministic, generationConfig: { temperature: 0.7 } };
+    await handleProxy(makeReq({ body: sampled }), deps);
+    const again = await handleProxy(makeReq({ body: sampled }), deps);
+    expect(again.headers['X-Cache']).toBeUndefined();
+    await handleProxy(makeReq(), deps); // no generationConfig at all
+    await handleProxy(makeReq(), deps);
+    expect(deps.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('caches image requests too', async () => {
+    const deps = makeDeps();
+    await handleProxy(makeReq({ body: imageBody() }), deps);
+    const again = await handleProxy(makeReq({ body: imageBody() }), deps);
+    expect(again.headers['X-Cache']).toBe('HIT');
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still requires a valid token for a cached request', async () => {
+    const deps = makeDeps();
+    await handleProxy(makeReq({ body: deterministic }), deps);
+    const res = await handleProxy(makeReq({ body: deterministic, query: { key: 'wrong' } }), deps);
+    expect(res.status).toBe(401);
+  });
+
+  it('evicts the least-recently-used entry beyond CACHE_MAX_ENTRIES', async () => {
+    const deps = makeDeps();
+    const body = (i: number) => ({
+      contents: [{ parts: [{ text: `prompt ${i}` }] }],
+      generationConfig: { temperature: 0 },
+    });
+    for (let i = 0; i <= CACHE_MAX_ENTRIES; i++) {
+      await handleProxy(makeReq({ body: body(i), ip: `10.0.${Math.floor(i / 25)}.${i % 25}` }), deps);
+    }
+    // Entry 0 was the oldest and got evicted; entry CACHE_MAX_ENTRIES is still cached.
+    const evicted = await handleProxy(makeReq({ body: body(0), ip: '9.9.9.1' }), deps);
+    const kept = await handleProxy(
+      makeReq({ body: body(CACHE_MAX_ENTRIES), ip: '9.9.9.2' }),
+      deps,
+    );
+    expect(evicted.headers['X-Cache']).toBe('MISS');
+    expect(kept.headers['X-Cache']).toBe('HIT');
   });
 });

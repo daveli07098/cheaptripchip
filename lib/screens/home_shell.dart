@@ -14,13 +14,13 @@ import '../services/auth_service.dart';
 import '../services/board_invite_link.dart';
 import '../services/import_service.dart';
 import '../services/my_maps_import.dart';
-import '../services/place_extractor.dart';
 import '../services/trip_share.dart';
 import '../services/web_share_intake.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_toggle_button.dart';
 import '../utils/replace_browser_url.dart';
 import '../widgets/account_button.dart';
+import '../widgets/add_find_sheet.dart';
 import '../widgets/board_invite_flow.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
@@ -30,7 +30,6 @@ import '../widgets/show_place_on_map.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
 import 'map_screen.dart';
-import 'place_detail_sheet.dart';
 
 /// Entries of the Boards tab's Import menu.
 enum _ImportSource { tripLink, myMaps }
@@ -182,6 +181,15 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _handleShared(List<SharedMediaFile> files) async {
     if (files.isEmpty || !mounted) return;
+    // A shared screenshot/photo (Android "Share → cheaptripchip" from the
+    // gallery or a screenshot preview) is read with Gemini vision.
+    final image = files
+        .where((f) => f.type == SharedMediaType.image)
+        .firstOrNull;
+    if (image != null) {
+      await _openAddSheetWithImage(image.path);
+      return;
+    }
     // For text/URL shares the content arrives in `path`.
     final shared = files
         .map((f) => f.path)
@@ -485,7 +493,20 @@ class _HomeShellState extends State<HomeShell> {
   /// share-intake flow above).
   void _openAddFind() => _openAddSheet();
 
-  void _openAddSheet({String initialText = '', bool autoExtract = false}) {
+  Future<void> _openAddSheetWithImage(String path) async {
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (mounted) _openAddSheet(initialImage: bytes);
+    } catch (e) {
+      debugPrint('shared image unreadable: $e');
+    }
+  }
+
+  void _openAddSheet({
+    String initialText = '',
+    bool autoExtract = false,
+    Uint8List? initialImage,
+  }) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -497,173 +518,10 @@ class _HomeShellState extends State<HomeShell> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: AddFindSheet(initialText: initialText, autoExtract: autoExtract),
-      ),
-    );
-  }
-}
-
-/// The "Add a find" sheet: paste a link or caption → Gemini extraction →
-/// geocode → saved to the store and shown on the map/feed.
-class AddFindSheet extends StatefulWidget {
-  const AddFindSheet({
-    super.key,
-    this.initialText = '',
-    this.autoExtract = false,
-  });
-
-  final String initialText;
-
-  /// Starts extracting [initialText] as soon as the sheet opens (web link
-  /// intake), instead of waiting for the user to tap the button.
-  final bool autoExtract;
-
-  @override
-  State<AddFindSheet> createState() => _AddFindSheetState();
-}
-
-class _AddFindSheetState extends State<AddFindSheet> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initialText,
-  );
-  final _extractor = PlaceExtractor();
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.autoExtract && widget.initialText.trim().isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _extract();
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _extractor.dispose();
-    super.dispose();
-  }
-
-  Future<void> _extract() async {
-    final input = _controller.text.trim();
-    if (input.isEmpty) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final place = await _extractor.extract(input);
-      PlaceStore.instance.add(place);
-      if (!mounted) return;
-      Navigator.pop(context);
-      // Show the freshly-extracted place.
-      PlaceDetailSheet.show(context, place);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = _friendly(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  String _friendly(Object e) {
-    if (e is CaptionUnavailableException) {
-      debugPrint('extraction error: $e');
-      return "Couldn't read this post's caption (it may be private). "
-          'Paste the caption or the place name too.';
-    }
-    if (e is NoPlaceFoundException) {
-      debugPrint('extraction error: $e');
-      return "Couldn't find a place in this post. "
-          'Add the place name and try again.';
-    }
-    final msg = e.toString();
-    debugPrint('extraction error: $msg');
-    if (msg.contains('GEMINI_API_KEY')) {
-      return 'No Gemini key set. Run with '
-          '--dart-define=GEMINI_API_KEY=your_key to enable extraction.';
-    }
-    if (msg.contains('403') ||
-        msg.contains('API_KEY_SERVICE_BLOCKED') ||
-        msg.contains('are blocked')) {
-      return 'The Gemini key isn\'t allowed to use this API yet. In Google '
-          'Cloud Console → Credentials → this key → API restrictions, add '
-          '"Generative Language API".';
-    }
-    // Strip the leading `Exception: ` prefix `Exception.toString()` adds,
-    // so the user sees the underlying message, not Dart plumbing.
-    final stripped = msg.startsWith('Exception: ')
-        ? msg.substring('Exception: '.length)
-        : msg;
-    return 'Extraction failed: $stripped';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Add a find',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Paste an Instagram/TikTok link (and its caption for best results). '
-              'Gemini extracts the place, we map it and write a summary.',
-              style: TextStyle(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _controller,
-              maxLines: 4,
-              minLines: 2,
-              enabled: !_busy,
-              decoration: const InputDecoration(
-                hintText:
-                    'https://instagram.com/reel/...\n\nPaste the caption here too',
-                alignLabelWithHint: true,
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                _error!,
-                style: const TextStyle(color: AppTheme.coral, fontSize: 13),
-              ),
-            ],
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _busy ? null : _extract,
-              icon: _busy
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                      ),
-                    )
-                  : const Icon(Icons.auto_awesome, size: 18),
-              label: Text(_busy ? 'Extracting…' : 'Extract & save'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.coral,
-                minimumSize: const Size(double.infinity, 48),
-              ),
-            ),
-          ],
+        child: AddFindSheet(
+          initialText: initialText,
+          autoExtract: autoExtract,
+          initialImage: initialImage,
         ),
       ),
     );

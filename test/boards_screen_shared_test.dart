@@ -100,6 +100,7 @@ void main() {
 
     expect(find.text('Shared by Alice · View only'), findsOneWidget);
     expect(await _menuLabels(tester), [
+      'Plan a trip ✨',
       'Sharing info',
       'Send a copy',
       'Leave board',
@@ -116,6 +117,7 @@ void main() {
 
     expect(find.text('Shared by Alice · Can edit'), findsOneWidget);
     expect(await _menuLabels(tester), [
+      'Plan a trip ✨',
       'Add places…',
       'Sharing info',
       'Send a copy',
@@ -135,6 +137,7 @@ void main() {
 
     expect(find.text('Shared · 3 people'), findsOneWidget);
     expect(await _menuLabels(tester), [
+      'Plan a trip ✨',
       'Add places…',
       'Sharing settings…',
       'Send a copy',
@@ -151,7 +154,7 @@ void main() {
 
     await tester.tap(_inSharedCard(find.byTooltip('Board options')));
     await tester.pumpAndSettle();
-    // Add places… | Sharing settings…, Send a copy | Rename, Delete.
+    // Plan a trip, Add places… | Sharing settings…, Send a copy | Rename, Delete.
     expect(find.byType(PopupMenuDivider), findsNWidgets(2));
     expect(find.text('Invite link, people & roles'), findsOneWidget);
     expect(find.text('One-time snapshot — link or file'), findsOneWidget);

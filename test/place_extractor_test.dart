@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cheaptripchip/models/place.dart';
+import 'package:cheaptripchip/services/extraction_cache.dart';
 import 'package:cheaptripchip/services/geocoding_service.dart';
 import 'package:cheaptripchip/services/gemini_service.dart';
 import 'package:cheaptripchip/services/place_extractor.dart';
@@ -251,5 +253,315 @@ void main() {
         expect(place.sourcePlatform, SourcePlatform.instagram);
       },
     );
+  });
+
+  group('PlaceExtractor parsing helpers', () {
+    test('rawCandidates reads {"places": [...]}', () {
+      final raws = PlaceExtractor.rawCandidates({
+        'places': [
+          {'name': 'A'},
+          'junk',
+          {'name': 'B'},
+        ],
+      });
+      expect(raws.map((r) => r['name']), ['A', 'B']);
+    });
+
+    test('rawCandidates accepts the legacy single bare object', () {
+      final raws = PlaceExtractor.rawCandidates({
+        'name': 'Solo',
+        'address': '',
+      });
+      expect(raws, hasLength(1));
+      expect(raws.first['name'], 'Solo');
+    });
+
+    test('rawCandidates returns nothing for an empty or unrelated reply', () {
+      expect(PlaceExtractor.rawCandidates({'places': []}), isEmpty);
+      expect(PlaceExtractor.rawCandidates({}), isEmpty);
+    });
+
+    test('parseConfidence: missing → 1.0, percent scaled, clamped', () {
+      expect(PlaceExtractor.parseConfidence(null), 1.0);
+      expect(PlaceExtractor.parseConfidence('n/a'), 1.0);
+      expect(PlaceExtractor.parseConfidence(0.42), 0.42);
+      expect(PlaceExtractor.parseConfidence('0.3'), 0.3);
+      expect(PlaceExtractor.parseConfidence(85), 0.85);
+      expect(PlaceExtractor.parseConfidence(-1), 0.0);
+      expect(PlaceExtractor.parseConfidence(500), 1.0);
+    });
+
+    test('parseAlternatives keeps up to 3 distinct named ones, minus the '
+        'primary', () {
+      final alts = PlaceExtractor.parseAlternatives([
+        {'name': 'Ichiran', 'region': 'Tokyo'},
+        {'name': 'Ichiran Shibuya', 'areaLabel': 'Shibuya'},
+        {'name': ''},
+        {'name': 'ichiran shibuya'},
+        {'name': 'Ichiran Shinjuku'},
+        {'name': 'Ichiran Ueno'},
+        {'name': 'Ichiran Roppongi'},
+      ], exclude: 'Ichiran');
+      expect(alts.map((a) => a.name), [
+        'Ichiran Shibuya',
+        'Ichiran Shinjuku',
+        'Ichiran Ueno',
+      ]);
+      expect(alts.first.subtitle, 'Shibuya');
+      expect(PlaceExtractor.parseAlternatives('nope'), isEmpty);
+    });
+  });
+
+  group('PlaceExtractor.extractAll', () {
+    PlaceExtractor build(
+      Map<String, Object?> geminiJson, {
+      List<List<Map<String, String>>> geocodeReplies = const [],
+      ExtractionCache? cache,
+      Future<PostMetadata?> Function(Uri)? metadataFetcher,
+      void Function(http.Request)? onGemini,
+      List<Duration>? delays,
+    }) {
+      var geocodeCall = 0;
+      return PlaceExtractor(
+        gemini: GeminiService(
+          apiKey: 'test-key',
+          client: MockClient((req) async {
+            onGemini?.call(req);
+            return _geminiResponse(geminiJson);
+          }),
+        ),
+        geocoder: GeocodingService(
+          client: MockClient((req) async {
+            final reply = geocodeCall < geocodeReplies.length
+                ? geocodeReplies[geocodeCall]
+                : const <Map<String, String>>[];
+            geocodeCall++;
+            return http.Response(jsonEncode(reply), 200);
+          }),
+        ),
+        metadataFetcher: metadataFetcher ?? (uri) async => null,
+        cache: cache ?? MemoryExtractionCache(),
+        delay: (d) async => delays?.add(d),
+      );
+    }
+
+    test(
+      'single place: one confident result, no confirmation needed',
+      () async {
+        final result = await build({
+          'places': [
+            {'name': 'Ramen Bon', 'latitude': 35.7, 'longitude': 139.7},
+          ],
+        }).extractAll('Ramen Bon in Ikebukuro is great');
+        expect(result.places, hasLength(1));
+        expect(result.places.single.place.name, 'Ramen Bon');
+        expect(result.places.single.needsConfirmation, isFalse);
+      },
+    );
+
+    test('multi-place post returns every place, geocoding each with a '
+        'Nominatim-friendly gap', () async {
+      final delays = <Duration>[];
+      final result = await build(
+        {
+          'places': [
+            {'name': 'Cafe A', 'address': '1 A St', 'category': 'cafe'},
+            {'name': 'Cafe B', 'address': '2 B St', 'category': 'cafe'},
+            {'name': 'Shrine C', 'latitude': 35.0, 'longitude': 135.7},
+            {'name': '', 'address': ''}, // placeholder — dropped
+          ],
+        },
+        geocodeReplies: [
+          [
+            {'lat': '35.01', 'lon': '135.76'},
+          ],
+          [
+            {'lat': '35.02', 'lon': '135.77'},
+          ],
+        ],
+        delays: delays,
+      ).extractAll('Top 3 in Kyoto: Cafe A, Cafe B, Shrine C');
+      expect(result.places.map((p) => p.place.name), [
+        'Cafe A',
+        'Cafe B',
+        'Shrine C',
+      ]);
+      expect(result.places[1].place.location, const LatLng(35.02, 135.77));
+      expect(result.places[2].place.category, PlaceCategory.food);
+      // Unique ids even within one extraction.
+      expect(result.places.map((p) => p.place.id).toSet(), hasLength(3));
+      // Second geocode waited (first doesn't; Shrine C had coords).
+      expect(delays, hasLength(1));
+      expect(delays.single, lessThanOrEqualTo(const Duration(seconds: 1)));
+    });
+
+    test('low confidence with alternatives needs confirmation', () async {
+      final result = await build({
+        'places': [
+          {
+            'name': 'Ichiran',
+            'latitude': 35.66,
+            'longitude': 139.70,
+            'confidence': 0.4,
+            'alternatives': [
+              {'name': 'Ichiran Shibuya', 'region': 'Tokyo, Japan'},
+              {'name': 'Ichiran Shinjuku', 'region': 'Tokyo, Japan'},
+            ],
+          },
+        ],
+      }).extractAll('ramen at ichiran');
+      final item = result.places.single;
+      expect(item.confidence, 0.4);
+      expect(item.needsConfirmation, isTrue);
+      expect(item.alternatives.map((a) => a.name), [
+        'Ichiran Shibuya',
+        'Ichiran Shinjuku',
+      ]);
+    });
+
+    test('confident name but ambiguous geocode needs confirmation', () async {
+      final result = await build(
+        {
+          'places': [
+            {'name': 'Blue Bottle', 'region': 'Japan', 'confidence': 0.9},
+          ],
+        },
+        geocodeReplies: [
+          [
+            {'lat': '35.66', 'lon': '139.70', 'display_name': 'Shibuya'},
+            {'lat': '35.0', 'lon': '135.77', 'display_name': 'Kyoto'},
+          ],
+        ],
+      ).extractAll('blue bottle coffee');
+      final item = result.places.single;
+      expect(item.geocodeAmbiguous, isTrue);
+      expect(item.needsConfirmation, isTrue);
+      expect(item.geocodeCandidates.map((c) => c.displayName), [
+        'Shibuya',
+        'Kyoto',
+      ]);
+    });
+
+    test('nearby duplicate geocode hits are not ambiguous', () async {
+      final result = await build(
+        {
+          'places': [
+            {'name': 'Gogo', 'address': '1 Ikebukuro'},
+          ],
+        },
+        geocodeReplies: [
+          [
+            {'lat': '35.7300', 'lon': '139.7100'},
+            {'lat': '35.7301', 'lon': '139.7101'},
+          ],
+        ],
+      ).extractAll('gogo');
+      expect(result.places.single.needsConfirmation, isFalse);
+    });
+
+    test('resolveAlternative geocodes the picked alternative', () async {
+      final extractor = build(
+        {
+          'places': [
+            {
+              'name': 'Ichiran',
+              'latitude': 35.66,
+              'longitude': 139.70,
+              'confidence': 0.3,
+              'alternatives': [
+                {'name': 'Ichiran Ueno', 'areaLabel': 'Ueno'},
+              ],
+            },
+          ],
+        },
+        geocodeReplies: [
+          [
+            {'lat': '35.71', 'lon': '139.77'},
+          ],
+        ],
+      );
+      final item = (await extractor.extractAll('ichiran')).places.single;
+      final picked = await extractor.resolveAlternative(
+        item,
+        item.alternatives.single,
+      );
+      expect(picked!.name, 'Ichiran Ueno');
+      expect(picked.areaLabel, 'Ueno');
+      expect(picked.location, const LatLng(35.71, 139.77));
+      expect(picked.matchConfident, isTrue);
+    });
+
+    test('empty places list throws NoPlaceFoundException', () async {
+      await expectLater(
+        build({'places': []}).extractAll('just vibes'),
+        throwsA(isA<NoPlaceFoundException>()),
+      );
+    });
+
+    test('a bare post URL is cached per normalized URL: the second share '
+        'skips the caption fetch and Gemini', () async {
+      final cache = MemoryExtractionCache();
+      var geminiCalls = 0;
+      var metaCalls = 0;
+      PlaceExtractor make() => build(
+        {
+          'places': [
+            {'name': 'Ramen Bon', 'latitude': 35.7, 'longitude': 139.7},
+          ],
+        },
+        cache: cache,
+        onGemini: (_) => geminiCalls++,
+        metadataFetcher: (uri) async {
+          metaCalls++;
+          return const PostMetadata(
+            title: 'Bon on Instagram: "Best ramen"',
+            author: '@bon',
+          );
+        },
+      );
+      await make().extractAll('https://www.instagram.com/reel/abc123/?igsh=x');
+      final again = await make().extractAll('https://instagram.com/p/abc123');
+      expect(geminiCalls, 1);
+      expect(metaCalls, 1);
+      expect(again.places.single.place.name, 'Ramen Bon');
+      expect(again.places.single.place.sourceHandle, '@bon');
+      expect(again.places.single.place.originalCaption, 'Best ramen');
+      expect(cache.entries.keys, ['https://instagram.com/p/abc123']);
+    });
+
+    test('URL plus pasted caption is not cached', () async {
+      final cache = MemoryExtractionCache();
+      await build({
+        'name': 'Ramen Bon',
+        'latitude': 35.7,
+        'longitude': 139.7,
+      }, cache: cache).extractAll('https://www.instagram.com/p/abc/ caption');
+      expect(cache.entries, isEmpty);
+    });
+
+    test('extractFromImage sends the prompt plus an inline image', () async {
+      Map<String, dynamic>? body;
+      final result =
+          await build(
+            {
+              'places': [
+                {'name': 'Shot Cafe', 'latitude': 1.3, 'longitude': 103.8},
+              ],
+            },
+            onGemini: (req) =>
+                body = jsonDecode(req.body) as Map<String, dynamic>,
+          ).extractFromImage(
+            Uint8List.fromList([1, 2, 3]),
+            mimeType: 'image/png',
+            hint: 'https://www.tiktok.com/@a/video/1',
+          );
+      final parts = body!['contents'][0]['parts'] as List;
+      expect(parts[0]['text'], contains('attached screenshot'));
+      expect(parts[1]['inline_data']['mime_type'], 'image/png');
+      expect(parts[1]['inline_data']['data'], base64Encode([1, 2, 3]));
+      expect(body!['generationConfig']['temperature'], 0);
+      expect(result.places.single.place.name, 'Shot Cafe');
+      expect(result.places.single.place.sourcePlatform, SourcePlatform.tiktok);
+    });
   });
 }

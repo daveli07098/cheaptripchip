@@ -112,6 +112,25 @@ bool isSupportedPostUrl(Uri uri) {
       host == 'vt.tiktok.com';
 }
 
+/// Canonical cache key for a post link, so the same post shared twice — with
+/// a different tracking query (`?igsh=…`, `?is_from_webapp=1`), `www.`/`m.`
+/// host, trailing slash, or Instagram's `/reel/` vs `/p/` vs `/tv/` path for
+/// the same shortcode — maps to one key. Unparseable input comes back
+/// trimmed, unchanged.
+String normalizePostUrl(String url) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || uri.host.isEmpty) return url.trim();
+  var host = uri.host.toLowerCase();
+  for (final prefix in const ['www.', 'm.']) {
+    if (host.startsWith(prefix)) host = host.substring(prefix.length);
+  }
+  var path = uri.path.replaceAll(RegExp(r'/+$'), '');
+  if (host == 'instagram.com') {
+    path = path.replaceFirst(RegExp(r'^/(reel|reels|tv)/'), '/p/');
+  }
+  return 'https://$host$path';
+}
+
 /// First Instagram/TikTok post URL found in free-form [text] (share text can
 /// carry extra words around the link), or null if none. Trims trailing
 /// punctuation a sentence might tack on after the URL.

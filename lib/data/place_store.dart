@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/place.dart';
 import '../models/place_area.dart';
+import '../models/place_details.dart';
 import '../models/place_note.dart';
 import '../models/restaurant_type_detect.dart';
 import '../services/auth_service.dart';
@@ -139,6 +140,41 @@ class PlaceStore {
         changed.skip(start).take(areaWriteChunk).toList(),
       );
     }
+  }
+
+  /// Sets [Place.details] for many places at once — the enrichment queue
+  /// (PlaceEnricher) and the detail sheet's "Refresh details". Only the
+  /// details object is replaced; user-edited fields (category, type, notes…)
+  /// are never touched. With [onlyMissing] (the background queue), places
+  /// that already got details meanwhile (e.g. a manual refresh) keep them.
+  /// Unknown ids are skipped. One [places] update, then
+  /// [PlaceRepository.updateAll] in chunks of [areaWriteChunk] (like
+  /// [updateAreas]). Returns how many places changed.
+  Future<int> updateDetails(
+    Map<String, PlaceDetails> details, {
+    bool onlyMissing = false,
+  }) async {
+    if (details.isEmpty) return 0;
+    final changed = <Place>[];
+    final next = <Place>[];
+    for (final place in places.value) {
+      final value = details[place.id];
+      if (value == null || (onlyMissing && place.details != null)) {
+        next.add(place);
+        continue;
+      }
+      final updated = place.copyWith(details: value);
+      changed.add(updated);
+      next.add(updated);
+    }
+    if (changed.isEmpty) return 0;
+    places.value = next;
+    for (var start = 0; start < changed.length; start += areaWriteChunk) {
+      await _repository.updateAll(
+        changed.skip(start).take(areaWriteChunk).toList(),
+      );
+    }
+    return changed.length;
   }
 
   /// Flips [Place.isFavorite] for the place with the given [id], replacing it

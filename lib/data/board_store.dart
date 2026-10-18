@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../models/board.dart';
+import '../models/trip_plan.dart';
 import '../services/auth_service.dart';
 import 'firestore_repositories.dart';
 import 'guest_storage.dart';
@@ -143,6 +144,19 @@ class BoardStore {
     final board = byIdOrNull(id);
     if (board == null) return;
     final updated = board.copyWith(name: trimmed);
+    boards.value = [
+      for (final b in boards.value)
+        if (b.id == id) updated else b,
+    ];
+    await _repository.upsert(updated);
+  }
+
+  /// Saves [plan] as board [id]'s trip plan (null clears it). No-op if the
+  /// board doesn't exist. Optimistic, like [createBoard].
+  Future<void> saveTripPlan(String id, TripPlan? plan) async {
+    final board = byIdOrNull(id);
+    if (board == null) return;
+    final updated = board.copyWith(tripPlan: plan, clearTripPlan: plan == null);
     boards.value = [
       for (final b in boards.value)
         if (b.id == id) updated else b,

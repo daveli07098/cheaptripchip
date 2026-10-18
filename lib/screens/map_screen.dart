@@ -13,8 +13,11 @@ import '../data/place_filter_controller.dart';
 import '../data/place_store.dart';
 import '../data/shared_board_store.dart';
 import '../models/place.dart';
+import '../services/ai_search.dart';
 import '../theme/app_theme.dart';
 import '../widgets/account_button.dart';
+import '../widgets/ai_results_chip.dart';
+import '../widgets/ask_suggestions.dart';
 import '../widgets/delete_find.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
@@ -119,6 +122,10 @@ class _MapScreenState extends State<MapScreen>
   /// A drawer pick waiting for the drawer to close before the camera flies
   /// to its results (true = always fit, e.g. an area).
   bool? _pendingFilterFit;
+
+  /// The "Ask" answer the camera last fitted to — a new one (asked here or
+  /// on the Saved tab) fits the map to its places once.
+  Object? _fittedAiResult;
 
   // Camera fly animation (flutter_map 8 has no public animated move): the
   // controller ticks [_onCameraTick], which interpolates from/to below.
@@ -254,6 +261,39 @@ class _MapScreenState extends State<MapScreen>
     }
     final fit = _fitFor(context, matches);
     if (fit != null) _flyToFit(fit);
+  }
+
+  /// "Ask your places": [question] goes to Gemini (or the keyword
+  /// fallback) with the map's visible centre as "near me"; the answer
+  /// shows as AI results and the build fits the camera to them.
+  Future<void> _ask(String question) async {
+    _searchFocusNode.unfocus();
+    if (_mapReady) _filters.mapCenter = _mapController.camera.center;
+    await _filters.ask(
+      question,
+      places: PlaceStore.instance.places.value,
+      boards: _boardIndexNow(),
+    );
+  }
+
+  /// Fits the camera to a new "Ask" answer's places (after the frame that
+  /// shows them); a single place pans to it, none leaves the camera alone
+  /// — the chip's explanation already says nothing fit.
+  void _fitToAiResults() {
+    final result = _filters.aiResult;
+    if (result == null || identical(result, _fittedAiResult)) return;
+    _fittedAiResult = result;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(_filters.aiResult, result)) return;
+      final visible = _visibleNow();
+      if (visible.isEmpty) return;
+      if (visible.length == 1) {
+        _selectFromList(context, visible.first);
+        return;
+      }
+      final fit = _fitFor(context, visible);
+      if (fit != null) _flyToFit(fit);
+    });
   }
 
   /// A drawer pick was applied; as the drawer starts closing (Scaffold's
@@ -484,7 +524,12 @@ class _MapScreenState extends State<MapScreen>
     // Used only when there are no places yet (initialFit null).
     initialCenter: MockData.tokyoCenter,
     initialZoom: 11,
-    onMapReady: () => _mapReady = true,
+    onMapReady: () {
+      _mapReady = true;
+      _filters.mapCenter = _mapController.camera.center;
+    },
+    // "Near me" for "Ask" = the visible centre (no location permission).
+    onPositionChanged: (camera, _) => _filters.mapCenter = camera.center,
     minZoom: _minZoom,
     // Stop dragging past the poles — beyond ±85° there are no tiles, only
     // background, which read as "the whole map went grey" when zoomed out.
@@ -625,6 +670,8 @@ class _MapScreenState extends State<MapScreen>
           });
         }
 
+        _fitToAiResults();
+
         final selectedId = _selectedPlaceId.value;
         if (selectedId != null && !visible.any((p) => p.id == selectedId)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -691,19 +738,33 @@ class _MapScreenState extends State<MapScreen>
                         // mirrors the text into the filter and notifies.
                         // Cheap per keystroke — only the filter pass re-runs
                         // (the drawer counts are memoized), so no debounce.
-                        onSubmitted: (_) =>
-                            _submitSearch(context, _visibleNow()),
+                        onSubmitted: (text) => looksLikeQuestion(text)
+                            ? _ask(text)
+                            : _submitSearch(context, _visibleNow()),
+                        onAsk: () => _ask(_filters.search.text),
+                        asking: _filters.asking,
                         trailing: const SizedBox.square(
                           dimension: 48,
                           child: Center(child: AccountButton()),
                         ),
                       ),
                     ),
+                    AskSuggestions(
+                      controller: _filters.search,
+                      focusNode: _searchFocusNode,
+                      suggestions: _filters.suggestionsFor(loaded),
+                      onAsk: _ask,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    ),
                     ActiveFilterChips(
                       filters: _filters,
                       index: index,
                       boardIndex: boardIndex,
                       padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+                    ),
+                    AiResultsChip(
+                      filters: _filters,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                     ),
                   ],
                 ),
