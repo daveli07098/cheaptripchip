@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- UI/UX round: first-run "How it works" guide (Android share, iPhone
+  Shortcut, paste/screenshot), one empty-state design across Saved/Boards/map
+  list, guest caveat before sign-in, "Explore" tab renamed "Map", Appearance
+  (System/Light/Dark) moved to the account sheet, iOS web safe areas and an
+  "Add to Home Screen" hint, "Location unconfirmed — tap to fix" instead of a
+  silent fallback pin, "Map unavailable" banner on tile failures, friendly
+  add-find errors, consistent "Couldn't … — try again" wording, larger touch
+  targets and text-scale fixes, light haptics on select/save/delete.
+
 ### Added
 - AI smarter saving: one post with several spots → tick-list; "Add from
   screenshot" (Gemini vision, also the workaround for Instagram's login wall

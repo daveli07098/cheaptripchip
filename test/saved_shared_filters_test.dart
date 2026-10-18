@@ -65,7 +65,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await openTab(tester, 'Explore');
+    await openTab(tester, 'Map');
     expect(find.text('Restaurant · $restaurants'), findsNothing);
     expect(find.text('$total of $total places'), findsOneWidget);
   });
@@ -99,7 +99,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(Drawer), findsNothing);
 
-    await openTab(tester, 'Explore');
+    await openTab(tester, 'Map');
     expect(find.text('1 of $total places'), findsOneWidget);
     // The map's pill shows the same query, with its clear ✕.
     await tester.tap(find.byTooltip('Clear search'));

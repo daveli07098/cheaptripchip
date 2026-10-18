@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../models/place.dart';
 import '../models/place_area.dart';
@@ -269,6 +270,25 @@ class PlaceStore {
         ? null
         : current.copyWith(category: category),
   );
+
+  /// Moves the place with the given [id] to [location] and marks it
+  /// [Place.locationConfirmed] — the detail sheet's "Location unconfirmed —
+  /// tap to fix" flow (an address search or the current map centre).
+  /// [address] (e.g. the picked geocode's display name) only fills an empty
+  /// [Place.address], never overwrites one. Optimistic with revert, like
+  /// [updateCategory].
+  Future<void> setLocation(String id, LatLng location, {String? address}) =>
+      _update(
+        id,
+        (current) => current.copyWith(
+          location: location,
+          locationConfirmed: true,
+          matchConfident: true,
+          address: current.address.trim().isEmpty && address != null
+              ? address
+              : null,
+        ),
+      );
 
   /// Counter folded into the current microsecond timestamp — same pattern as
   /// TripShare._newId — so note ids stay unique even when several are added

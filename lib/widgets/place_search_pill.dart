@@ -48,8 +48,10 @@ class PlaceSearchPill extends StatelessWidget {
       color: scheme.surface,
       elevation: elevation,
       borderRadius: BorderRadius.circular(28),
-      child: SizedBox(
-        height: 56,
+      // At least 56 tall, but free to grow: a fixed height clipped the
+      // field's text at large text scales.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 56),
         child: Row(
           children: [
             // IconButton/TextField already derive their a11y label from
@@ -73,7 +75,10 @@ class PlaceSearchPill extends StatelessWidget {
                 decoration: const InputDecoration(
                   hintText: kPlaceSearchHint,
                   border: InputBorder.none,
-                  isCollapsed: true,
+                  // Not `isCollapsed` (no room to grow); the field sizes
+                  // to its text plus this padding.
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
             ),

@@ -12,8 +12,10 @@ import '../theme/app_theme.dart';
 import '../widgets/ai_results_chip.dart';
 import '../widgets/ask_suggestions.dart';
 import '../widgets/delete_find.dart';
+import '../widgets/empty_state_card.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
+import '../widgets/onboarding_sheet.dart';
 import '../widgets/place_card.dart';
 import '../widgets/place_search_pill.dart';
 import '../widgets/show_place_on_map.dart';
@@ -114,13 +116,16 @@ class _FeedScreenState extends State<FeedScreen> {
         );
         final filter = filters.filter;
         final results = _resultsFor(loaded, filter, boardIndex);
+        // An empty store shows its own "Add a find" button in the empty
+        // state, so the FAB would only duplicate it.
+        final emptyStore = loaded.isEmpty;
         return Scaffold(
           key: _scaffoldKey,
           // The home shell's Scaffold already avoids the keyboard.
           resizeToAvoidBottomInset: false,
           // Opens from the ☰ button only, same as the map.
           drawerEnableOpenDragGesture: false,
-          floatingActionButton: widget.onAddFind == null
+          floatingActionButton: widget.onAddFind == null || emptyStore
               ? null
               : FloatingActionButton.extended(
                   onPressed: widget.onAddFind,
@@ -177,6 +182,7 @@ class _FeedScreenState extends State<FeedScreen> {
                             (filter.query.trim().isNotEmpty ||
                                 filter.hasActiveFilters ||
                                 filter.hasAiResults),
+                        onAddFind: widget.onAddFind,
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
@@ -247,48 +253,49 @@ Widget _dismissibleCard(BuildContext context, Place place) {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.narrowed});
+  const _EmptyState({required this.narrowed, this.onAddFind});
 
   /// True when the search and/or filters hide every saved place — distinct
   /// from a genuinely empty store.
   final bool narrowed;
 
+  /// The "Add a find" action of a genuinely empty store; hidden when null.
+  final VoidCallback? onAddFind;
+
   @override
   Widget build(BuildContext context) {
-    final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
-    final title = narrowed ? 'No matches' : 'No finds yet';
-    final body = narrowed
-        ? 'Try another search, or clear the filters.'
-        : 'Tap Add a find to save your first place.';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              narrowed ? Icons.search_off : Icons.travel_explore,
-              size: 48,
-              color: onSurfaceVariant.withValues(alpha: 0.4),
+    if (narrowed) {
+      return const EmptyStateCard(
+        icon: Icons.search_off,
+        title: 'No matches',
+        body: 'Try another search, or clear the filters.',
+      );
+    }
+    return EmptyStateCard(
+      icon: Icons.travel_explore,
+      title: 'No finds yet',
+      body:
+          'Share a post from Instagram or TikTok, paste its link, or add a '
+          'screenshot. $kSameFindsExplainer',
+      // Bottom padding keeps the buttons clear of the shell's navigation.
+      padding: const EdgeInsets.fromLTRB(32, 32, 32, 96),
+      actions: [
+        if (onAddFind case final onAddFind?)
+          FilledButton.icon(
+            onPressed: onAddFind,
+            icon: const Icon(Icons.add_link),
+            label: const Text('Add a find'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.coral,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
             ),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.4,
-                color: onSurfaceVariant.withValues(alpha: 0.6),
-              ),
-            ),
-          ],
+          ),
+        OutlinedButton.icon(
+          onPressed: () => showOnboardingSheet(context),
+          icon: const Icon(Icons.help_outline),
+          label: const Text('How it works'),
         ),
-      ),
+      ],
     );
   }
 }

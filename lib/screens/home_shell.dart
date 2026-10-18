@@ -17,15 +17,16 @@ import '../services/my_maps_import.dart';
 import '../services/trip_share.dart';
 import '../services/web_share_intake.dart';
 import '../theme/app_theme.dart';
-import '../theme/theme_toggle_button.dart';
 import '../utils/replace_browser_url.dart';
 import '../widgets/account_button.dart';
 import '../widgets/add_find_sheet.dart';
 import '../widgets/board_invite_flow.dart';
+import '../widgets/install_hint.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/import_sheet.dart';
 import '../widgets/my_maps_import_sheet.dart';
 import '../widgets/new_board_dialog.dart';
+import '../widgets/onboarding_sheet.dart';
 import '../widgets/show_place_on_map.dart';
 import 'boards_screen.dart';
 import 'feed_screen.dart';
@@ -64,7 +65,12 @@ class _ImportLabel extends StatelessWidget {
 
 /// App shell with the Map ⇄ Saved ⇄ Boards triad (ANALYSIS.md §§3,5,6).
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({super.key, this.showFirstRunPrompts = true});
+
+  /// The first-launch "How it works" sheet and the web "Add to Home Screen"
+  /// hint, each shown until dismissed once. Off in widget tests that aren't
+  /// about them (prefs that can't be read also keep them hidden).
+  final bool showFirstRunPrompts;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -90,10 +96,14 @@ class _HomeShellState extends State<HomeShell> {
   /// flies to it.
   final _mapFocus = MapFocusController();
 
-  /// Filters + search shared by the Explore and Saved tabs.
+  /// Filters + search shared by the Map and Saved tabs.
   final _filters = PlaceFilterController();
 
-  static const _titles = ['Explore', 'Saved', 'Boards'];
+  static const _titles = ['Map', 'Saved', 'Boards'];
+
+  /// iPhone Safari, not installed, hint not dismissed (see
+  /// [shouldShowInstallHint]).
+  bool _showInstallHint = false;
 
   bool get _shareIntakeSupported =>
       !kIsWeb &&
@@ -107,16 +117,44 @@ class _HomeShellState extends State<HomeShell> {
       _initShareIntake();
       _initAppLinks();
     }
-    if (kIsWeb) _initWebShareIntake();
+    final sharedOnLaunch = kIsWeb && _initWebShareIntake();
+    if (widget.showFirstRunPrompts) {
+      // A post shared in on launch opens "Add a find" — the welcome sheet
+      // would cover it, so it waits for a later launch.
+      if (!sharedOnLaunch) _maybeShowOnboarding();
+      _initInstallHint();
+    }
+  }
+
+  /// First launch: the "How it works" sheet, once. Skipped (until a later
+  /// launch) when something — e.g. a share-intake "Add a find" sheet — is
+  /// already open on top of the shell.
+  Future<void> _maybeShowOnboarding() async {
+    if (await OnboardingPrefs.seen() || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
+      showOnboardingSheet(context);
+    });
+  }
+
+  Future<void> _initInstallHint() async {
+    final wanted = await installHintWanted();
+    if (wanted && mounted) setState(() => _showInstallHint = true);
+  }
+
+  void _dismissInstallHint() {
+    setState(() => _showInstallHint = false);
+    InstallHintPrefs.dismiss();
   }
 
   /// Web stand-in for share intake: a start URL like `/?add=<post link>`
   /// (Apple Shortcut) or `/?text=…&url=…` (Android Web Share Target) opens
   /// "Add a find" with the link and starts extracting right away. The query
   /// is removed from the address bar first, so a reload doesn't re-add it.
-  void _initWebShareIntake() {
+  /// Returns whether the start URL carried a share.
+  bool _initWebShareIntake() {
     final shared = sharedTextFromQuery(Uri.base.queryParameters);
-    if (shared == null) return;
+    if (shared == null) return false;
     replaceBrowserUrl(withoutShareParams(Uri.base));
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Let a signed-in session restore first, so the find is saved to the
@@ -128,6 +166,7 @@ class _HomeShellState extends State<HomeShell> {
       if (!mounted) return;
       _openAddSheet(initialText: shared, autoExtract: true);
     });
+    return true;
   }
 
   /// `cheaptripchip://import?...` links (see [TripShare.toAppLink]) and
@@ -408,9 +447,8 @@ class _HomeShellState extends State<HomeShell> {
                       ),
                     ],
                   ),
+                // The theme picker lives in the account sheet (Appearance).
                 const AccountButton(),
-                const SizedBox(width: 4),
-                const ThemeToggleButton(),
                 const SizedBox(width: 4),
               ],
             )
@@ -428,6 +466,7 @@ class _HomeShellState extends State<HomeShell> {
             onShowOnMap: _showBoardOnMap,
             onImportTripLink: _importFromLinkDialog,
             onImportMyMaps: _importFromMyMapsDialog,
+            onAddFind: _openAddFind,
           ),
         ],
       ),
@@ -447,27 +486,40 @@ class _HomeShellState extends State<HomeShell> {
         ),
         _ => null,
       },
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon: Icon(Icons.map),
-            label: 'Explore',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bookmark_outline),
-            selectedIcon: Icon(Icons.bookmark),
-            label: 'Saved',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
-            label: 'Boards',
-          ),
+      // The install hint sits just above the tabs: visible on every tab and
+      // clear of the map's search pill at the top.
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_showInstallHint)
+            InstallHintBanner(onDismiss: _dismissInstallHint),
+          _navigationBar(),
         ],
       ),
+    );
+  }
+
+  Widget _navigationBar() {
+    return NavigationBar(
+      selectedIndex: _index,
+      onDestinationSelected: (i) => setState(() => _index = i),
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.map_outlined),
+          selectedIcon: Icon(Icons.map),
+          label: 'Map',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.bookmark_outline),
+          selectedIcon: Icon(Icons.bookmark),
+          label: 'Saved',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.dashboard_outlined),
+          selectedIcon: Icon(Icons.dashboard),
+          label: 'Boards',
+        ),
+      ],
     );
   }
 

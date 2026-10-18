@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
 import '../widgets/app_version_label.dart';
+import '../widgets/onboarding_sheet.dart';
 import '../widgets/user_avatar.dart';
 
 /// Modal bottom sheet with the three [AuthService] states: Firebase not
-/// configured, signed out, and signed in. See [_AccountSheetBody].
+/// configured, signed out, and signed in — plus, in every state, the app's
+/// Appearance (theme) setting and "How it works". See [_AccountSheetBody].
 Future<void> showAccountSheet(BuildContext context) {
   // Captured from the *caller's* context, before the sheet exists, so the
   // sign-in error SnackBar still has a valid ScaffoldMessenger to show on
@@ -14,6 +17,8 @@ Future<void> showAccountSheet(BuildContext context) {
   final messenger = ScaffoldMessenger.of(context);
   return showModalBottomSheet(
     context: context,
+    // Taller than the default 9/16 cap when needed; the body scrolls.
+    isScrollControlled: true,
     backgroundColor: Theme.of(context).colorScheme.surface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -21,6 +26,11 @@ Future<void> showAccountSheet(BuildContext context) {
     builder: (context) => _AccountSheetBody(messenger: messenger),
   );
 }
+
+/// Shown in every auth state, so a guest knows before signing in that their
+/// finds won't follow them into the account (see CLAUDE.md, guest mode).
+const kGuestFindsCaveat =
+    "Guest finds stay on this device and aren't uploaded when you sign in.";
 
 /// The name an account's avatar initial comes from (the sheet's header and
 /// AccountButton): the display name, else the email, else empty (→ "?").
@@ -68,7 +78,7 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -77,12 +87,23 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
             ValueListenableBuilder<AppUser?>(
               valueListenable: AuthService.instance.user,
               builder: (context, user, _) {
-                if (!AuthService.instance.isConfigured) return _unconfigured();
+                if (!AuthService.instance.isConfigured) {
+                  return _unconfigured(context);
+                }
                 if (user == null) return _signedOut(context);
                 return _signedIn(context, user);
               },
             ),
-            const SizedBox(height: 16),
+            const Divider(height: 32),
+            const _AppearancePicker(),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.help_outline),
+              title: const Text('How it works'),
+              onTap: _showHowItWorks,
+            ),
+            const SizedBox(height: 8),
             // Which build is installed — for checking a device has the latest.
             const AppVersionLabel(),
           ],
@@ -91,21 +112,42 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
     );
   }
 
-  Widget _unconfigured() {
+  /// Closes this sheet and opens the onboarding sheet in its place — on the
+  /// navigator, since this sheet's context is gone once it's popped.
+  void _showHowItWorks() {
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    showOnboardingSheet(navigator.context);
+  }
+
+  Widget _caveat(BuildContext context) => Text(
+    kGuestFindsCaveat,
+    style: TextStyle(
+      color: Theme.of(
+        context,
+      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+      fontSize: 12.5,
+      height: 1.4,
+    ),
+  );
+
+  Widget _unconfigured(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        Text(
+      children: [
+        const Text(
           "Sign in isn't set up yet",
           style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
         ),
-        SizedBox(height: 6),
-        Text(
+        const SizedBox(height: 6),
+        const Text(
           "Firebase isn't configured in this build. "
           'See docs/firebase-setup.md.',
           style: TextStyle(height: 1.4),
         ),
+        const SizedBox(height: 10),
+        _caveat(context),
       ],
     );
   }
@@ -145,6 +187,10 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
             height: 1.4,
           ),
         ),
+        const SizedBox(height: 6),
+        // Said before sign-in, not just after: signing in starts an empty
+        // account rather than uploading what's saved here.
+        _caveat(context),
       ],
     );
   }
@@ -210,11 +256,59 @@ class _AccountSheetBodyState extends State<_AccountSheetBody> {
               : const Text('Sign out'),
         ),
         const SizedBox(height: 10),
-        Text(
-          'Guest finds stay on this device.',
-          style: TextStyle(
-            color: scheme.onSurfaceVariant.withValues(alpha: 0.55),
-            fontSize: 12.5,
+        _caveat(context),
+      ],
+    );
+  }
+}
+
+/// "Appearance": System / Light / Dark — the app's one theme control.
+/// Writes through [ThemeController.set], which persists the choice.
+class _AppearancePicker extends StatelessWidget {
+  const _AppearancePicker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            'Appearance',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ValueListenableBuilder<ThemeMode>(
+          valueListenable: ThemeController.instance,
+          builder: (context, mode, _) => SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.brightness_auto),
+                  label: Text('System'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode),
+                  label: Text('Light'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode),
+                  label: Text('Dark'),
+                ),
+              ],
+              selected: {mode},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) =>
+                  ThemeController.instance.set(selection.single),
+            ),
           ),
         ),
       ],

@@ -185,6 +185,9 @@ class PlaceExtractor {
         id: i == 0 ? 'gx$stamp' : 'gx${stamp}_$i',
         location: loc ?? MockData.tokyoCenter, // last-resort default
         matchConfident: confident || loc != null,
+        // The Tokyo stand-in is never a silent wrong pin: flagged so the
+        // card/pin/detail sheet ask the user to fix it.
+        locationConfirmed: loc != null,
         fallbackCaption: fallbackCaption,
         fallbackAuthor: fallbackAuthor,
         postUrl: postUrl,
@@ -211,6 +214,7 @@ class PlaceExtractor {
         location: candidate.location,
         address: base.place.address.isEmpty ? candidate.displayName : null,
         matchConfident: true,
+        locationConfirmed: true,
       );
 
   /// [base] re-pointed at one of Gemini's [PlaceAlternative]s, geocoded now.
@@ -232,6 +236,7 @@ class PlaceExtractor {
       address: alt.address,
       location: results.first.location,
       matchConfident: true,
+      locationConfirmed: true,
     );
   }
 
@@ -253,6 +258,7 @@ class PlaceExtractor {
     required String id,
     required LatLng location,
     required bool matchConfident,
+    bool locationConfirmed = true,
     required String fallbackCaption,
     required String? fallbackAuthor,
     required String? postUrl,
@@ -282,6 +288,7 @@ class PlaceExtractor {
       sourcePlatform: _platform(_str(json['sourcePlatform']), postUrl),
       award: _nullableStr(json['award']),
       matchConfident: matchConfident,
+      locationConfirmed: locationConfirmed,
       rating: _nullableDouble(json['rating']),
       reviewCount: _nullableInt(json['reviewCount']),
       priceRange: _nullableStr(json['priceRange']),

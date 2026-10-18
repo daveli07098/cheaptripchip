@@ -6,7 +6,6 @@ import '../data/place_store.dart';
 import '../models/place.dart';
 import '../services/area_resolver.dart';
 import '../theme/app_theme.dart';
-import '../theme/theme_toggle_button.dart';
 import 'accessible_emoji.dart';
 import 'filter_chips.dart';
 
@@ -17,7 +16,7 @@ import 'filter_chips.dart';
 /// [_RestaurantCategoryTile]), then two collapsible sections, Boards
 /// (multi-select toggles that keep the drawer open) and Areas (country →
 /// city → district, each level A–Z and collapsible), and Settings (food-type
-/// rescan + theme) at the bottom.
+/// rescan; the theme lives in the account sheet) at the bottom.
 ///
 /// Single-choice picks apply, call [onPicked] and close the drawer; board
 /// toggles call [onBoardsChanged] and keep it open. Screen-specific
@@ -251,13 +250,9 @@ class FilterDrawer extends StatelessWidget {
                 );
               },
             ),
-            // Moved here from the map's floating row (commit ec3b355) so the
-            // search pill can stay a single, uninterrupted control.
-            const ListTile(
-              leading: Icon(Icons.brightness_6_outlined),
-              title: Text('Theme'),
-              trailing: ThemeToggleButton(),
-            ),
+            // The theme toggle that used to sit here (moved from the map's
+            // floating row in ec3b355) now lives in the account sheet's
+            // Appearance section — the app's one theme control.
           ],
         ),
       ),

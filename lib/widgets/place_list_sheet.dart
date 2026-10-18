@@ -6,6 +6,8 @@ import '../data/map_filter.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import 'accessible_emoji.dart';
+import 'empty_state_card.dart';
+import 'onboarding_sheet.dart';
 import 'score_stars.dart';
 
 /// Snap fractions for [PlaceListSheet]. `kSheetHalf` matches Material 3's
@@ -380,33 +382,30 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    final title = filtered ? 'No matches' : 'No finds yet';
-    final body = filtered
-        ? 'Try another search, or clear the filters.'
-        : 'Tap Add a find to save your first place.';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: onSurface.withValues(alpha: 0.5)),
-            ),
-          ],
+    if (filtered) {
+      return const EmptyStateCard(
+        icon: Icons.search_off,
+        title: 'No matches',
+        body: 'Try another search, or clear the filters.',
+        padding: EdgeInsets.fromLTRB(32, 8, 32, 24),
+      );
+    }
+    // The header's "Add a find" button is the add action, so it isn't
+    // repeated here.
+    return EmptyStateCard(
+      icon: Icons.travel_explore,
+      title: 'No finds yet',
+      body:
+          'Tap Add a find to save a place from an Instagram or TikTok post. '
+          '$kSameFindsExplainer',
+      padding: const EdgeInsets.fromLTRB(32, 8, 32, 24),
+      actions: [
+        OutlinedButton.icon(
+          onPressed: () => showOnboardingSheet(context),
+          icon: const Icon(Icons.help_outline),
+          label: const Text('How it works'),
         ),
-      ),
+      ],
     );
   }
 }

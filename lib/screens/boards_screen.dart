@@ -15,6 +15,7 @@ import '../widgets/add_places_sheet.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/delete_find.dart';
+import '../widgets/empty_state_card.dart';
 import '../widgets/export_sheet.dart';
 import '../widgets/new_board_dialog.dart';
 import '../widgets/sharing_sheet.dart';
@@ -32,6 +33,7 @@ class BoardsScreen extends StatelessWidget {
     this.onShowOnMap,
     this.onImportTripLink,
     this.onImportMyMaps,
+    this.onAddFind,
   });
 
   /// "Show on map" on a board card, with the board's [BoardRef.key]. The
@@ -43,6 +45,9 @@ class BoardsScreen extends StatelessWidget {
   /// both are null.
   final VoidCallback? onImportTripLink;
   final VoidCallback? onImportMyMaps;
+
+  /// The empty state's "Add a find" (the shell's add flow); hidden when null.
+  final VoidCallback? onAddFind;
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +111,7 @@ class BoardsScreen extends StatelessWidget {
           return _EmptyBoardsState(
             onImportTripLink: onImportTripLink,
             onImportMyMaps: onImportMyMaps,
+            onAddFind: onAddFind,
           );
         }
         return ListView.separated(
@@ -133,62 +139,48 @@ class BoardsScreen extends StatelessWidget {
 /// Shown when there are no boards (auto or user-created) and no places to
 /// auto-group — i.e. nothing at all to show yet.
 class _EmptyBoardsState extends StatelessWidget {
-  const _EmptyBoardsState({this.onImportTripLink, this.onImportMyMaps});
+  const _EmptyBoardsState({
+    this.onImportTripLink,
+    this.onImportMyMaps,
+    this.onAddFind,
+  });
 
   /// See [BoardsScreen.onImportTripLink] / [BoardsScreen.onImportMyMaps].
   final VoidCallback? onImportTripLink;
   final VoidCallback? onImportMyMaps;
 
+  /// See [BoardsScreen.onAddFind].
+  final VoidCallback? onAddFind;
+
   @override
   Widget build(BuildContext context) {
-    final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
-    return Padding(
+    return EmptyStateCard(
+      icon: Icons.dashboard_customize_outlined,
+      title: 'No boards yet',
+      body:
+          'Boards group your finds into trips. New finds wait here until '
+          'you add them to a board. $kSameFindsExplainer',
       // Matches the list's own bottom padding so this stays clear of the
-      // floating "Add a find" button too.
+      // floating "New board" button too.
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('📌', style: TextStyle(fontSize: 40)),
-            const SizedBox(height: 12),
-            const Text(
-              'No boards yet',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Save a find, then add it to a board.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.4,
-                color: onSurfaceVariant.withValues(alpha: 0.6),
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Wraps onto two lines on a narrow phone.
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: () => NewBoardDialog.showAndContinue(context),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create your first board'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.coral,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                ),
-                if (onImportTripLink != null || onImportMyMaps != null)
-                  _importButton(),
-              ],
-            ),
-          ],
+      actions: [
+        FilledButton.icon(
+          onPressed: () => NewBoardDialog.showAndContinue(context),
+          icon: const Icon(Icons.add),
+          label: const Text('Create your first board'),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppTheme.coral,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          ),
         ),
-      ),
+        if (onImportTripLink != null || onImportMyMaps != null) _importButton(),
+        if (onAddFind case final onAddFind?)
+          OutlinedButton.icon(
+            onPressed: onAddFind,
+            icon: const Icon(Icons.add_link),
+            label: const Text('Add a find'),
+          ),
+      ],
     );
   }
 

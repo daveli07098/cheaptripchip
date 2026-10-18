@@ -18,6 +18,10 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <!-- viewport-fit=cover lets an installed iPhone web app use the full
+       screen; the app pads itself by the safe-area insets read from
+       #safe-area-probe below (Flutter web reports no safe area of its own). -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Save Instagram and TikTok travel finds onto one map.">
   <meta name="theme-color" content="#FF5A6E">
 
@@ -33,8 +37,23 @@
 
   <title>cheaptripchip</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Read by lib/utils/browser_env_web.dart (readCssSafeAreaInsets). */
+    #safe-area-probe {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      visibility: hidden;
+      pointer-events: none;
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+        env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    }
+  </style>
 </head>
 <body>
+  <div id="safe-area-probe" aria-hidden="true"></div>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

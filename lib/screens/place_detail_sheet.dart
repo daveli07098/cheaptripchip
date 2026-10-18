@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -20,10 +22,12 @@ import '../theme/app_theme.dart';
 import '../widgets/board_picker_sheet.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/delete_find.dart';
+import '../widgets/location_fix.dart';
 import '../widgets/place_photo.dart';
 import '../widgets/place_photo_actions.dart';
 import '../widgets/score_stars.dart';
 import '../widgets/show_place_on_map.dart';
+import '../widgets/show_snack.dart';
 import '../widgets/user_avatar.dart';
 
 /// Where a [PlaceDetailSheet] was opened from. [mine] (the default) is the
@@ -74,6 +78,7 @@ class PlaceDetailSheet extends StatelessWidget {
     this.source = PlaceDetailSource.mine,
     this.onShowOnMap,
     this.hostMessenger,
+    this.currentMapCenter,
   });
 
   final Place place;
@@ -90,6 +95,11 @@ class PlaceDetailSheet extends StatelessWidget {
   /// Falls back to the messenger above the navigator.
   final ScaffoldMessengerState? hostMessenger;
 
+  /// The centre of the map the sheet was opened over — offered as "Use
+  /// current map center" when fixing an unconfirmed location. Null (any
+  /// non-map caller) hides that option; address search still works.
+  final LatLng Function()? currentMapCenter;
+
   /// [onShowOnMap] defaults to the home shell's [ShowPlaceOnMap] found from
   /// [context] (the sheet itself is pushed above the shell, so it can't look
   /// it up).
@@ -98,6 +108,7 @@ class PlaceDetailSheet extends StatelessWidget {
     Place place, {
     PlaceDetailSource source = PlaceDetailSource.mine,
     ValueChanged<Place>? onShowOnMap,
+    LatLng Function()? currentMapCenter,
   }) {
     // Start decoding the header photo now, so it's (ideally) cached by the
     // time the sheet's first frame builds instead of popping in mid-slide.
@@ -113,6 +124,7 @@ class PlaceDetailSheet extends StatelessWidget {
         source: source,
         onShowOnMap: showOnMap,
         hostMessenger: hostMessenger,
+        currentMapCenter: currentMapCenter,
       ),
     );
   }
@@ -199,6 +211,11 @@ class PlaceDetailSheet extends StatelessWidget {
                   ),
                 ),
                 _NativeName(place: place, shared: source.isSharedBoard),
+                _UnconfirmedLocation(
+                  place: place,
+                  shared: source.isSharedBoard,
+                  currentMapCenter: currentMapCenter,
+                ),
                 if (place.award case final award?) ...[
                   const SizedBox(height: 8),
                   _Pill(
@@ -908,9 +925,7 @@ Future<void> _saveOrWarn(
     debugPrint('PlaceDetailSheet: not saved: $error');
     messenger
       ..removeCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text("Couldn't save — try again")),
-      );
+      ..showSnackBar(SnackBar(content: Text(errorMessage('save'))));
   }
 }
 
@@ -1106,7 +1121,6 @@ class _PrimaryAction extends StatelessWidget {
         icon: Icon(icon, size: 18),
         label: Text(label),
         style: FilledButton.styleFrom(
-          backgroundColor: AppTheme.coral,
           padding: const EdgeInsets.symmetric(vertical: 13),
         ),
       ),
@@ -1152,9 +1166,7 @@ class _SharedRatingsSectionState extends State<_SharedRatingsSection> {
     } catch (error) {
       debugPrint('PlaceDetailSheet: rating not saved: $error');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't save your rating")),
-      );
+      showError(context, 'save your rating');
     }
   }
 
@@ -1900,6 +1912,7 @@ class _DeleteFindButton extends StatelessWidget {
       action: 'Delete',
     );
     if (!confirmed || !context.mounted) return;
+    HapticFeedback.mediumImpact();
     navigator.pop();
     await deleteFindWithUndo(messenger, place);
   }
@@ -1931,6 +1944,56 @@ Widget _liveOrShared(
 ) => shared
     ? Builder(builder: (context) => builder(context, place))
     : _LivePlace(place: place, builder: builder);
+
+/// "Location unconfirmed — tap to fix" under the title while the place's
+/// pin is a stand-in ([Place.locationConfirmed] false). On the user's own
+/// place, tapping opens [FixLocationDialog] (address search, or the map
+/// centre when [currentMapCenter] is given) and saves the pick via
+/// [PlaceStore.setLocation]; live, so it disappears once fixed. A
+/// shared-board copy only says it's unconfirmed (read-only, see
+/// [PlaceDetailSource]).
+class _UnconfirmedLocation extends StatelessWidget {
+  const _UnconfirmedLocation({
+    required this.place,
+    required this.shared,
+    this.currentMapCenter,
+  });
+
+  final Place place;
+  final bool shared;
+  final LatLng Function()? currentMapCenter;
+
+  Future<void> _fix(BuildContext context, Place current) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final fixed = await showFixLocationDialog(
+      context,
+      current,
+      currentMapCenter: currentMapCenter,
+    );
+    if (fixed == null) return;
+    await _saveOrWarn(
+      messenger,
+      () => PlaceStore.instance.setLocation(
+        current.id,
+        fixed.location,
+        address: fixed.address,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _liveOrShared(place, shared, (context, current) {
+      if (current.locationConfirmed) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: shared
+            ? const LocationUnconfirmedBadge(fixable: false)
+            : LocationUnconfirmedBadge(onTap: () => _fix(context, current)),
+      );
+    });
+  }
+}
 
 /// [PlaceDetails.nativeName] under the title, when the enricher found one.
 class _NativeName extends StatelessWidget {
@@ -1986,9 +2049,7 @@ class _DetailsSectionState extends State<_DetailsSection> {
       await PlaceEnricher.instance.refresh(current);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't refresh details")),
-        );
+        showError(context, 'refresh details');
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -2302,9 +2363,7 @@ class _OpenInMapsButton extends StatelessWidget {
           mode: LaunchMode.externalApplication,
         );
         if (!ok && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open Google Maps')),
-          );
+          showError(context, 'open Google Maps');
         }
       },
       icon: const Icon(Icons.map_outlined, size: 18),

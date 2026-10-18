@@ -16,6 +16,7 @@ import 'services/place_enricher.dart';
 import 'services/restaurant_type_rescan.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import 'widgets/web_safe_area.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,6 +81,9 @@ class CheapTripChipApp extends StatelessWidget {
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
           themeMode: mode,
+          // Above the Navigator, so bottom sheets and dialogs get the web
+          // safe-area padding too, not just the home shell.
+          builder: (context, child) => WebSafeArea(child: child!),
           home: const HomeShell(),
         );
       },

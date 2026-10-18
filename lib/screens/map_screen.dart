@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -22,6 +24,7 @@ import '../widgets/delete_find.dart';
 import '../widgets/filter_chips.dart';
 import '../widgets/filter_drawer.dart';
 import '../widgets/map_pin.dart';
+import '../widgets/map_tile_banner.dart';
 import '../widgets/marker_clustering.dart';
 import '../widgets/place_list_sheet.dart';
 import '../widgets/place_preview_card.dart';
@@ -100,6 +103,9 @@ class _MapScreenState extends State<MapScreen>
   /// Only pin taps raise it; list selection and empty-map taps clear it.
   final _previewVisible = ValueNotifier<bool>(false);
 
+  /// Counts tile failures for the "Map unavailable" banner.
+  final _tileHealth = TileHealthMonitor();
+
   /// Whether the camera has been fitted to real places yet. Guest places
   /// load from disk after the first frame, so the map can start empty and
   /// must fit once they arrive.
@@ -176,6 +182,7 @@ class _MapScreenState extends State<MapScreen>
   /// Deliberately does NOT move the map — re-centering under an active
   /// pan/tap is a documented anti-pattern that fights the user.
   void _selectFromPin(Place place) {
+    HapticFeedback.selectionClick();
     _selectedPlaceId.value = place.id;
     _previewVisible.value = true;
     // Warm the detail sheet's header photo while the card is up, so opening
@@ -201,6 +208,14 @@ class _MapScreenState extends State<MapScreen>
       _listSheetController.scrollToPlace(place.id);
     }
   }
+
+  /// The detail sheet over the map — with the current map centre for its
+  /// "Use current map center" location fix.
+  void _openDetail(BuildContext context, Place place) => PlaceDetailSheet.show(
+    context,
+    place,
+    currentMapCenter: () => _mapController.camera.center,
+  );
 
   /// Empty map tapped: drop search focus (matching Google Maps) and dismiss
   /// the preview card along with the pin highlight.
@@ -563,8 +578,24 @@ class _MapScreenState extends State<MapScreen>
           // blank forever (the default never retries).
           evictErrorTileStrategy:
               EvictErrorTileStrategy.notVisibleRespectMargin,
-          errorTileCallback: (tile, error, _) =>
-              debugPrint('Map tile ${tile.coordinates} failed: $error'),
+          errorTileCallback: (tile, error, _) {
+            debugPrint('Map tile ${tile.coordinates} failed: $error');
+            // Deferred like the success path below: a cached failed
+            // stream can report synchronously, mid-build.
+            scheduleMicrotask(_tileHealth.recordError);
+          },
+          // Only watches for a successful load (to hide the "Map
+          // unavailable" banner) — the tile itself is returned as is.
+          // Runs during build, so the store update is deferred.
+          tileBuilder: (context, tileWidget, tile) {
+            final loadedAt = tile.loadFinishedAt;
+            if (loadedAt != null &&
+                !tile.loadError &&
+                _tileHealth.awaitingRecovery) {
+              scheduleMicrotask(() => _tileHealth.recordSuccess(loadedAt));
+            }
+            return tileWidget;
+          },
         ),
       ],
     );
@@ -606,6 +637,7 @@ class _MapScreenState extends State<MapScreen>
     _searchFocusNode.dispose();
     _selectedPlaceId.dispose();
     _previewVisible.dispose();
+    _tileHealth.dispose();
     super.dispose();
   }
 
@@ -766,6 +798,10 @@ class _MapScreenState extends State<MapScreen>
                       filters: _filters,
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                     ),
+                    MapTileBanner(
+                      monitor: _tileHealth,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    ),
                   ],
                 ),
               ),
@@ -776,7 +812,7 @@ class _MapScreenState extends State<MapScreen>
                 controller: _listSheetController,
                 sheetController: _sheetExtentController,
                 onSelectPlace: (place) => _selectFromList(context, place),
-                onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
+                onOpenDetail: (place) => _openDetail(context, place),
                 onAddFind: widget.onAddFind,
                 onDeletePlace: (place) =>
                     deleteFindWithUndo(ScaffoldMessenger.of(context), place),
@@ -787,7 +823,7 @@ class _MapScreenState extends State<MapScreen>
                 boardIndex: boardIndex,
                 selectedId: _selectedPlaceId,
                 previewVisible: _previewVisible,
-                onOpenDetail: (place) => PlaceDetailSheet.show(context, place),
+                onOpenDetail: (place) => _openDetail(context, place),
               ),
             ],
           ),

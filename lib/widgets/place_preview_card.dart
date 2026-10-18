@@ -8,6 +8,7 @@ import '../data/photo_store.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import 'accessible_emoji.dart';
+import 'location_fix.dart';
 import 'place_photo.dart';
 import 'place_photo_actions.dart';
 import 'score_stars.dart';
@@ -117,6 +118,12 @@ class PlacePreviewCard extends StatelessWidget {
                         if (boards case final boards?) ...[
                           const SizedBox(height: 4),
                           _BoardsLine(boards: boards),
+                        ],
+                        if (!place.locationConfirmed) ...[
+                          const SizedBox(height: 4),
+                          // Details (or the card) opens the place page,
+                          // where it's fixed.
+                          const LocationUnconfirmedBadge(),
                         ],
                       ],
                     ),

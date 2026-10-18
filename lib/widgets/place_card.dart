@@ -4,6 +4,7 @@ import '../data/map_filter.dart';
 import '../models/place.dart';
 import '../theme/app_theme.dart';
 import 'accessible_emoji.dart';
+import 'location_fix.dart';
 import 'score_stars.dart';
 
 /// Feed/sidebar card: category swatch, name, area tag, AI description preview,
@@ -27,6 +28,9 @@ class PlaceCard extends StatelessWidget {
     final theme = Theme.of(context);
     final color = AppTheme.categoryColor(place.category, theme.brightness);
     final onSurfaceVariant = theme.colorScheme.onSurfaceVariant;
+    // Large text: let a long name take a second line instead of losing
+    // most of it to the ellipsis.
+    final nameLines = MediaQuery.textScalerOf(context).scale(1) > 1.2 ? 2 : 1;
 
     return Card(
       child: InkWell(
@@ -48,7 +52,7 @@ class PlaceCard extends StatelessWidget {
                         Expanded(
                           child: Text(
                             place.name,
-                            maxLines: 1,
+                            maxLines: nameLines,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 16,
@@ -56,13 +60,22 @@ class PlaceCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (place.matchConfident) const _MatchBadge(),
+                        // An unconfirmed (stand-in) pin gets its own warning
+                        // line below instead of "Pinned".
+                        if (place.matchConfident && place.locationConfirmed)
+                          const _MatchBadge(),
                         if (place.myScore != null) ...[
                           const SizedBox(width: 6),
                           ScoreBadge(score: place.myScore!),
                         ],
                       ],
                     ),
+                    if (!place.locationConfirmed) ...[
+                      const SizedBox(height: 4),
+                      // The card's own tap opens the place page, where the
+                      // location can be fixed.
+                      const LocationUnconfirmedBadge(),
+                    ],
                     const SizedBox(height: 4),
                     // Google-Maps-style metadata line: rating · price · category,
                     // each part optional so e.g. an un-rated place still renders
@@ -92,17 +105,20 @@ class PlaceCard extends StatelessWidget {
                           ),
                         ),
                         if (onShowOnMap != null)
-                          // Compact: a 40×32 target, so the single text
-                          // line doesn't grow the card much.
+                          // A full 48×48 target (Material's minimum) around
+                          // the small 18 px icon — the area line grows a
+                          // little to fit it.
                           IconButton(
                             tooltip: 'Show on map',
                             onPressed: onShowOnMap,
                             icon: const Icon(Icons.map_outlined, size: 18),
-                            visualDensity: VisualDensity.compact,
+                            // Standard even where the theme is compact
+                            // (desktop/web), which would shrink it to 40.
+                            visualDensity: VisualDensity.standard,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints.tightFor(
-                              width: 40,
-                              height: 32,
+                              width: 48,
+                              height: 48,
                             ),
                             color: onSurfaceVariant,
                           ),

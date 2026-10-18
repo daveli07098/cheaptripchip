@@ -169,7 +169,7 @@ service cloud.firestore {
             'rating', 'reviewCount', 'priceRange', 'photoUrls', 'isFavorite',
             'myScore', 'myNotes', 'myPhotoAt', 'restaurantType',
             'restaurantTypeManual', 'countryCode', 'extraNotes', 'details',
-            'updatedAt'])
+            'locationConfirmed', 'updatedAt'])
           && p.name is string && p.name.size() <= 500
           && p.get('originalCaption', '').size() <= 10000
           && p.get('descriptionEn', '').size() <= 5000

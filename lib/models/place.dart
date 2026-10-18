@@ -24,6 +24,7 @@ class Place {
     required this.sourcePlatform,
     this.award,
     this.matchConfident = true,
+    this.locationConfirmed = true,
     this.rating,
     this.reviewCount,
     this.priceRange,
@@ -79,6 +80,14 @@ class Place {
 
   /// Mirrors Yaay's "1match" badge — whether the AI geocode resolved confidently.
   final bool matchConfident;
+
+  /// False when [location] is a stand-in, not a real geocode — the
+  /// extractor found the place but couldn't locate it, so it pinned it at a
+  /// default (MockData.tokyoCenter). The card, pin and detail sheet then
+  /// flag it ("Location unconfirmed — tap to fix") until the user picks the
+  /// real spot ([PlaceStore.setLocation]). Data saved before this flag
+  /// existed reads as confirmed.
+  final bool locationConfirmed;
 
   /// Average rating out of 5, e.g. 4.7. Null if not extracted/known.
   final double? rating;
@@ -223,6 +232,7 @@ class Place {
     SourcePlatform? sourcePlatform,
     String? award,
     bool? matchConfident,
+    bool? locationConfirmed,
     double? rating,
     int? reviewCount,
     String? priceRange,
@@ -266,6 +276,7 @@ class Place {
       sourcePlatform: sourcePlatform ?? this.sourcePlatform,
       award: award ?? this.award,
       matchConfident: matchConfident ?? this.matchConfident,
+      locationConfirmed: locationConfirmed ?? this.locationConfirmed,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
       priceRange: priceRange ?? this.priceRange,
@@ -303,6 +314,10 @@ class Place {
       'sourcePlatform': sourcePlatform.name,
       'award': award,
       'matchConfident': matchConfident,
+      // Always emitted (even true) so a merge write clears a stale `false`
+      // once the user fixes the location; firestore.rules' validPlace
+      // allow-list must include it.
+      'locationConfirmed': locationConfirmed,
       'rating': rating,
       'reviewCount': reviewCount,
       'priceRange': priceRange,
@@ -357,6 +372,7 @@ class Place {
       ),
       award: json['award'] as String?,
       matchConfident: json['matchConfident'] as bool? ?? true,
+      locationConfirmed: json['locationConfirmed'] != false,
       rating: (json['rating'] as num?)?.toDouble(),
       reviewCount: (json['reviewCount'] as num?)?.toInt(),
       priceRange: json['priceRange'] as String?,

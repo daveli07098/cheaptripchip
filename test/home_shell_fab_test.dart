@@ -45,8 +45,8 @@ void main() {
         findsNothing,
       );
 
-      // Explore tab (index 0): no FAB at all (map has its own).
-      await tester.tap(find.widgetWithText(NavigationDestination, 'Explore'));
+      // Map tab (index 0): no FAB at all (map has its own).
+      await tester.tap(find.widgetWithText(NavigationDestination, 'Map'));
       await tester.pumpAndSettle();
       expect(find.byType(FloatingActionButton), findsNothing);
     },

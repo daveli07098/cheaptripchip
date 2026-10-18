@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:image_picker/image_picker.dart';
 
 import '../data/place_store.dart';
@@ -9,7 +12,6 @@ import '../services/duplicate_matcher.dart';
 import '../services/geocoding_service.dart';
 import '../services/image_prep.dart';
 import '../services/place_extractor.dart';
-import '../theme/app_theme.dart';
 import 'accessible_emoji.dart';
 import 'show_snack.dart';
 
@@ -160,7 +162,8 @@ class _AddFindSheetState extends State<AddFindSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = _friendly(e);
+        debugPrint('extraction error: $e');
+        _error = friendlyExtractionMessage(e);
         _offerScreenshot = e is CaptionUnavailableException;
       });
     } finally {
@@ -224,6 +227,7 @@ class _AddFindSheetState extends State<AddFindSheet> {
       setState(() => _error = 'Nothing saved.');
       return;
     }
+    if (toSave.isNotEmpty || merged > 0) HapticFeedback.lightImpact();
     final messenger = ScaffoldMessenger.maybeOf(context);
     Navigator.pop(context);
     if (toSave.length == 1 && merged == 0) {
@@ -379,46 +383,6 @@ class _AddFindSheetState extends State<AddFindSheet> {
         ),
       );
 
-  String _friendly(Object e) {
-    debugPrint('extraction error: $e');
-    if (e is CaptionUnavailableException) {
-      return "Couldn't read this post's caption (it may be private or behind "
-          "Instagram's login). Paste the caption or place name too, or use a "
-          'screenshot.';
-    }
-    if (e is NoPlaceFoundException) {
-      return "Couldn't find a place in this post. "
-          'Add the place name and try again.';
-    }
-    if (e is ImageTooLargeException) {
-      return 'That image is too large to read. Try cropping the screenshot.';
-    }
-    if (e is UnsupportedImageException) {
-      return "Couldn't read that image. Try a PNG or JPEG screenshot.";
-    }
-    final msg = e.toString();
-    if (msg.contains('GEMINI_API_KEY')) {
-      return 'No Gemini key set. Run with '
-          '--dart-define=GEMINI_API_KEY=your_key to enable extraction.';
-    }
-    if (msg.contains('413')) {
-      return 'That screenshot is too large to send. Try cropping it.';
-    }
-    if (msg.contains('403') ||
-        msg.contains('API_KEY_SERVICE_BLOCKED') ||
-        msg.contains('are blocked')) {
-      return 'The Gemini key isn\'t allowed to use this API yet. In Google '
-          'Cloud Console → Credentials → this key → API restrictions, add '
-          '"Generative Language API".';
-    }
-    // Strip the leading `Exception: ` prefix `Exception.toString()` adds,
-    // so the user sees the underlying message, not Dart plumbing.
-    final stripped = msg.startsWith('Exception: ')
-        ? msg.substring('Exception: '.length)
-        : msg;
-    return 'Extraction failed: $stripped';
-  }
-
   Widget _busyIcon(BuildContext context) => SizedBox(
     width: 18,
     height: 18,
@@ -474,7 +438,10 @@ class _AddFindSheetState extends State<AddFindSheet> {
           const SizedBox(height: 10),
           Text(
             _error!,
-            style: const TextStyle(color: AppTheme.coral, fontSize: 13),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 13,
+            ),
           ),
           if (_offerScreenshot) ...[
             const SizedBox(height: 8),
@@ -493,7 +460,6 @@ class _AddFindSheetState extends State<AddFindSheet> {
               : const Icon(Icons.auto_awesome, size: 18),
           label: Text(_busy ? _busyLabel : 'Extract & save'),
           style: FilledButton.styleFrom(
-            backgroundColor: AppTheme.coral,
             minimumSize: const Size(double.infinity, 48),
           ),
         ),
@@ -567,7 +533,10 @@ class _AddFindSheetState extends State<AddFindSheet> {
           const SizedBox(height: 8),
           Text(
             _error!,
-            style: const TextStyle(color: AppTheme.coral, fontSize: 13),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 13,
+            ),
           ),
         ],
         const SizedBox(height: 12),
@@ -593,7 +562,6 @@ class _AddFindSheetState extends State<AddFindSheet> {
             _busy ? _busyLabel : 'Save $count find${count == 1 ? '' : 's'}',
           ),
           style: FilledButton.styleFrom(
-            backgroundColor: AppTheme.coral,
             minimumSize: const Size(double.infinity, 48),
           ),
         ),
@@ -616,3 +584,66 @@ class GeocodeCandidateChoice {
 
   final GeocodeCandidate candidate;
 }
+
+/// What the user sees when extraction fails. The "paste the caption / use a
+/// screenshot" guidance is kept for everyone; developer hints (the
+/// `--dart-define` flag, Cloud Console steps, raw exception text) only in
+/// [debug] builds — a release user can't act on them.
+@visibleForTesting
+String friendlyExtractionMessage(Object e, {bool debug = kDebugMode}) {
+  if (e is CaptionUnavailableException) {
+    return "Couldn't read this post's caption (it may be private or behind "
+        "Instagram's login). Paste the caption or place name too, or use a "
+        'screenshot.';
+  }
+  if (e is NoPlaceFoundException) {
+    return "Couldn't find a place in this post. "
+        'Add the place name and try again.';
+  }
+  if (e is ImageTooLargeException) {
+    return 'That image is too large to read. Try cropping the screenshot.';
+  }
+  if (e is UnsupportedImageException) {
+    return "Couldn't read that image. Try a PNG or JPEG screenshot.";
+  }
+  final msg = e.toString();
+  if (msg.contains('GEMINI_API_KEY')) {
+    return debug
+        ? 'No Gemini key set. Run with '
+              '--dart-define=GEMINI_API_KEY=your_key to enable extraction.'
+        : _unavailableMessage;
+  }
+  if (msg.contains('413')) {
+    return 'That screenshot is too large to send. Try cropping it.';
+  }
+  if (msg.contains('403') ||
+      msg.contains('API_KEY_SERVICE_BLOCKED') ||
+      msg.contains('are blocked')) {
+    return debug
+        ? 'The Gemini key isn\'t allowed to use this API yet. In Google '
+              'Cloud Console → Credentials → this key → API restrictions, add '
+              '"Generative Language API".'
+        : _unavailableMessage;
+  }
+  if (e is TimeoutException ||
+      msg.contains('SocketException') ||
+      msg.contains('ClientException') ||
+      msg.contains('Failed host lookup')) {
+    return "Couldn't connect — check your connection and try again.";
+  }
+  if (!debug) {
+    return "Couldn't read this post — try again. If it keeps failing, paste "
+        'the caption or place name, or use a screenshot.';
+  }
+  // Strip the leading `Exception: ` prefix `Exception.toString()` adds,
+  // so the developer sees the underlying message, not Dart plumbing.
+  final stripped = msg.startsWith('Exception: ')
+      ? msg.substring('Exception: '.length)
+      : msg;
+  return 'Extraction failed: $stripped';
+}
+
+/// Release-build wording for a misconfigured or blocked Gemini key —
+/// nothing the user can fix, so no developer steps.
+const String _unavailableMessage =
+    "Finding places isn't available right now — try again later.";
