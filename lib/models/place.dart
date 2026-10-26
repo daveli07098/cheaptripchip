@@ -50,7 +50,7 @@ class Place {
 
   /// City-level label. Places resolved by AreaResolver
   /// (lib/services/area_resolver.dart) store just the city ("Tokyo",
-  /// "Hong Kong"); older Gemini extractions store "City, Country"
+  /// "Hong Kong"); older AI extractions store "City, Country"
   /// ("Tokyo, Japan"). Group/filter on [city], which handles both.
   final String region;
 
@@ -125,14 +125,14 @@ class Place {
   /// The restaurant's cuisine/style sub-type — only meaningful when
   /// [category] is [PlaceCategory.restaurant]. Null means "not set yet": set
   /// by the user via the detail-sheet picker (see [restaurantTypeManual]),
-  /// by Gemini extraction, or by the one-off refinement rescan
+  /// by AI extraction, or by the one-off refinement rescan
   /// ([PlaceStore.rescanRestaurantTypes]). See [effectiveRestaurantType] for
   /// the display-time default (keyword detection), and [copyWith]'s
   /// `clearRestaurantType` for how to reset it.
   final RestaurantType? restaurantType;
 
   /// Whether [restaurantType] was picked by the user in the detail sheet
-  /// (true) rather than set automatically — Gemini extraction, the rescan,
+  /// (true) rather than set automatically — AI extraction, the rescan,
   /// or data saved before this flag existed (false). The rescan never
   /// touches a manual pick.
   final bool restaurantTypeManual;
@@ -165,7 +165,7 @@ class Place {
 
   /// [areaLabel] as a district under [city]; empty when unset, the
   /// "Unknown" placeholder, or just a copy of the region (the extractor
-  /// falls back to the region when Gemini returns no area).
+  /// falls back to the region when AI returns no area).
   String get district {
     final value = areaLabel.trim();
     if (value.isEmpty || value.toLowerCase() == 'unknown') return '';
@@ -180,7 +180,7 @@ class Place {
   /// Whether a rating is available to render (e.g. in the map-style info card).
   bool get hasRating => rating != null;
 
-  /// [restaurantType] when the user (or Gemini extraction) has set one —
+  /// [restaurantType] when the user (or AI extraction) has set one —
   /// that stored value always wins — else a best-effort guess from
   /// [detectRestaurantType], else [RestaurantType.other]; `null` for every
   /// non-restaurant category. The guess is computed at read time (never

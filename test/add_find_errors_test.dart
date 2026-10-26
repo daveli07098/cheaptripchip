@@ -18,7 +18,7 @@ void main() {
 
     test('release: a missing key reads as "not available", no flags', () {
       final message = friendlyExtractionMessage(
-        StateError('GEMINI_API_KEY is not set'),
+        StateError('AI_API_KEY is not set'),
         debug: false,
       );
       expectNoDevHints(message);
@@ -27,7 +27,7 @@ void main() {
 
     test('release: a blocked key (403) has no Cloud Console steps', () {
       final message = friendlyExtractionMessage(
-        Exception('Gemini 403: API_KEY_SERVICE_BLOCKED'),
+        Exception('AI 403: API_KEY_SERVICE_BLOCKED'),
         debug: false,
       );
       expectNoDevHints(message);
@@ -64,14 +64,14 @@ void main() {
     test('debug keeps the developer hints', () {
       expect(
         friendlyExtractionMessage(
-          StateError('GEMINI_API_KEY is not set'),
+          StateError('AI_API_KEY is not set'),
           debug: true,
         ),
-        contains('--dart-define=GEMINI_API_KEY'),
+        contains('--dart-define=AI_API_KEY'),
       );
       expect(
-        friendlyExtractionMessage(Exception('Gemini 403'), debug: true),
-        contains('Cloud Console'),
+        friendlyExtractionMessage(Exception('AI 403'), debug: true),
+        contains('was rejected'),
       );
       expect(
         friendlyExtractionMessage(Exception('boom'), debug: true),

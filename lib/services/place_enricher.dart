@@ -6,10 +6,10 @@ import 'package:flutter/widgets.dart';
 import '../data/place_store.dart';
 import '../models/place.dart';
 import '../models/place_details.dart';
-import 'gemini_service.dart';
+import 'ai_service.dart';
 
 /// Auto-fills [Place.details] (must-try, price level, tags, opening hours,
-/// native name, summaries and caption translations) with one Gemini JSON
+/// native name, summaries and caption translations) with one AI JSON
 /// call per place — see [enrich].
 ///
 /// Runs in the background like AreaResolver (lib/services/area_resolver.dart):
@@ -18,7 +18,7 @@ import 'gemini_service.dart';
 /// whose details are still null, strictly one request at a time with at
 /// least [minInterval] (2 s) between requests, and at most
 /// [maxPerSession] requests per app session so a big backfill spreads over
-/// several launches. Skipped entirely when Gemini isn't configured; gives up
+/// several launches. Skipped entirely when AI isn't configured; gives up
 /// for the session after [maxConsecutiveFailures] failures in a row
 /// (offline, quota), retried on the next app resume.
 ///
@@ -53,7 +53,7 @@ class PlaceEnricher with WidgetsBindingObserver {
 
   /// The app-wide enricher (started from main.dart, used by the detail
   /// sheet's "Refresh details"). Not final so widget tests can swap in one
-  /// with a fake Gemini.
+  /// with a fake AI.
   static PlaceEnricher instance = PlaceEnricher();
 
   final Future<Map<String, dynamic>> Function(String)? _extractOverride;
@@ -65,7 +65,7 @@ class PlaceEnricher with WidgetsBindingObserver {
   final DateTime Function() _now;
   final Future<void> Function(Duration) _wait;
 
-  /// Gap enforced between two background Gemini requests.
+  /// Gap enforced between two background AI requests.
   final Duration minInterval;
 
   /// Background requests allowed per app session (manual refreshes don't
@@ -84,8 +84,8 @@ class PlaceEnricher with WidgetsBindingObserver {
   /// Quiet time after launch / places changing / app resuming before a run.
   final Duration startDelay;
 
-  GeminiService? _gemini;
-  GeminiService get _service => _gemini ??= GeminiService();
+  AiService? _ai;
+  AiService get _service => _ai ??= AiService();
 
   bool get _configured =>
       (_configuredOverride ?? () => _service.isConfigured)();
@@ -124,7 +124,7 @@ class PlaceEnricher with WidgetsBindingObserver {
   bool _started = false;
   Timer? _startTimer;
 
-  /// Whether Gemini is configured — "Refresh details" hides otherwise.
+  /// Whether AI is configured — "Refresh details" hides otherwise.
   bool get isConfigured => _configured;
 
   /// Background requests made this session.
@@ -135,7 +135,7 @@ class PlaceEnricher with WidgetsBindingObserver {
   static bool needsDetails(Place place) =>
       place.details == null && place.name.trim().isNotEmpty;
 
-  /// Longest caption excerpt sent to Gemini.
+  /// Longest caption excerpt sent to AI.
   static const maxCaptionChars = 4000;
 
   /// The single enrichment prompt for [place].
@@ -186,7 +186,7 @@ Return ONLY a JSON object with these keys:
 ''';
   }
 
-  /// Lenient parse of Gemini's answer into [PlaceDetails] stamped [at]:
+  /// Lenient parse of the AI's answer into [PlaceDetails] stamped [at]:
   /// unknown/garbage fields become null/empty (see [PlaceDetails.fromJson]),
   /// lists are capped (5 must-try, 6 tags), and translations of an empty
   /// caption are dropped.
@@ -214,7 +214,7 @@ Return ONLY a JSON object with these keys:
     );
   }
 
-  /// One Gemini call for [place] → its details. Throws when Gemini isn't
+  /// One AI call for [place] → its details. Throws when AI isn't
   /// configured or the call fails.
   Future<PlaceDetails> enrich(Place place) async {
     final json = await _extract(buildPrompt(place));
@@ -231,7 +231,7 @@ Return ONLY a JSON object with these keys:
   }
 
   /// Starts watching the app lifecycle and [PlaceStore]. Idempotent; a
-  /// no-op when Gemini isn't configured. Called from main.dart (never from
+  /// no-op when AI isn't configured. Called from main.dart (never from
   /// widgets, so widget tests don't get live timers).
   void start() {
     if (_started || !_configured) return;

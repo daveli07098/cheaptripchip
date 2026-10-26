@@ -278,7 +278,7 @@ class _MapScreenState extends State<MapScreen>
     if (fit != null) _flyToFit(fit);
   }
 
-  /// "Ask your places": [question] goes to Gemini (or the keyword
+  /// "Ask your places": [question] goes to AI (or the keyword
   /// fallback) with the map's visible centre as "near me"; the answer
   /// shows as AI results and the build fits the camera to them.
   Future<void> _ask(String question) async {

@@ -3,7 +3,7 @@
  *
  * Thin req/res translation only; all logic lives in ../lib/meta.ts so it can
  * be unit-tested without Vercel types (same split as
- * api/v1beta/models/[modelAction].ts / lib/proxy.ts).
+ * api/v1/chat/completions.ts / lib/proxy.ts).
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handleMeta, type MetaRequest } from '../lib/meta.js';

@@ -240,7 +240,7 @@ void main() {
       expect(picked.first.id, 'needle');
     });
 
-    test('falls back to keywords when Gemini fails or is slow', () async {
+    test('falls back to keywords when AI fails or is slow', () async {
       final failing = AiSearch(ask: (_) async => throw Exception('offline'));
       final r = await failing.ask('cheap ramen', places: _places);
       expect(r.usedAi, isFalse);
@@ -254,7 +254,7 @@ void main() {
       expect((await slow.ask('cheap ramen', places: _places)).usedAi, isFalse);
     });
 
-    test('unconfigured skips Gemini entirely', () async {
+    test('unconfigured skips AI entirely', () async {
       var called = false;
       final ai = AiSearch(
         ask: (_) async {

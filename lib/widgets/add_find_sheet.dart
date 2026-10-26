@@ -19,7 +19,7 @@ import 'show_snack.dart';
 enum DuplicateChoice { open, merge, saveAnyway }
 
 /// The "Add a find" sheet: paste a link or caption (or pick a screenshot) →
-/// Gemini extraction → geocode → saved to the store and shown on the
+/// AI extraction → geocode → saved to the store and shown on the
 /// map/feed.
 ///
 /// A post listing several places shows a checklist (all ticked) first; a
@@ -250,7 +250,7 @@ class _AddFindSheetState extends State<AddFindSheet> {
   }
 
   /// "Which one?" for a low-confidence or ambiguous [item]: the best guess
-  /// (or each distinct geocode match), Gemini's alternatives, or none.
+  /// (or each distinct geocode match), the AI's alternatives, or none.
   Future<Place?> _confirmWhich(ExtractedPlace item) async {
     final base = item.place;
     final geo = item.geocodeAmbiguous
@@ -418,7 +418,7 @@ class _AddFindSheetState extends State<AddFindSheet> {
         const SizedBox(height: 6),
         Text(
           'Paste an Instagram/TikTok link (and its caption for best results), '
-          'or add a screenshot. Gemini extracts the places, we map them and '
+          'or add a screenshot. AI extracts the places, we map them and '
           'write a summary.',
           style: TextStyle(color: muted, height: 1.4),
         ),
@@ -607,10 +607,10 @@ String friendlyExtractionMessage(Object e, {bool debug = kDebugMode}) {
     return "Couldn't read that image. Try a PNG or JPEG screenshot.";
   }
   final msg = e.toString();
-  if (msg.contains('GEMINI_API_KEY')) {
+  if (msg.contains('AI_API_KEY')) {
     return debug
-        ? 'No Gemini key set. Run with '
-              '--dart-define=GEMINI_API_KEY=your_key to enable extraction.'
+        ? 'No AI key set. Run with '
+              '--dart-define=AI_API_KEY=your_key to enable extraction.'
         : _unavailableMessage;
   }
   if (msg.contains('413')) {
@@ -620,9 +620,8 @@ String friendlyExtractionMessage(Object e, {bool debug = kDebugMode}) {
       msg.contains('API_KEY_SERVICE_BLOCKED') ||
       msg.contains('are blocked')) {
     return debug
-        ? 'The Gemini key isn\'t allowed to use this API yet. In Google '
-              'Cloud Console → Credentials → this key → API restrictions, add '
-              '"Generative Language API".'
+        ? 'The AI key was rejected (403). Check AI_API_KEY and that the '
+              'OpenCode workspace allows the model\'s region.'
         : _unavailableMessage;
   }
   if (e is TimeoutException ||
@@ -643,7 +642,7 @@ String friendlyExtractionMessage(Object e, {bool debug = kDebugMode}) {
   return 'Extraction failed: $stripped';
 }
 
-/// Release-build wording for a misconfigured or blocked Gemini key —
+/// Release-build wording for a misconfigured or blocked AI key —
 /// nothing the user can fix, so no developer steps.
 const String _unavailableMessage =
     "Finding places isn't available right now — try again later.";

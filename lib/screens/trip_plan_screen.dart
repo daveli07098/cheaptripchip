@@ -19,7 +19,7 @@ Future<bool> _launchExternal(Uri uri) =>
     launchUrl(uri, mode: LaunchMode.externalApplication);
 
 /// Board ⋮ → "Plan a trip ✨": asks for [TripPlanOptions], plans [board]'s
-/// places (Gemini, else the on-device fallback) and opens [TripPlanScreen].
+/// places (AI, else the on-device fallback) and opens [TripPlanScreen].
 /// [onSave] persists the plan with the board — null for boards that can't
 /// store one (shared boards, the auto "New finds" board), whose plan then
 /// lives only on screen.

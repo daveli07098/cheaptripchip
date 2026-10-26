@@ -12,10 +12,10 @@
 # defaults (HEAD of the source dir / now), so a combined Android + web build
 # shows the same values on both.
 #
-# Needs env/dev.json (GEMINI_API_KEY = the proxy's APP_TOKEN, GEMINI_BASE_URL
-# = the proxy) and a logged-in Vercel CLI. The build embeds GEMINI_API_KEY,
-# so it must never be the raw Google key — the script refuses unless
-# GEMINI_BASE_URL points at a proxy. web_deploy/vercel.json (SPA rewrite,
+# Needs env/dev.json (AI_API_KEY = the proxy's APP_TOKEN, AI_BASE_URL
+# = the proxy) and a logged-in Vercel CLI. The build embeds AI_API_KEY,
+# so it must never be the raw OpenCode Go key — the script refuses unless
+# AI_BASE_URL points at a proxy. web_deploy/vercel.json (SPA rewrite,
 # caching, Firebase /__/auth proxy) is copied into build/web before deploy.
 set -euo pipefail
 
@@ -43,9 +43,14 @@ if [[ ! -f env/dev.json ]]; then
   echo "env/dev.json missing — copy env/dev.example.json first" >&2
   exit 1
 fi
-base_url=$(python3 -c 'import json;print(json.load(open("env/dev.json")).get("GEMINI_BASE_URL",""))')
+base_url=$(python3 -c 'import json;print(json.load(open("env/dev.json")).get("AI_BASE_URL",""))')
 if [[ "$base_url" != https://* ]]; then
-  echo "GEMINI_BASE_URL must point at the Gemini proxy for a public web build" >&2
+  echo "AI_BASE_URL must point at the AI proxy for a public web build" >&2
+  exit 1
+fi
+# A direct OpenCode URL means AI_API_KEY is the real Go key — the build would publish it.
+if [[ "$base_url" == https://opencode.ai* ]]; then
+  echo "AI_BASE_URL points at OpenCode directly; a public web build must go through the AI proxy" >&2
   exit 1
 fi
 

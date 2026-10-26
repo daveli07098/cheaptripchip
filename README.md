@@ -34,24 +34,24 @@ flutter run -d chrome            # quick preview in the browser
 
 Requires the Flutter SDK (developed against Flutter 3.41). Map tiles need network access.
 
-### AI extraction config (Gemini)
+### AI extraction config (OpenCode Go)
 
-The "Add a find" flow uses Gemini to extract a place from a pasted link/caption,
+The "Add a find" flow uses an AI model (OpenCode Go) to extract a place from a pasted link/caption,
 then geocodes it via OSM Nominatim. Ported from the event-calendar AI client
 (model cascade, JSON mode, lenient parse). Provide the key at run time — nothing
 is hard-coded:
 
 ```bash
-flutter run --dart-define=GEMINI_API_KEY=your_key
-# Optional reverse proxy (e.g. to bypass a regional block), same role as
-# event-calendar's GEMINI_BASE_URL:
-flutter run --dart-define=GEMINI_API_KEY=your_key \
-            --dart-define=GEMINI_BASE_URL=https://your-proxy.example.workers.dev
+flutter run --dart-define=AI_API_KEY=your_key
+# Recommended: the project proxy (see docs/ai-proxy.md); AI_API_KEY is then its
+# APP_TOKEN. Optional AI_MODELS overrides the model pool (comma-separated):
+flutter run --dart-define=AI_API_KEY=your_key \
+            --dart-define=AI_BASE_URL=https://your-proxy.example.workers.dev
 ```
 
 Without a key, the app still runs and shows the seed data; extraction shows a
 "no key" message. **Security:** a key shipped in a client app is exposed — for
-production, point `GEMINI_BASE_URL` at your own backend/proxy and keep the key
+production, point `AI_BASE_URL` at your own backend/proxy and keep the key
 server-side. The client is structured so that swap is config-only.
 
 ### Share-sheet intake
@@ -85,11 +85,11 @@ lib/
 2. **iOS Share Extension** — add the iOS share target so intake works on iPhone
    (Android intent-filter is already wired).
 3. **Full URL ingestion** — a bare reel URL can't be read client-side; move page
-   fetch + extraction to the backend (feed page text to the same Gemini prompt).
+   fetch + extraction to the backend (feed page text to the same AI prompt).
 4. **Real photos** from the source post; replace placeholder thumbnails.
 5. **Auth + collaborative boards.**
 
 ### Done in the draft
-- Gemini extraction (`lib/services/gemini_service.dart`) + Nominatim geocoding,
+- AI extraction (`lib/services/ai_service.dart`) + Nominatim geocoding,
   wired into "Add a find" → saved place appears on map/feed.
 - Android share-sheet intake (`receive_sharing_intent`).

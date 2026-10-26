@@ -8,8 +8,8 @@
   },
   "rewrites": [
     {
-      "source": "/v1beta/models/:modelAction",
-      "destination": "/api/v1beta/models/:modelAction"
+      "source": "/v1/chat/completions",
+      "destination": "/api/v1/chat/completions"
     },
     {
       "source": "/b/:id",

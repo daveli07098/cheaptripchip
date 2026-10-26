@@ -4,7 +4,7 @@ import 'package:latlong2/latlong.dart';
 import '../data/mock_data.dart';
 import '../models/place.dart';
 import 'extraction_cache.dart';
-import 'gemini_service.dart';
+import 'ai_service.dart';
 import 'geocoding_service.dart';
 import 'post_metadata.dart';
 
@@ -14,7 +14,7 @@ import 'post_metadata.dart';
 /// post page's og:meta tags for a caption (crawler-UA fetch — native does
 /// this directly, web routes it through the server-side proxy's `/api/meta`
 /// since a browser can't do the fetch itself, see [fetchPostMetadata]'s
-/// doc); that caption feeds Gemini alongside the original input. Gemini
+/// doc); that caption feeds AI alongside the original input. AI
 /// extracts the structured fields from text → Nominatim resolves the address
 /// to coordinates. The AI-extraction half mirrors event-calendar's JSON-mode
 /// prompt + lenient parse.
@@ -22,21 +22,21 @@ import 'post_metadata.dart';
 /// NOTE: when the metadata fetch fails (private account, deleted post,
 /// rate-limited, or — on web — the proxy not configured), a bare URL with no
 /// caption text throws [CaptionUnavailableException] rather than sending
-/// Gemini a link it can only guess from.
+/// AI a link it can only guess from.
 class PlaceExtractor {
   PlaceExtractor({
-    GeminiService? gemini,
+    AiService? ai,
     GeocodingService? geocoder,
     Future<PostMetadata?> Function(Uri url)? metadataFetcher,
     ExtractionCache? cache,
     Future<void> Function(Duration)? delay,
-  }) : _gemini = gemini ?? GeminiService(),
+  }) : _ai = ai ?? AiService(),
        _geocoder = geocoder ?? GeocodingService(),
        _metadataFetcher = metadataFetcher ?? fetchPostMetadata,
        _cache = cache ?? SharedPrefsExtractionCache(),
        _delay = delay ?? Future<void>.delayed;
 
-  final GeminiService _gemini;
+  final AiService _ai;
   final GeocodingService _geocoder;
   final Future<PostMetadata?> Function(Uri url) _metadataFetcher;
   final ExtractionCache _cache;
@@ -53,7 +53,7 @@ class PlaceExtractor {
   /// Max alternatives kept per candidate (the prompt asks for up to 3).
   static const maxAlternatives = 3;
 
-  bool get isConfigured => _gemini.isConfigured;
+  bool get isConfigured => _ai.isConfigured;
 
   /// Single-place convenience over [extractAll]: the first extracted place.
   /// Kept for callers that only want one [Place]; the add-a-find sheet uses
@@ -64,9 +64,9 @@ class PlaceExtractor {
   /// Extracts every place a shared caption / link mentions (a "top 5 cafés"
   /// post yields five). Throws [CaptionUnavailableException] for a bare URL
   /// whose caption can't be read, [NoPlaceFoundException] when nothing
-  /// usable comes back. A bare post URL's Gemini result is cached on device
+  /// usable comes back. A bare post URL's AI result is cached on device
   /// per normalized URL ([ExtractionCache]), so re-sharing the same post
-  /// skips the caption fetch and the Gemini call.
+  /// skips the caption fetch and the AI call.
   Future<ExtractionResult> extractAll(String input) async {
     final trimmed = input.trim();
     final postUrl = extractFirstPostUrl(trimmed);
@@ -93,7 +93,7 @@ class PlaceExtractor {
           throw CaptionUnavailableException(postUrl);
         }
       }
-      json = await _gemini.extractJson(_prompt(trimmed, meta));
+      json = await _ai.extractJson(_prompt(trimmed, meta));
     }
 
     final result = await _resolve(
@@ -111,7 +111,7 @@ class PlaceExtractor {
     return result;
   }
 
-  /// Same extraction from a screenshot/photo of a post (Gemini vision) — the
+  /// Same extraction from a screenshot/photo of a post (AI vision) — the
   /// way around Instagram's login wall when the caption can't be fetched.
   /// [imageBytes] should already be downscaled (see image_prep.dart);
   /// [hint] is any text the user typed alongside (a link, a place name).
@@ -121,7 +121,7 @@ class PlaceExtractor {
     String hint = '',
   }) async {
     final trimmed = hint.trim();
-    final json = await _gemini.extractJsonFromImage(
+    final json = await _ai.extractJsonFromImage(
       _prompt(
         trimmed.isEmpty ? '(see the attached screenshot)' : trimmed,
         null,
@@ -138,7 +138,7 @@ class PlaceExtractor {
     );
   }
 
-  /// Geocodes and builds every candidate in Gemini's [json]. Candidates with
+  /// Geocodes and builds every candidate in the AI's [json]. Candidates with
   /// neither a usable name nor anything to geocode are dropped (rather than
   /// saved as "Untitled place" at [MockData.tokyoCenter]); if nothing is
   /// left, throws [NoPlaceFoundException].
@@ -217,7 +217,7 @@ class PlaceExtractor {
         locationConfirmed: true,
       );
 
-  /// [base] re-pointed at one of Gemini's [PlaceAlternative]s, geocoded now.
+  /// [base] re-pointed at one of the AI's [PlaceAlternative]s, geocoded now.
   /// Null when the alternative can't be located (the picker then says so
   /// rather than saving it at a default location).
   Future<Place?> resolveAlternative(
@@ -299,7 +299,7 @@ class PlaceExtractor {
     );
   }
 
-  /// The per-place objects in Gemini's reply: `{"places": [...]}` (what the
+  /// The per-place objects in the AI's reply: `{"places": [...]}` (what the
   /// prompt asks for), or — model drift insurance — the older single bare
   /// object, or a bare list. Non-object entries are ignored.
   @visibleForTesting
@@ -318,7 +318,7 @@ class PlaceExtractor {
     return looksLikePlace ? [json] : const [];
   }
 
-  /// Gemini's 0–1 `confidence`, leniently: a percentage (e.g. 85) is scaled
+  /// the AI's 0–1 `confidence`, leniently: a percentage (e.g. 85) is scaled
   /// down, out-of-range values clamp. Missing/unparseable → 1.0 — older
   /// replies carried no confidence and single-place posts must behave as
   /// before.
@@ -455,7 +455,7 @@ AUTHOR: ${meta.author ?? '(unknown)'}
     return SourcePlatform.instagram;
   }
 
-  /// Parses Gemini's `restaurantType`, leniently: `null` outright for a
+  /// Parses the AI's `restaurantType`, leniently: `null` outright for a
   /// non-restaurant [category] or empty/missing input; an exact
   /// [RestaurantType.name] match; else a small set of common synonyms the
   /// model tends to use instead of the enum name; else `null` — deliberately
@@ -509,7 +509,7 @@ AUTHOR: ${meta.author ?? '(unknown)'}
   }
 
   void dispose() {
-    _gemini.dispose();
+    _ai.dispose();
     _geocoder.dispose();
   }
 }
@@ -517,7 +517,7 @@ AUTHOR: ${meta.author ?? '(unknown)'}
 /// Thrown when [PlaceExtractor.extract]'s input is nothing but a bare
 /// Instagram/TikTok URL and [fetchPostMetadata] couldn't read a caption for
 /// it (private account, deleted post, rate-limited, or — on web — the proxy
-/// not configured/reachable) — sending Gemini just the raw link produces a
+/// not configured/reachable) — sending AI just the raw link produces a
 /// guess, not an extraction.
 class CaptionUnavailableException implements Exception {
   const CaptionUnavailableException(this.url);
@@ -529,7 +529,7 @@ class CaptionUnavailableException implements Exception {
       "CaptionUnavailableException: couldn't read caption for $url";
 }
 
-/// Thrown when Gemini's response has no name, no address, and no
+/// Thrown when the AI's response has no name, no address, and no
 /// coordinates (or a placeholder name that a geocode also failed to
 /// resolve) — surfacing this beats silently saving an "Untitled place"
 /// pinned to [MockData.tokyoCenter].
@@ -555,14 +555,14 @@ class ExtractedPlace {
   /// Best guess, ready to save.
   final Place place;
 
-  /// Gemini's 0–1 confidence that [place] is the right real place.
+  /// the AI's 0–1 confidence that [place] is the right real place.
   final double confidence;
 
-  /// Other places the post might mean (Gemini, when ambiguous).
+  /// Other places the post might mean (AI, when ambiguous).
   final List<PlaceAlternative> alternatives;
 
   /// Nominatim matches for [place]'s name/address, best first (empty when
-  /// Gemini supplied coordinates itself).
+  /// AI supplied coordinates itself).
   final List<GeocodeCandidate> geocodeCandidates;
 
   /// [geocodeCandidates] point at genuinely different places (a chain).
@@ -576,7 +576,7 @@ class ExtractedPlace {
       confidence < PlaceExtractor.lowConfidenceThreshold || geocodeAmbiguous;
 }
 
-/// An alternative candidate Gemini offered for an ambiguous mention.
+/// An alternative candidate AI offered for an ambiguous mention.
 class PlaceAlternative {
   const PlaceAlternative({
     required this.name,

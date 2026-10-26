@@ -9,7 +9,7 @@ const int restaurantTypeDetectionVersion = 2;
 /// Keyword-based fallback for [Place.effectiveRestaurantType]: guesses a
 /// [RestaurantType] from a restaurant's own text (name/description/original
 /// caption/address/the user's notes) when nobody — neither the user via the detail-sheet
-/// picker, nor Gemini extraction — has set [Place.restaurantType] yet. Pure
+/// picker, nor AI extraction — has set [Place.restaurantType] yet. Pure
 /// and read-only: never writes back to the place, so unset places need no
 /// migration when the keyword list changes; it's just re-derived every time
 /// [Place.effectiveRestaurantType] is read. (Stored automatic types are
@@ -57,7 +57,7 @@ RestaurantType? detectRestaurantType(Place place) {
 /// is replaced by the keyword-detected type. Never touches a manual pick
 /// ([Place.restaurantTypeManual]), an unset type (already re-derived at read
 /// time), or a stored specific type that detection merely disagrees with —
-/// Gemini's pick is trusted over keywords there.
+/// the AI's pick is trusted over keywords there.
 RestaurantType? refinedRestaurantType(Place place) {
   final stored = place.restaurantType;
   if (place.category != PlaceCategory.restaurant ||
@@ -74,7 +74,7 @@ RestaurantType? refinedRestaurantType(Place place) {
 }
 
 /// New type → the older, broader type its places used to be filed under
-/// (by keyword detection, Gemini, or the user). Drives
+/// (by keyword detection, AI, or the user). Drives
 /// [refinedRestaurantType].
 const Map<RestaurantType, RestaurantType> _refines = {
   RestaurantType.udonSoba: RestaurantType.japanese,

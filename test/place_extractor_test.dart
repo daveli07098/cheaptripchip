@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:cheaptripchip/services/extraction_cache.dart';
 import 'package:cheaptripchip/services/geocoding_service.dart';
-import 'package:cheaptripchip/services/gemini_service.dart';
+import 'package:cheaptripchip/services/ai_service.dart';
 import 'package:cheaptripchip/services/place_extractor.dart';
 import 'package:cheaptripchip/services/post_metadata.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,18 +12,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
 
-/// Wraps a JSON map the way the real Gemini REST response nests model output,
-/// so [GeminiService] with a [MockClient] behaves like the real API.
-http.Response _geminiResponse(Map<String, Object?> json) {
+/// Wraps a JSON map the way the real chat-completions response nests model output,
+/// so [AiService] with a [MockClient] behaves like the real API.
+http.Response _aiResponse(Map<String, Object?> json) {
   return http.Response(
     jsonEncode({
-      'candidates': [
+      'choices': [
         {
-          'content': {
-            'parts': [
-              {'text': jsonEncode(json)},
-            ],
-          },
+          'message': {'content': jsonEncode(json)},
         },
       ],
     }),
@@ -108,13 +104,13 @@ void main() {
     const bareUrl = 'https://www.instagram.com/reel/abc123/';
 
     PlaceExtractor build({
-      required Map<String, Object?> geminiJson,
+      required Map<String, Object?> aiJson,
       Future<PostMetadata?> Function(Uri)? metadataFetcher,
       LatLng? geocoded,
     }) {
-      final gemini = GeminiService(
+      final ai = AiService(
         apiKey: 'test-key',
-        client: MockClient((req) async => _geminiResponse(geminiJson)),
+        client: MockClient((req) async => _aiResponse(aiJson)),
       );
       final geocoder = GeocodingService(
         client: MockClient((req) async {
@@ -130,7 +126,7 @@ void main() {
         }),
       );
       return PlaceExtractor(
-        gemini: gemini,
+        ai: ai,
         geocoder: geocoder,
         metadataFetcher: metadataFetcher,
       );
@@ -140,10 +136,10 @@ void main() {
       'throws CaptionUnavailableException for a bare post URL with no fetchable metadata',
       () async {
         // apiKey deliberately blank: if the guard were skipped this would
-        // throw a StateError from GeminiService instead, so the assertion
+        // throw a StateError from AiService instead, so the assertion
         // below genuinely distinguishes "guard fired" from "guard skipped".
         final extractor = PlaceExtractor(
-          gemini: GeminiService(apiKey: ''),
+          ai: AiService(apiKey: ''),
           metadataFetcher: (uri) async => null,
         );
         await expectLater(
@@ -154,14 +150,13 @@ void main() {
     );
 
     test('does not throw for a bare URL when metadata has a caption, and feeds '
-        'the caption + author to Gemini', () async {
+        'the caption + author to AI', () async {
       String? sentPrompt;
-      final gemini = GeminiService(
+      final ai = AiService(
         apiKey: 'test-key',
         client: MockClient((req) async {
-          sentPrompt =
-              jsonDecode(req.body)['contents'][0]['parts'][0]['text'] as String;
-          return _geminiResponse({
+          sentPrompt = jsonDecode(req.body)['messages'][0]['content'] as String;
+          return _aiResponse({
             'name': 'Ramen Bon',
             'address': '1 Ikebukuro, Tokyo',
             'region': 'Tokyo, Japan',
@@ -179,7 +174,7 @@ void main() {
         ),
       );
       final extractor = PlaceExtractor(
-        gemini: gemini,
+        ai: ai,
         geocoder: geocoder,
         metadataFetcher: (uri) async => const PostMetadata(
           title: 'Ramen Bon on Instagram: "Best tonkotsu in town"',
@@ -199,10 +194,10 @@ void main() {
     });
 
     test(
-      'throws NoPlaceFoundException when Gemini returns nothing to geocode',
+      'throws NoPlaceFoundException when AI returns nothing to geocode',
       () async {
         final extractor = build(
-          geminiJson: {'name': '', 'address': ''},
+          aiJson: {'name': '', 'address': ''},
           metadataFetcher: (uri) async => null,
         );
         await expectLater(
@@ -216,7 +211,7 @@ void main() {
       'throws NoPlaceFoundException when the placeholder name also fails to geocode',
       () async {
         final extractor = build(
-          geminiJson: {'name': '', 'address': 'somewhere vague'},
+          aiJson: {'name': '', 'address': 'somewhere vague'},
           geocoded: null, // geocoder returns []
         );
         await expectLater(
@@ -227,10 +222,10 @@ void main() {
     );
 
     test(
-      'saves normally when Gemini finds a real name even if geocoding fails',
+      'saves normally when AI finds a real name even if geocoding fails',
       () async {
         final extractor = build(
-          geminiJson: {'name': 'Real Place', 'address': 'nowhere findable'},
+          aiJson: {'name': 'Real Place', 'address': 'nowhere findable'},
           geocoded: null,
         );
         final place = await extractor.extract('a caption with a real place');
@@ -240,10 +235,10 @@ void main() {
     );
 
     test(
-      'fills sourceHandle/sourcePlatform from metadata when Gemini omits them',
+      'fills sourceHandle/sourcePlatform from metadata when AI omits them',
       () async {
         final extractor = build(
-          geminiJson: {'name': 'Ramen Bon', 'address': '1 Ikebukuro, Tokyo'},
+          aiJson: {'name': 'Ramen Bon', 'address': '1 Ikebukuro, Tokyo'},
           geocoded: const LatLng(35.0, 139.0),
           metadataFetcher: (uri) async =>
               const PostMetadata(author: '@rame.nbon'),
@@ -314,20 +309,20 @@ void main() {
 
   group('PlaceExtractor.extractAll', () {
     PlaceExtractor build(
-      Map<String, Object?> geminiJson, {
+      Map<String, Object?> aiJson, {
       List<List<Map<String, String>>> geocodeReplies = const [],
       ExtractionCache? cache,
       Future<PostMetadata?> Function(Uri)? metadataFetcher,
-      void Function(http.Request)? onGemini,
+      void Function(http.Request)? onAi,
       List<Duration>? delays,
     }) {
       var geocodeCall = 0;
       return PlaceExtractor(
-        gemini: GeminiService(
+        ai: AiService(
           apiKey: 'test-key',
           client: MockClient((req) async {
-            onGemini?.call(req);
-            return _geminiResponse(geminiJson);
+            onAi?.call(req);
+            return _aiResponse(aiJson);
           }),
         ),
         geocoder: GeocodingService(
@@ -499,9 +494,9 @@ void main() {
     });
 
     test('a bare post URL is cached per normalized URL: the second share '
-        'skips the caption fetch and Gemini', () async {
+        'skips the caption fetch and AI', () async {
       final cache = MemoryExtractionCache();
-      var geminiCalls = 0;
+      var aiCalls = 0;
       var metaCalls = 0;
       PlaceExtractor make() => build(
         {
@@ -510,7 +505,7 @@ void main() {
           ],
         },
         cache: cache,
-        onGemini: (_) => geminiCalls++,
+        onAi: (_) => aiCalls++,
         metadataFetcher: (uri) async {
           metaCalls++;
           return const PostMetadata(
@@ -521,7 +516,7 @@ void main() {
       );
       await make().extractAll('https://www.instagram.com/reel/abc123/?igsh=x');
       final again = await make().extractAll('https://instagram.com/p/abc123');
-      expect(geminiCalls, 1);
+      expect(aiCalls, 1);
       expect(metaCalls, 1);
       expect(again.places.single.place.name, 'Ramen Bon');
       expect(again.places.single.place.sourceHandle, '@bon');
@@ -548,18 +543,19 @@ void main() {
                 {'name': 'Shot Cafe', 'latitude': 1.3, 'longitude': 103.8},
               ],
             },
-            onGemini: (req) =>
-                body = jsonDecode(req.body) as Map<String, dynamic>,
+            onAi: (req) => body = jsonDecode(req.body) as Map<String, dynamic>,
           ).extractFromImage(
             Uint8List.fromList([1, 2, 3]),
             mimeType: 'image/png',
             hint: 'https://www.tiktok.com/@a/video/1',
           );
-      final parts = body!['contents'][0]['parts'] as List;
+      final parts = body!['messages'][0]['content'] as List;
       expect(parts[0]['text'], contains('attached screenshot'));
-      expect(parts[1]['inline_data']['mime_type'], 'image/png');
-      expect(parts[1]['inline_data']['data'], base64Encode([1, 2, 3]));
-      expect(body!['generationConfig']['temperature'], 0);
+      expect(
+        parts[1]['image_url']['url'],
+        'data:image/png;base64,${base64Encode([1, 2, 3])}',
+      );
+      expect(body!['temperature'], 0);
       expect(result.places.single.place.name, 'Shot Cafe');
       expect(result.places.single.place.sourcePlatform, SourcePlatform.tiktok);
     });

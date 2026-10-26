@@ -84,6 +84,6 @@ Follow these steps once to turn on sign-in and cross-device sync.
   after a later sign-in. This is deliberate, not a bug: signing in switches
   the app to Firestore-backed stores rather than migrating local state.
 - The Gemini API key is still bundled client-side
-  (`--dart-define-from-file=env/dev.json`, see `lib/services/gemini_service.dart`).
+  (`--dart-define-from-file=env/dev.json`, see `lib/services/ai_service.dart`).
   A Cloud Functions proxy to hide it server-side is the logical next step, and
   requires upgrading the Firebase project to the Blaze (pay-as-you-go) plan.

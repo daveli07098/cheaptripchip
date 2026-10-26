@@ -100,7 +100,7 @@ void main() {
   });
 
   group('TripPlanner.plan', () {
-    test('uses Gemini when it places stops', () async {
+    test('uses AI when it places stops', () async {
       String? prompt;
       final planner = TripPlanner(
         extractJson: (p) async {
@@ -139,7 +139,7 @@ void main() {
       expect(prompt, isNot(contains('old hours')));
     });
 
-    test('falls back to the local plan when Gemini throws', () async {
+    test('falls back to the local plan when AI throws', () async {
       final planner = TripPlanner(extractJson: (_) async => throw 'down');
       final plan = await planner.plan(
         _twoAreas,
@@ -149,7 +149,7 @@ void main() {
       expect(plan.stopCount, 6);
     });
 
-    test('falls back when Gemini places nothing', () async {
+    test('falls back when AI places nothing', () async {
       final planner = TripPlanner(
         extractJson: (_) async => {
           'days': [

@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- AI provider switched from Gemini to OpenCode Go (OpenAI chat-completions):
+  `AiService` replaces `GeminiService`, model pool `glm-5.3-flash` →
+  `minimax-m3.1-flash` → `mimo-v2.6-flash` (all verified for JSON + image
+  input; override with `AI_MODELS`). Env keys renamed `GEMINI_*` → `AI_*`.
+  The Vercel proxy now serves `/v1/chat/completions`, holds the Go key as
+  `OPENCODE_API_KEY`, and always sends the `x-opencode-session` header Go
+  requires. `deploy-web.sh` refuses a direct OpenCode URL. See
+  `docs/ai-proxy.md`.
 - UI/UX round: first-run "How it works" guide (Android share, iPhone
   Shortcut, paste/screenshot), one empty-state design across Saved/Boards/map
   list, guest caveat before sign-in, "Explore" tab renamed "Map", Appearance

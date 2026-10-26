@@ -4,7 +4,7 @@ import 'package:cheaptripchip/data/local_repositories.dart';
 import 'package:cheaptripchip/data/place_store.dart';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:cheaptripchip/services/extraction_cache.dart';
-import 'package:cheaptripchip/services/gemini_service.dart';
+import 'package:cheaptripchip/services/ai_service.dart';
 import 'package:cheaptripchip/services/geocoding_service.dart';
 import 'package:cheaptripchip/services/place_extractor.dart';
 import 'package:cheaptripchip/widgets/accessible_emoji.dart';
@@ -15,20 +15,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
 
-PlaceExtractor _extractor(Map<String, Object?> geminiJson) => PlaceExtractor(
-  gemini: GeminiService(
+PlaceExtractor _extractor(Map<String, Object?> aiJson) => PlaceExtractor(
+  ai: AiService(
     apiKey: 'test-key',
     client: MockClient(
       (req) async => http.Response.bytes(
         utf8.encode(
           jsonEncode({
-            'candidates': [
+            'choices': [
               {
-                'content': {
-                  'parts': [
-                    {'text': jsonEncode(geminiJson)},
-                  ],
-                },
+                'message': {'content': jsonEncode(aiJson)},
               },
             ],
           }),

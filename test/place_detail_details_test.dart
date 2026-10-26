@@ -154,7 +154,7 @@ void main() {
     expect(find.text('Translate caption / 翻譯'), findsNothing);
   });
 
-  testWidgets('no section without details when Gemini is not configured', (
+  testWidgets('no section without details when AI is not configured', (
     tester,
   ) async {
     PlaceEnricher.instance = _fakeEnricher(configured: false);

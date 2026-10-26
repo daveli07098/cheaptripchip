@@ -6,24 +6,24 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/place.dart';
 import '../models/trip_plan.dart';
-import 'gemini_service.dart';
+import 'ai_service.dart';
 
-/// Runs a JSON prompt — [GeminiService.extractJson] in the app, a stub in
+/// Runs a JSON prompt — [AiService.extractJson] in the app, a stub in
 /// tests.
 typedef JsonPrompt = Future<Map<String, dynamic>> Function(String prompt);
 
 /// AI trip planner: arranges a board's places into [TripPlanOptions.days]
-/// days of ordered stops. Gemini plans first (areas grouped, meals at meal
+/// days of ordered stops. AI plans first (areas grouped, meals at meal
 /// times, opening hours respected); its answer is validated against the
-/// places actually sent. When Gemini is unavailable, errors, or places
+/// places actually sent. When AI is unavailable, errors, or places
 /// nothing, [localPlan] clusters by distance on-device instead.
 class TripPlanner {
   TripPlanner({JsonPrompt? extractJson}) : _extractJson = extractJson;
 
   final JsonPrompt? _extractJson;
 
-  /// Extra places sent to Gemini beyond what fits, so it can pick the ones
-  /// that suit the route. Kept small: [GeminiService] caps the response at
+  /// Extra places sent to AI beyond what fits, so it can pick the ones
+  /// that suit the route. Kept small: [AiService] caps the response at
   /// 2048 tokens.
   static const _aiBuffer = 4;
 
@@ -34,14 +34,14 @@ class TripPlanner {
     final pool = candidatesFor(places, options);
     if (pool.isEmpty) return localPlan(places, options);
     try {
-      final run = _extractJson ?? GeminiService().extractJson;
+      final run = _extractJson ?? AiService().extractJson;
       final sent = pool.take(options.capacity + _aiBuffer).toList();
       final json = await run(buildPrompt(sent, options));
       final plan = fromAiJson(json, pool, options);
       if (plan.stopCount > 0) return plan;
-      debugPrint('TripPlanner: Gemini placed no stops, using local plan');
+      debugPrint('TripPlanner: AI placed no stops, using local plan');
     } catch (e) {
-      debugPrint('TripPlanner: Gemini failed ($e), using local plan');
+      debugPrint('TripPlanner: AI failed ($e), using local plan');
     }
     return localPlan(places, options);
   }
@@ -65,7 +65,7 @@ class TripPlanner {
   }
 
   // ---------------------------------------------------------------------
-  // Gemini
+  // AI
   // ---------------------------------------------------------------------
 
   static String buildPrompt(List<Place> places, TripPlanOptions options) {
@@ -103,7 +103,7 @@ Return ONLY JSON, exactly ${options.days} days, in this shape:
 ''';
   }
 
-  /// Validates Gemini's answer against [pool]: unknown ids and repeats are
+  /// Validates the AI's answer against [pool]: unknown ids and repeats are
   /// dropped, days beyond [TripPlanOptions.days] are ignored (missing ones
   /// are empty), and every pool place not placed is listed in
   /// [TripPlan.unplaced] in pool order. A truncated/partial answer simply

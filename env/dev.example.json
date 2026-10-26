@@ -1,5 +1,6 @@
 {
-  "_comment": "Copy to dev.json and fill in. dev.json is git-ignored — never commit real keys. If Gemini 400s with 'User location is not supported' (e.g. from Hong Kong), deploy server/ (docs/gemini-proxy.md) and point GEMINI_BASE_URL at it instead — e.g. https://cheaptripchip-api.vercel.app. In that mode GEMINI_API_KEY holds the proxy's APP_TOKEN, not the real Gemini key; the real key only lives in the proxy's Vercel env.",
-  "GEMINI_API_KEY": "AIza...",
-  "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+  "_comment": "Copy to dev.json and fill in. dev.json is git-ignored — never commit real keys. Recommended: point AI_BASE_URL at the deployed proxy (https://cheaptripchip-api.vercel.app) and set AI_API_KEY to the proxy's APP_TOKEN; the real OpenCode Go key lives only in the proxy's Vercel env as OPENCODE_API_KEY (see docs/ai-proxy.md). Direct, dev-only: AI_BASE_URL https://opencode.ai/inference/go with your own Go key — never ship a build with it. AI_MODELS is an optional comma-separated model pool override (empty = defaults).",
+  "AI_API_KEY": "your-proxy-APP_TOKEN",
+  "AI_BASE_URL": "https://cheaptripchip-api.vercel.app",
+  "AI_MODELS": ""
 }

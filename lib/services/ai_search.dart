@@ -5,18 +5,18 @@ import 'package:latlong2/latlong.dart';
 import '../data/map_filter.dart';
 import '../data/place_search.dart';
 import '../models/place.dart';
-import 'gemini_service.dart';
+import 'ai_service.dart';
 
 /// "Ask your places": natural-language search over the user's saved places.
 ///
 /// [AiSearch.ask] sends the question plus a compact index of the places
-/// ([buildAskPrompt]) to Gemini and validates the answer
-/// ([parseAskResponse]: unknown ids are dropped). When Gemini isn't
+/// ([buildAskPrompt]) to AI and validates the answer
+/// ([parseAskResponse]: unknown ids are dropped). When AI isn't
 /// configured, is offline, slow or returns garbage, [localAskSearch]
 /// answers instead — keyword + category/sub-type synonym matching in
 /// English, 中文 and 日本語, so plain words still work.
 
-/// Most places sent to Gemini in one prompt; more are prefiltered locally.
+/// Most places sent to AI in one prompt; more are prefiltered locally.
 const int kAskIndexCap = 300;
 
 /// Most ranked ids kept from one answer (the prompt asks for ≤ 30).
@@ -72,7 +72,7 @@ bool _containsAny(String s, Iterable<String> keys) => keys.any(s.contains);
 
 bool _hasCjk(String s) => RegExp(r'[぀-ヿ㐀-鿿]').hasMatch(s);
 
-/// A structured filter Gemini may return alongside (or instead of) ids, and
+/// A structured filter AI may return alongside (or instead of) ids, and
 /// that the local fallback can express too. Every field is optional; a
 /// place passes when it meets all of the set ones.
 class AskFilter {
@@ -176,7 +176,7 @@ class AskResult {
   final bool usedAi;
 }
 
-/// Validates Gemini's JSON answer against [places]: unknown and duplicate
+/// Validates the AI's JSON answer against [places]: unknown and duplicate
 /// ids are dropped (order kept), the explanation is trimmed (with a default
 /// when missing), and a structured `filter` is applied locally when no ids
 /// came back. Null when the answer has neither `placeIds` nor `filter` —
@@ -823,11 +823,11 @@ List<String> askSuggestionsFor(List<Place> places, {int max = 5}) {
   return out;
 }
 
-/// Runs an "Ask" question: Gemini when configured, else (or on any error,
+/// Runs an "Ask" question: AI when configured, else (or on any error,
 /// timeout or unusable answer) [localAskSearch]. Never throws.
 class AiSearch {
-  /// [ask] replaces the Gemini call (tests); [configured] defaults to true
-  /// when [ask] is given, else to whether a Gemini key is set.
+  /// [ask] replaces the AI call (tests); [configured] defaults to true
+  /// when [ask] is given, else to whether an AI key is set.
   AiSearch({
     Future<Map<String, dynamic>> Function(String prompt)? ask,
     bool? configured,
@@ -838,9 +838,9 @@ class AiSearch {
   final Future<Map<String, dynamic>> Function(String prompt)? _ask;
   bool? _configured;
   final Duration timeout;
-  GeminiService? _gemini;
+  AiService? _ai;
 
-  GeminiService get _service => _gemini ??= GeminiService();
+  AiService get _service => _ai ??= AiService();
 
   bool get isConfigured => _configured ??= _service.isConfigured;
 
@@ -876,5 +876,5 @@ class AiSearch {
     );
   }
 
-  void dispose() => _gemini?.dispose();
+  void dispose() => _ai?.dispose();
 }

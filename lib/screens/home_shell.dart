@@ -221,7 +221,7 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _handleShared(List<SharedMediaFile> files) async {
     if (files.isEmpty || !mounted) return;
     // A shared screenshot/photo (Android "Share → cheaptripchip" from the
-    // gallery or a screenshot preview) is read with Gemini vision.
+    // gallery or a screenshot preview) is read with AI vision.
     final image = files
         .where((f) => f.type == SharedMediaType.image)
         .firstOrNull;
@@ -244,7 +244,7 @@ class _HomeShellState extends State<HomeShell> {
     }
 
     // A shared trip (app link in text, or a .cheaptrip.json file) imports
-    // directly instead of going through Gemini extraction.
+    // directly instead of going through AI extraction.
     final bundle =
         TripShare.fromText(shared) ?? await _bundleFromSharedFiles(files);
     if (!mounted) return;

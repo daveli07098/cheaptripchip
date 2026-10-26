@@ -13,7 +13,7 @@
  * Framework-free like `lib/proxy.ts`, for the same reason: directly
  * unit-testable with vitest, with `api/meta.ts` as the thin Vercel adapter.
  * Shares that file's auth (APP_TOKEN), CORS allow-list, and per-IP rate
- * limiter (own key prefix, so a burst of Gemini calls can't starve caption
+ * limiter (own key prefix, so a burst of AI calls can't starve caption
  * fetches or vice versa).
  */
 import {
@@ -187,7 +187,9 @@ export async function handleMeta(req: MetaRequest, deps: MetaDeps): Promise<Meta
     };
   }
 
-  const appToken = queryValue(req.query, 'key') ?? headerValue(req.headers, 'x-goog-api-key');
+  const bearer = /^Bearer\s+(.+)$/i.exec((headerValue(req.headers, 'authorization') ?? '').trim())?.[1];
+  const appToken =
+    queryValue(req.query, 'key') ?? headerValue(req.headers, 'x-goog-api-key') ?? bearer;
   const expectedToken = deps.env.APP_TOKEN;
   if (!expectedToken || !appToken || !safeEqual(appToken, expectedToken)) {
     return { status: 401, headers: { ...cors }, body: errorBody('Invalid app token') };

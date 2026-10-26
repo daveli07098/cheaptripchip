@@ -10,7 +10,7 @@ import 'package:cheaptripchip/data/photo_store.dart';
 import 'package:cheaptripchip/data/place_store.dart';
 import 'package:cheaptripchip/models/place.dart';
 import 'package:cheaptripchip/screens/place_detail_sheet.dart';
-import 'package:cheaptripchip/services/gemini_service.dart';
+import 'package:cheaptripchip/services/ai_service.dart';
 import 'package:cheaptripchip/services/geocoding_service.dart';
 import 'package:cheaptripchip/services/place_extractor.dart';
 import 'package:cheaptripchip/widgets/location_fix.dart';
@@ -40,23 +40,19 @@ const _place = Place(
 );
 
 PlaceExtractor _extractor({required List<Map<String, String>> geocodeHits}) {
-  final gemini = GeminiService(
+  final ai = AiService(
     apiKey: 'test-key',
     client: MockClient(
       (req) async => http.Response(
         jsonEncode({
-          'candidates': [
+          'choices': [
             {
-              'content': {
-                'parts': [
-                  {
-                    'text': jsonEncode({
-                      'name': 'Real Place',
-                      'address': 'nowhere findable',
-                      'region': 'Tokyo, Japan',
-                    }),
-                  },
-                ],
+              'message': {
+                'content': jsonEncode({
+                  'name': 'Real Place',
+                  'address': 'nowhere findable',
+                  'region': 'Tokyo, Japan',
+                }),
               },
             },
           ],
@@ -66,7 +62,7 @@ PlaceExtractor _extractor({required List<Map<String, String>> geocodeHits}) {
     ),
   );
   return PlaceExtractor(
-    gemini: gemini,
+    ai: ai,
     geocoder: GeocodingService(
       client: MockClient(
         (req) async => http.Response(jsonEncode(geocodeHits), 200),

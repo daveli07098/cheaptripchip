@@ -2,7 +2,7 @@
   "name": "cheaptripchip-api",
   "version": "1.0.0",
   "private": true,
-  "description": "Vercel proxy (Tokyo region) that forwards cheaptripchip's Gemini calls, dodging the HK geo-block without any Flutter code change.",
+  "description": "Vercel proxy (Tokyo region) that relays cheaptripchip's OpenAI-style chat completions to OpenCode Go.",
   "engines": {
     "node": "22.x"
   },

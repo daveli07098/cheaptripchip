@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-/// Gets a screenshot/photo small enough for a Gemini vision request through
+/// Gets a screenshot/photo small enough for an AI vision request through
 /// the proxy (4 MB body cap, base64 inflates by 4/3).
 ///
 /// The gallery path already asks image_picker for `maxDimension` px and
@@ -9,7 +9,7 @@ import 'dart:ui' as ui;
 /// usually passes through untouched. Images shared into the app arrive at
 /// full size; those are decoded with `dart:ui`, downscaled to fit
 /// [maxDimension] and re-encoded as PNG — dart:ui has no JPEG encoder and the
-/// app has no image-codec package, and Gemini accepts PNG. If that is still
+/// app has no image-codec package, and AI accepts PNG. If that is still
 /// over [maxBytes] the size steps down until it fits.
 class ImagePrep {
   ImagePrep._();
@@ -80,7 +80,7 @@ class ImagePrep {
       buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
       descriptor = await ui.ImageDescriptor.encoded(buffer);
     } catch (_) {
-      // dart:ui can't decode it (e.g. HEIC on some Android builds) — Gemini
+      // dart:ui can't decode it (e.g. HEIC on some Android builds) — AI
       // may still read it, so send a known type as-is if it fits.
       if (mime != null && bytes.length <= byteBudget) {
         return PreparedImage(bytes, mime);
@@ -123,7 +123,7 @@ class ImagePrep {
   }
 }
 
-/// Image bytes plus the mime type to declare in the Gemini request.
+/// Image bytes plus the mime type to declare in the AI request.
 class PreparedImage {
   const PreparedImage(this.bytes, this.mimeType);
 

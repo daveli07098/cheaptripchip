@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// A cached Gemini extraction for one post: the raw model JSON (before
+/// A cached AI extraction for one post: the raw model JSON (before
 /// geocoding — place ids are timestamped, so [Place]s aren't cached) plus
-/// the caption/author the post page yielded, which fill in fields Gemini
+/// the caption/author the post page yielded, which fill in fields AI
 /// left blank.
 class CachedExtraction {
   const CachedExtraction({required this.json, this.caption, this.author});
@@ -16,7 +16,7 @@ class CachedExtraction {
 }
 
 /// On-device cache of extractions keyed by normalized post URL (see
-/// `normalizePostUrl`), so sharing the same reel twice costs one Gemini
+/// `normalizePostUrl`), so sharing the same reel twice costs one AI
 /// call. Implementations must never throw — a cache failure just means a
 /// fresh extraction.
 abstract class ExtractionCache {

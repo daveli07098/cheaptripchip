@@ -21,14 +21,14 @@ const bool _isWeb = bool.fromEnvironment('dart.library.js_interop');
 const _crawlerUserAgent =
     'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 
-/// Same config the app's Gemini calls use (`gemini_service.dart`): on web,
-/// `GEMINI_BASE_URL` is the deployed proxy and `GEMINI_API_KEY` is its
+/// Same config the app's AI calls use (`ai_service.dart`): on web,
+/// `AI_BASE_URL` is the deployed proxy and `AI_API_KEY` is its
 /// APP_TOKEN — reused here so `/api/meta` shares that one auth token.
 const String _proxyBaseUrl = String.fromEnvironment(
-  'GEMINI_BASE_URL',
+  'AI_BASE_URL',
   defaultValue: 'https://generativelanguage.googleapis.com',
 );
-const String _proxyToken = String.fromEnvironment('GEMINI_API_KEY');
+const String _proxyToken = String.fromEnvironment('AI_API_KEY');
 
 /// Metadata scraped from an Instagram/TikTok post's `<meta>` tags.
 class PostMetadata {

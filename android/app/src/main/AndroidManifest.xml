@@ -33,7 +33,7 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="text/*"/>
             </intent-filter>
-            <!-- Shared screenshots/photos: read with Gemini vision (AddFindSheet). -->
+            <!-- Shared screenshots/photos: read with AI vision (AddFindSheet). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>

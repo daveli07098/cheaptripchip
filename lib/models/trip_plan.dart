@@ -140,7 +140,7 @@ class TripStop {
   }
 }
 
-/// Whether the plan came from Gemini or the on-device distance fallback.
+/// Whether the plan came from AI or the on-device distance fallback.
 enum TripPlanSource { ai, local }
 
 /// A trip: [days] of ordered stops plus the [unplaced] place ids that didn't

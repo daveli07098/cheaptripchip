@@ -29,7 +29,7 @@ import '../models/place_area.dart';
 /// Results are written through [PlaceStore.updateAreas] in batches (every
 /// [flushInterval] or [flushSize] results, and at the end), so Firestore
 /// sees a few small batched writes instead of one per place. Places that
-/// already have a city/district (e.g. from Gemini extraction) keep them;
+/// already have a city/district (e.g. from AI extraction) keep them;
 /// only empty fields are filled.
 class AreaResolver with WidgetsBindingObserver {
   AreaResolver({

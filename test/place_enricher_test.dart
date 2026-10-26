@@ -41,7 +41,7 @@ const _answer = <String, dynamic>{
 };
 
 /// An enricher on a fake clock (advanced only by `wait`), an in-memory
-/// place list and a recording fake Gemini.
+/// place list and a recording fake AI.
 class _Harness {
   _Harness(
     List<Place> places, {
@@ -237,7 +237,7 @@ void main() {
       expect(h.places.value.every((p) => p.details == null), isTrue);
     });
 
-    test('skips everything when Gemini is not configured', () async {
+    test('skips everything when AI is not configured', () async {
       final h = _Harness([_place('a')])..configured = false;
       await h.enricher.run();
       expect(h.prompts, isEmpty);

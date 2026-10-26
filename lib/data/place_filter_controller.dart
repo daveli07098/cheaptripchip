@@ -18,7 +18,7 @@ import 'map_filter.dart';
 /// explanation [aiResult]. Editing the question, its ✕, [clearAiResults],
 /// [showAll] and [showOnlyBoard] all drop them.
 class PlaceFilterController extends ChangeNotifier {
-  /// [aiSearch] replaces the Gemini-backed default (tests).
+  /// [aiSearch] replaces the AI-backed default (tests).
   PlaceFilterController({AiSearch? aiSearch}) : _aiSearch = aiSearch {
     search.addListener(_onSearchChanged);
   }
